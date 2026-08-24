@@ -236,7 +236,9 @@ Backup Plan v1 Document Contract Runtime 已完成：frozen DTO、strict UTF-8/d
 
 `Application ResolvedPlanSnapshot Resolution Contract` 已完成，并固定为 portable domain 之后、physical observation/discovery 之前的 device-resolved immutable configuration snapshot。
 
-下一项推进为 **Source/External Observation + Archive Unit Resolution Contract**：`ResolvedPlanSnapshot + SourceSnapshot[] + ExternalSourceSnapshot[] + .backupignore discovery → ResolvedArchiveUnitSet → Execution Readiness`。MissingHistory/Secret、capability 与最终 output collision 到该阶段处理；仍不实现 Import/Update、Local Binding persistence、SQLite 或 EF。
+`Source/External Observation + Archive Unit Resolution Contract` 已完成：typed Source/External observations、`.backupignore @id`、FILE_MANAGED discovery/identity registration、effective unit policies、typed boundaries 与 discovered-boundary External validation 已合成为 `ResolvedArchiveUnitSet`。
+
+下一项推进为 **Candidate Archive Composition + Execution Readiness**：合成 normal selected、External explicit 与 generated entries 后，再检查 ownership collision、conditional History/Secret、capability 与最终 output collision；仍不实现 Import/Update、Local Binding persistence、SQLite 或 EF。
 
 ## 14. 后续产物
 

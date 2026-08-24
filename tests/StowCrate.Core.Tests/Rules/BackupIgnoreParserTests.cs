@@ -5,6 +5,29 @@ namespace StowCrate.Core.Tests.Rules;
 public sealed class BackupIgnoreParserTests
 {
     [Fact]
+    public void ParseDocumentReturnsOptionalArchiveUnitIdentityWithoutChangingLegacyApi()
+    {
+        const string content = "@id 6c3ad16a-ae76-4d21-9738-c70e6264c209\n@mode include-only\n!keep/**";
+
+        var document = BackupIgnoreParser.ParseDocument(content);
+        var legacy = BackupIgnoreParser.Parse(content);
+
+        Assert.Equal(Guid.Parse("6c3ad16a-ae76-4d21-9738-c70e6264c209"), document.ArchiveUnitId?.Value);
+        Assert.Equal(RuleMode.IncludeOnly, document.RuleSet.Mode);
+        Assert.Equal(legacy.Mode, document.RuleSet.Mode);
+        Assert.Equal(legacy.Rules.Select(rule => rule.Pattern), document.RuleSet.Rules.Select(rule => rule.Pattern));
+    }
+
+    [Theory]
+    [InlineData("6C3AD16A-AE76-4D21-9738-C70E6264C209")]
+    [InlineData("6ba7b810-9dad-11d1-80b4-00c04fd430c8")]
+    [InlineData("not-a-uuid")]
+    public void IdRequiresCanonicalLowercaseUuidV4(string value)
+    {
+        Assert.Throws<BackupIgnoreParseException>(() => BackupIgnoreParser.ParseDocument($"@id {value}"));
+    }
+
+    [Fact]
     public void EmptyFileUsesV1ExcludeAndAutoDefaults()
     {
         var ruleSet = BackupIgnoreParser.Parse(string.Empty);

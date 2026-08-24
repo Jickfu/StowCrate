@@ -8,7 +8,8 @@ namespace StowCrate.Infrastructure.Filesystem;
 
 public sealed record SourceScanOptions(
     CaseSensitivity CaseSensitivity = CaseSensitivity.Auto,
-    FileSystemBoundaryPolicy BoundaryPolicy = FileSystemBoundaryPolicy.StayOnSourceFileSystem);
+    FileSystemBoundaryPolicy BoundaryPolicy = FileSystemBoundaryPolicy.StayOnSourceFileSystem,
+    bool ObserveBackupIgnoreRuleSource = true);
 
 public sealed class SourceScanner
 {
@@ -113,7 +114,8 @@ public sealed class SourceScanner
                 continue;
             }
 
-            if (logicalPath.Value.Name.Equals(BackupIgnoreFileName, StringComparison.Ordinal)
+            if (options.ObserveBackupIgnoreRuleSource
+                && logicalPath.Value.Name.Equals(BackupIgnoreFileName, StringComparison.Ordinal)
                 && physicalEntry.Kind is not FileSystemEntryKind.File)
             {
                 issues.Add(new ScanIssue(ScanIssueSeverity.Fatal, "SCFS0004", logicalPath, ".backupignore 必须是真实 regular file，不能是 Link、Directory 或 Special。"));
@@ -121,7 +123,8 @@ public sealed class SourceScanner
             }
 
             string? textContent = null;
-            if (physicalEntry.Kind is FileSystemEntryKind.File
+            if (options.ObserveBackupIgnoreRuleSource
+                && physicalEntry.Kind is FileSystemEntryKind.File
                 && logicalPath.Value.Name.Equals(BackupIgnoreFileName, StringComparison.Ordinal))
             {
                 try

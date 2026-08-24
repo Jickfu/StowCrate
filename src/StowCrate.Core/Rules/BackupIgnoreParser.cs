@@ -1,8 +1,17 @@
 namespace StowCrate.Core.Rules;
 
+using StowCrate.Core.BackupPlans;
+
+public sealed record BackupIgnoreParseResult(ArchiveUnitId? ArchiveUnitId, RuleSet RuleSet);
+
 public static class BackupIgnoreParser
 {
     public static RuleSet Parse(string content)
+    {
+        return ParseDocument(content).RuleSet;
+    }
+
+    public static BackupIgnoreParseResult ParseDocument(string content)
     {
         ArgumentNullException.ThrowIfNull(content);
 
@@ -11,6 +20,7 @@ public static class BackupIgnoreParser
         var seenDirectives = new HashSet<string>(StringComparer.Ordinal);
         var rules = new List<BackupRule>();
         var patternSeen = false;
+        ArchiveUnitId? archiveUnitId = null;
         var lines = content.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
 
         for (var index = 0; index < lines.Length; index++)
@@ -36,7 +46,8 @@ public static class BackupIgnoreParser
                     lineNumber,
                     seenDirectives,
                     ref mode,
-                    ref caseSensitivity);
+                    ref caseSensitivity,
+                    ref archiveUnitId);
                 continue;
             }
 
@@ -59,7 +70,7 @@ public static class BackupIgnoreParser
             }
         }
 
-        return new RuleSet(mode, caseSensitivity, rules);
+        return new BackupIgnoreParseResult(archiveUnitId, new RuleSet(mode, caseSensitivity, rules));
     }
 
     private static void ParseDirective(
@@ -67,7 +78,8 @@ public static class BackupIgnoreParser
         int lineNumber,
         HashSet<string> seenDirectives,
         ref RuleMode mode,
-        ref CaseSensitivity caseSensitivity)
+        ref CaseSensitivity caseSensitivity,
+        ref ArchiveUnitId? archiveUnitId)
     {
         var parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length != 2)
@@ -87,6 +99,9 @@ public static class BackupIgnoreParser
                 break;
             case "@version":
                 throw new BackupIgnoreParseException(lineNumber, $"不支持 .backupignore 版本 '{parts[1]}'。");
+            case "@id":
+                archiveUnitId = ParseArchiveUnitId(parts[1], lineNumber);
+                break;
             case "@mode" when parts[1] == "exclude":
                 mode = RuleMode.Exclude;
                 break;
@@ -108,6 +123,24 @@ public static class BackupIgnoreParser
                 throw new BackupIgnoreParseException(lineNumber, $"未知 case policy '{parts[1]}'。");
             default:
                 throw new BackupIgnoreParseException(lineNumber, $"未知 Directive '{name}'。");
+        }
+    }
+
+    private static ArchiveUnitId ParseArchiveUnitId(string value, int lineNumber)
+    {
+        if (!Guid.TryParseExact(value, "D", out var parsed)
+            || !value.Equals(parsed.ToString("D"), StringComparison.Ordinal))
+        {
+            throw new BackupIgnoreParseException(lineNumber, "@id 必须是 canonical lowercase UUID v4。");
+        }
+
+        try
+        {
+            return new ArchiveUnitId(parsed);
+        }
+        catch (ArgumentException)
+        {
+            throw new BackupIgnoreParseException(lineNumber, "@id 必须是 canonical lowercase UUID v4。");
         }
     }
 }

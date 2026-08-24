@@ -889,10 +889,10 @@ v1 明确不支持 optional external、glob/multi-root、external rules/`.backup
 
 ## 23. 与实现现状的差异和迁移约束
 
-1. **`.backupignore v1` Directive 集合变化**：规范最初只允许 `@version/@mode/@case`；现在已正式加入可选 `@id`。当前 parser 尚未实现 `@id`，后续业务实现必须同步 parser、领域返回类型和兼容性测试。
+1. **`.backupignore v1` Directive 集合变化**：规范最初只允许 `@version/@mode/@case`；现在已正式加入可选 `@id`。parser 已通过兼容旧 API 的完整 parse result 返回 optional canonical lowercase UUID-v4 identity，并保留 RuleSet；解析和 identity resolution 均不修改文件。
 2. **Fingerprint 强类型与字段**：ArchiveUnitId/ExternalSourceId 已正式排除于 SelectionFingerprint，logical source/path/mapping 仍包含；当前 Core 尚未实现这些强类型 fingerprint，不得把旧聚合 string 当作 v1 durable baseline。
 3. **Baseline key 与 DeviceId**：Change Detection 的 `PlanId + ArchiveUnitId` 是 portable unit key；DeviceId 只作为本机 registration/binding/runtime namespace，不替换该 key。
-4. **实现现状**：M3 已实现 strict version-specific document runtime、frozen portable authored aggregate/typed IDs、semantic validation、deterministic writer、ArchiveSpec/History effective policy primitives，以及 device-resolved pre-observation `ResolvedPlanSnapshot` contract。尚未实现 Source/External observation 合成、FILE_MANAGED discovery resolver、Execution Readiness/capability、Local/Secret/Schedule/Storage Binding persistence、OutputLayout/ExecutionBinding fingerprint、relocation、Import/Update/Clone workflow 或完整 Current/History publish。本文不授权提前实现 SQLite persistence。
+4. **实现现状**：M3 已实现 strict document runtime、frozen portable domain、semantic validation、deterministic writer、`ResolvedPlanSnapshot`，以及 typed Source/External observation + FILE_MANAGED discovery/identity registration → `ResolvedArchiveUnitSet` contract。尚未实现 Candidate Archive Composition、Execution Readiness/capability、Local/Secret/Schedule/Storage Binding persistence、OutputLayout/ExecutionBinding fingerprint、confirmed relocation workflow、Import/Update/Clone 或完整 Current/History publish。本文不授权提前实现 SQLite persistence。
 
 ## 24. 当前未决顺序
 

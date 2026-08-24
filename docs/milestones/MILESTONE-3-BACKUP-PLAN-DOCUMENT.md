@@ -62,15 +62,24 @@ UTF-8 bytes / Stream
 - External 仅完成 physical input + target mapping，不产生 observation/staging state；
 - 单 Plan root safety 与纯 `ActivePlanRootFacts` 跨 Plan writable overlap 检查已完成。
 
-## 下一项：Source/External Observation + Archive Unit Resolution Contract
+## 已完成：Source/External Observation + Archive Unit Resolution Contract
 
 ```text
 ResolvedPlanSnapshot
-+ SourceSnapshot[]
++ typed SourceObservationSnapshot[]
 + ExternalSourceSnapshot[]
 + .backupignore discovery
++ local ArchiveUnit registration facts
 → ResolvedArchiveUnitSet
-→ Execution Readiness
 ```
 
-下一阶段才处理 MissingHistoryRootBinding、MissingSecretBinding、SecretRevision、archive capability 与最终 output collision；仍不提前实现 SQLite、Archiver 或 backup execution。
+- `.backupignore` parser 以兼容旧 API 的完整 parse result 返回 optional canonical UUID-v4 `@id` 与 RuleSet，且绝不修改规则文件；
+- Source/External observation 使用 typed portable identity 并与旧 M2 `SourceScanner`/`ArchivePlanner` API 隔离；Source observation 只表达 filesystem facts、case、issues/completeness，External 使用独立 no-follow snapshot；
+- FILE_MANAGED identity 合成显式验证 `@id`、declaration、local registration 与 path 的全部矛盾；新 identity 通过 injectable UUID-v4 generator 生成并返回 pending durable registration；
+- UI_MANAGED rules 只来自 prepared declaration，FILE_MANAGED rules 只来自实际 marker observation；resolved unit 已具有 effective rules、ArchiveSpec、History 与 rule-source observation fingerprint；
+- 最终 discovered unit set 建立 typed parent/child boundaries，并重新检查 External destination 穿越新发现 child boundary；
+- observation issues、ArchiveUnit resolution issues 与 document/semantic/binding errors 保持分层；incomplete observation 不产生 complete resolved set。
+
+## 下一项：Candidate Archive Composition + Execution Readiness
+
+把 normal selected entries、External explicit entries 与 generated metadata 合成为 Candidate ArchiveSet，再统一处理 discovered boundaries、ownership collision、conditional HistoryRoot、SecretRevision、archive capability、output collision 与 execution readiness。仍不提前实现 SQLite、Archiver、External staging/TOCTOU materialization 或 backup execution。

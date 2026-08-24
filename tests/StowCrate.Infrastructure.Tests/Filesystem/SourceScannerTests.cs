@@ -69,6 +69,23 @@ public sealed class SourceScannerTests
     }
 
     [Fact]
+    public void PayloadModeDoesNotInterpretBackupIgnore()
+    {
+        using var fixture = new TemporaryDirectory();
+        File.WriteAllBytes(Path.Combine(fixture.Path, ".backupignore"), [0xff, 0xfe]);
+
+        var result = new SourceScanner().Scan(
+            new BackupSource("external", "External"),
+            fixture.Path,
+            new SourceScanOptions(ObserveBackupIgnoreRuleSource: false));
+
+        Assert.True(result.IsSuccess);
+        var marker = Assert.Single(result.Snapshot!.Entries);
+        Assert.Equal(".backupignore", marker.Path.Value);
+        Assert.Null(marker.TextContent);
+    }
+
+    [Fact]
     public void EntryDisappearingDuringScanProducesWarningAndContinues()
     {
         var fileSystem = FakePhysicalFileSystem.Create();
