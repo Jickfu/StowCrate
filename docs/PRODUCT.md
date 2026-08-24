@@ -52,6 +52,8 @@ StowCrate 是面向开发者和个人重要资料的**结构化归档备份工�
 - 压缩、归档保护、卷大小、历史保留和调度设置；
 - 可选外部源映射。
 
+Plan、Source、Archive Unit 与 External Source 都具有与名称和路径分离的稳定 UUID v4 identity。rename、move、Export、Import、Save As 和 Managed/File-backed 转换保持 identity；只有明确 Clone 为新 Plan 时递归生成全部新 identity。
+
 `SourceRoot`、`CurrentRoot` 和 `HistoryRoot` 经过绝对化、分隔符与大小写等平台规则规范化后必须两两不重叠：任意两个路径不得相等，任意一个也不得是另一个的祖先或子孙目录。该规则同时禁止 Source/输出递归、History 位于 Current 内，以及 Current 或 History 位于 Source 内。检测到冲突时必须阻止保存或执行方案并明确指出冲突路径，不能只跳过部分目录后继续。
 
 ### 4.2 归档箱与层级边界
@@ -81,6 +83,8 @@ Current/A
 构建 `D.7z` 时扫描到子单元 `F` 必须停止，`F` 只进入 `F.7z`。父级规则不穿透子 Archive Unit；子单元按自己的有效规则独立规划。
 
 在文件管理模式中，目录内存在 `.backupignore` 即表示该目录是 Archive Unit；文件同时定义本单元的局部过滤规则。空 `.backupignore` 表示“独立打包但无局部排除”。
+
+FILE_MANAGED Archive Unit 可以用 `.backupignore @id <uuid-v4>` 选择性携带跨 rename/move 的稳定 identity。没有 `@id` 仍合法；StowCrate 不得自动修改用户文件，且未标识单元的路径变化默认不自动猜测为同一单元。
 
 如果配置的备份根目录内没有任何 Archive Unit，首版应提示配置问题并不备份该目录。位于 Archive Unit 之外的普通文件也不隐式复制或打包。
 
@@ -121,7 +125,9 @@ StowCrate 支持两种互斥的 Plan authority：
 
 Import 与 Register 是不同操作。Register 保持文件 authoritative，后续运行重新解析文件；不得在 SQLite 与文件之间进行隐式双向同步。Managed 与 File-backed 可以显式转换，但 authority 或文档物理位置变化本身不得触发重新归档。
 
-路径采用逻辑源和分平台映射，允许 `${HOME}` 等可移植表达，不把 Windows 盘符写成唯一身份。同一个计划可在不同设备重新绑定实际路径。
+Portable document 只保存逻辑 Source、Archive Unit 相对路径和 External Source declaration，不保存设备绝对 SourceRoot、CurrentRoot、HistoryRoot 或 External Source 路径。这些物理位置属于按 DeviceId 隔离的 Local Binding；同一个 Plan 可在不同设备重新绑定。
+
+Local Binding v1 可以使用 StowCrate 定义的 `${HOME}` 根变量，但不支持任意环境变量、shell expansion 或命令替换。binding 展开后必须得到绝对路径并完成 physical canonicalization 与三根两两不重叠验证。
 
 ### 4.5 智能配置
 
@@ -172,6 +178,8 @@ Import 与 Register 是不同操作。Register 保持文件 authoritative，后�
 ### 4.8 外部源
 
 外部文件或目录通过“实际路径 → 归档内逻辑路径”映射进入指定 Archive Unit。运行时使用独立 staging 区，绝不临时写入或污染真实备份源。任务结束或恢复清理阶段删除 staging 数据。
+
+External Source 在 portable configuration 中使用稳定 ExternalSourceId、显示名、目标 ArchiveUnitId 和归档内逻辑路径；本机实际输入路径属于 required Local Binding。缺少 binding 时 PlanNotReady，不得静默跳过。
 
 ### 4.9 执行方式
 

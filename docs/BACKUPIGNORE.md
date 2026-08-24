@@ -21,17 +21,32 @@ v1 只支持：
 
 ```text
 @version 1
+@id 6c3ad16a-ae76-4d21-9738-c70e6264c209
 @mode exclude | include-only
 @case auto | sensitive | insensitive
 ```
 
-- Directive 可省略；默认分别为 `1`、`exclude`、`auto`；
+- Directive 可省略；默认分别为 version `1`、无稳定 ID、`exclude` mode、`auto` case；
 - Directive 必须位于第一条 pattern 之前；
 - 同一种 Directive 不得重复；
 - 未知 Directive、未知值、重复 Directive 和不支持的版本都是 fatal validation error；
 - 字面 `@` 开头的 pattern 使用 `\@`。
 
 `auto` 必须由 Source 所在文件系统的实际能力解析为 `sensitive` 或 `insensitive`，解析结果写入 `ArchivePlan`。比较使用 `Ordinal`/`OrdinalIgnoreCase`，匹配键统一做 Unicode NFC normalization；真实文件访问仍使用扫描器提供的原始物理路径。
+
+### 2.1 可选 Archive Unit Identity
+
+`@id <uuid>` 只声明当前 `.backupignore` 所在 FILE_MANAGED Archive Unit 的稳定 `ArchiveUnitId`：
+
+- v1 只接受 UUID v4 的 canonical lowercase `8-4-4-4-12` 表示，并验证 variant；
+- `@id` 最多出现一次，必须位于第一条 pattern 之前；重复、空值、非 UUID v4、非 canonical lowercase 都是 fatal validation error；
+- `@id` 不声明 child unit，不改变 mode、case、pattern 或 rule priority；
+- 空 `.backupignore` 和没有 `@id` 的文件仍完全合法；
+- Scanner、Planner 或注册流程不得自动修改用户文件写入 `@id`；只有用户明确发起并确认“写入稳定 ID”操作时才允许；
+- portable Backup Plan declaration 与文件 `@id` 同时提供 identity 时必须相同，否则是 fatal IdentityConflict；
+- 同一 Plan 内发现重复 `ArchiveUnitId` 是 fatal validation error。
+
+Parser 应把 `@id` 作为 document metadata 与 RuleSet 分离返回。它不是规则 pattern，也不应被序列化进 SQLite 的 FILE_MANAGED RuleMode/Rules。
 
 ## 3. Rule Action、Mode 与顺序
 
@@ -123,7 +138,7 @@ build/
 
 同一份 Source Snapshot、Backup Plan、解析后的规则和已解析 case sensitivity 必须产生相同、稳定排序的 `ArchivePlan`。
 
-Rules fingerprint 至少包含：Global Rules、Plan Rules、Local Rules、mode、case policy、resolved case sensitivity 和 Boundary Tree。任何一项变化都必须重新规划。FILE_MANAGED 的 `.backupignore` 自身属于源内容；即使只修改注释，源快照和最终归档也已变化。
+Rules fingerprint 至少包含：Global Rules、Plan Rules、Local Rules、mode、case policy、resolved case sensitivity 和 Boundary Tree。任何一项变化都必须重新规划。FILE_MANAGED 的 `.backupignore` 自身属于源内容；即使只修改注释或 `@id` 文本，源快照和最终归档内容也已变化。ArchiveUnitId 是否作为独立 SelectionFingerprint 字段以 `CHANGE-DETECTION.md` 的当前规则为准。
 
 ## 9. 错误处理
 
@@ -139,3 +154,8 @@ Syntax Error、Unsupported Version、Invalid Pattern、Rule Source Conflict、Re
 6. Parent Local 不跨 Boundary，Boundary 高于任何规则。
 7. pattern 使用 Archive Unit 相对逻辑路径和 `/`。
 8. `.backupignore`、生成 metadata 和安全约束不能被普通规则破坏。
+9. `@id` 是可选 identity metadata；空文件继续合法，工具不得自动写入。
+
+## 11. v1 规范演进说明
+
+本规范最初只列出 `@version`、`@mode`、`@case`，并将其他 directive 视为 unknown/fatal。Identity / Local Binding 设计明确要求 FILE_MANAGED Archive Unit 可选择携带稳定 UUID，因此 v1 正式增加 `@id`。这是显式规范演进，不表示当前实现已经支持；parser、领域返回类型和兼容性测试必须在后续业务实现阶段同步更新，在此之前不得忽略 `@id` 或把它当普通 pattern。

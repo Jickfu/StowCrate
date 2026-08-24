@@ -1,7 +1,7 @@
 # Backup Plan v1 设计工作稿
 
 > [!IMPORTANT]
-> 本文用于收敛 Backup Plan v1，尚不是产品或序列化规范真相源。已确定行为仍以 `PRODUCT.md`、`ARCHITECTURE.md`、`BACKUPIGNORE.md`、`FILESYSTEM.md` 和 `CHANGE-DETECTION.md` 为准。未决项在维护者确认前不得进入实现或 JSON Schema。
+> 本文用于收敛 Backup Plan v1，尚不是产品或序列化规范真相源。已确定行为仍以 `PRODUCT.md`、`ARCHITECTURE.md`、`BACKUPPLAN.md`、`BACKUPIGNORE.md`、`FILESYSTEM.md` 和 `CHANGE-DETECTION.md` 为准。未决项在维护者确认前不得进入实现或 JSON Schema。
 
 ## 1. 设计顺序
 
@@ -62,33 +62,31 @@ BackupPlan
 
 这里的分区表达职责，不代表最终 JSON 字段名。
 
-## 4. Identity 与 Revision
+## 4. Identity 与 Revision（P0 已确认）
 
 ### 已确定需求
 
 Committed Baseline identity 需要稳定 `PlanId + ArchiveUnitId`。物理路径、数组位置、显示名称和数据库 row id 都不能作为 identity。
 
-### 建议
+### 已确认
 
-- `PlanId`、`SourceId`、`ArchiveUnitId` 使用文件中持久保存的不透明稳定 ID；
+- `PlanId`、`SourceId`、`ArchiveUnitId`、`ExternalSourceId` 使用 canonical lowercase UUID v4；
 - rename、移动输出根、规则修改和普通 revision 不改变 ID；
-- clone/fork Plan 默认生成新 PlanId，并为克隆单元生成新 ArchiveUnitId，避免错误继承 baseline；
+- clone/fork Plan 递归生成新的 PlanId、SourceId、ArchiveUnitId、ExternalSourceId，避免错误继承 baseline；
 - `Revision` 是单调递增的并发控制值，执行捕获 revision 与 semantic fingerprint，发布前重验；
 - 纯格式化、字段顺序和注释（如果格式未来支持）不应改变 semantic fingerprint。
 - 文档物理路径不是 PlanId；移动 File-backed 文档不改变 identity；
 - Managed 与 File-backed 必须解析成相同的 identity/value types，authority 不进入 Core；
 - File-backed 以 PlanSemanticFingerprint 处理运行中变化，不要求用户手工维护单调 revision。
 
-### 未决
+### 后续 Import/merge P0 仍未决
 
-- ID 的外部表示采用 UUID、ULID 还是带前缀的 opaque identifier；
 - 手工合并 Git 分支导致 revision 回退/分叉时的冲突策略；
 - 导入同 PlanId 时是 update、fork，还是要求用户明确选择。
-- 同一 portable Plan 在两台设备各自注册后，baseline 是按 PlanId + ArchiveUnitId + local registration 隔离，还是允许显式接续 Current manifest 中的 identity。
 
-## 5. Source 与路径绑定
+## 5. Source 与路径绑定（P0 已确认）
 
-逻辑 identity 与设备路径必须分离。建议概念模型：
+逻辑 identity 与设备路径必须分离。正式语义见 `BACKUPPLAN.md`；概念模型为：
 
 ```text
 BackupSource
@@ -108,15 +106,17 @@ File-backed 文档只保存 portable logical configuration；registration 在每
 
 路径表达式是 untrusted input，解析后必须执行平台绝对化、变量白名单、case 规则、Link/Junction physical canonicalization 和三根两两不重叠验证。
 
-未决：
+以下细节已经确认：
 
-- `SourceRoot` 与 Current/History 是否属于同一个 binding，还是 Storage 独立绑定；
-- DeviceSelector 使用用户命名、稳定设备 ID，还是按优先级匹配多个候选；
-- v1 允许的变量白名单（例如 `${HOME}`）与转义语法；
-- 未匹配当前设备时 CLI 是安全失败，还是允许交互式重新绑定；
-- 路径表达式是否允许相对路径（建议 v1 不允许）。
-- 多台设备同时运行同一 portable Plan 时，Current/History 是否必须使用独立 device namespace；
-- binding 缺失、目标介质离线或多个 selector 同时匹配时的确定性选择和错误状态。
+- Plan/Source/ArchiveUnit/ExternalSource 使用 canonical lowercase UUID v4；
+- DeviceId 也是 UUID v4，但只属于本机 runtime namespace；
+- Source/Current/History/External physical path 全部属于 Local Binding，不进入普通 Export；
+- v1 只支持受控 `${HOME}` anchor，不支持任意环境变量；
+- ArchiveUnit path 是 Source-relative `/` 逻辑路径；
+- required binding 缺失时 PlanNotReady；External Source v1 默认 required；
+- binding 变化不进入 Selection/ArchiveSpec fingerprint，数据变化由重新扫描后的 EntrySet 体现。
+
+Local Binding 的数据库结构、UI 编辑方式和未来 Device Binding Export 格式属于 Persistence/UX 后续设计，不改变这里已经确认的语义，也不能提前固化 SQLite Schema。
 
 ## 6. Archive Unit 与规则表示
 
@@ -185,10 +185,10 @@ External Source 必须通过稳定 ID、实际路径 binding、目标 ArchiveUni
 ## 11. Schema v1 之前必须确认的 P0
 
 1. ~~Backup Plan Document Authority~~：已确定，见 `BACKUPPLAN.md`；
-2. Plan / Source / ArchiveUnit identity 与 clone/import identity；
-3. Portable Path、Local Binding 与 Source/Current/History 所有权；
+2. ~~Plan / Source / ArchiveUnit / ExternalSource identity 与基本 ID 生命周期~~：已确定；Import conflict/merge 的交互留在第 10 项；
+3. ~~Portable Path、Local Binding、DeviceId 与 Source/Current/History 所有权~~：已确定；
 4. Global Rules 的 snapshot/reference 语义；
-5. FILE_MANAGED `.backupignore` 的引用与发现语义；
+5. FILE_MANAGED `.backupignore` 的引用与发现语义：`@id` identity 部分已确定，rules/declaration 合成仍未决；
 6. Secret Reference / Encryption configuration；
 7. Schedule portability；
 8. History / output 配置的可移植边界；
@@ -197,15 +197,16 @@ External Source 必须通过稳定 ID、实际路径 binding、目标 ArchiveUni
 
 ArchiveSpec override 与 External Source 字段形状仍需设计，但不能越过上述身份、路径和兼容性基础提前固化 Schema。
 
-## 12. 当前设计焦点：Identity + Portable Binding
+## 12. Identity + Portable Binding 结论
 
-下一轮必须作为同一个设计包回答：
+该设计包已经确认：
 
 ```text
 Portable identity
   PlanId
   SourceId
   ArchiveUnitId
+  ExternalSourceId
         ↓
 Local registration identity
         ↓
@@ -217,7 +218,7 @@ Device/path bindings
 ResolvedPlanSnapshot
 ```
 
-需要验证的关键场景：
+未来实现必须验证：
 
 1. 同一 Git 管理文档分别注册到 Windows `E:\code` 与 macOS `/Users/foo/code`，portable IDs 相同但 runtime/baseline 不串用；
 2. File-backed 文档移动位置，registration 更新而 semantic identity 不变；
@@ -227,15 +228,27 @@ ResolvedPlanSnapshot
 6. 未绑定设备、离线输出盘和 selector 冲突都安全失败；
 7. portable document 不包含本机盘符、secret value、baseline 或 scheduler task ID。
 
-在这组语义确认前不生成 canonical JSON 示例。
+这些语义已经进入 `BACKUPPLAN.md` 与 `BACKUPIGNORE.md`，但仍不生成 canonical JSON 示例。
 
-## 13. 后续产物
+## 13. 当前设计焦点：Rules 与 FILE_MANAGED declaration
+
+下一项按顺序解决：
+
+1. Global Rules 在 portable plan 中保存 snapshot、reference，还是组合模型；
+2. Plan Rules 与 UI_MANAGED Local Rules 如何共享 `BACKUPIGNORE.md` pattern semantics；
+3. FILE_MANAGED declaration 是否必须显式列在 Plan、允许纯 discovery，或两者并存；
+4. Plan declaration 的 ArchiveUnitId/path 与 `.backupignore @id` 缺失、匹配、冲突时的完整验证；
+5. Global/Plan/Local 的版本、顺序与 semantic fingerprint canonicalization。
+
+该 P0 确认前继续禁止设计 JSON Schema。
+
+## 14. 后续产物
 
 P0 决策完成后依次产出：
 
-1. 正式 `docs/BACKUPPLAN.md`（领域与文件行为真相源）；
-2. canonical JSON 示例与 JSON Schema；
-3. 导入、直接执行、clone、update、冲突和 secret rebinding 测试矩阵；
+1. 继续增量完善正式 `docs/BACKUPPLAN.md`；
+2. 完成其余 P0 后才创建 canonical JSON 示例与 JSON Schema；
+3. 导入、注册、clone、update、冲突和 secret rebinding 测试矩阵；
 4. Application ports 与纯领域 contract；
 5. `docs/PERSISTENCE.md`；
 6. 最后才设计 SQLite schema 和 migration。

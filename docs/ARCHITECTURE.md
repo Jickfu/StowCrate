@@ -86,6 +86,18 @@ Registered *.backupplan ─────────────┘
 
 Plan authority、registration path、local binding 与 scheduler installation state 是 Application/Infrastructure 管理信息，不进入 Core `BackupPlan`。同一 Plan 只能有一个 authoritative configuration source。不存在自动双向同步；Import 是复制为 Managed，Register 是链接到 File-backed document。
 
+Portable identity 使用强类型 UUID v4 `PlanId`、`SourceId`、`ArchiveUnitId`、`ExternalSourceId`。Application 将 portable declaration 与当前 DeviceId 下的 Local Binding 合成为 `ResolvedPlanSnapshot`；Core 不读取 DeviceId、hostname、环境变量、registration path 或数据库键。
+
+```text
+Portable Configuration              Device Local State
+PlanId / SourceId                    DeviceId / Registration
+ArchiveUnitId / ExternalSourceId  +  Source/External physical bindings
+Logical paths / policies             CurrentRoot / HistoryRoot
+                                   → validated ResolvedPlanSnapshot
+```
+
+v1 path expression 只允许受控 `${HOME}` anchor，不把任意 process environment 作为隐式输入。解析后必须绝对化、physical canonicalize 并验证 Source/Current/History 两两不重叠。缺少 required binding 时不得进入 Scanner。
+
 ### StowCrate.App / StowCrate.Cli
 
 二者是组合根：注册依赖、解析用户输入并调用相同应用用例。GUI 负责 Avalonia Views、ViewModels、导航、进度和交互；CLI 负责非交互命令、退出码和调度器集成。两者不实现备份规则。

@@ -1,6 +1,6 @@
 # Backup Plan Document v1
 
-本文是 `*.backupplan` 文档角色、Plan Authority 和配置真相源关系的规范真相源。Identity、Portable Path、JSON Schema 等尚未确认的部分仍以“未决”处理，不得从示例或工作稿推断。
+本文是 `*.backupplan` 文档角色、Plan Authority、稳定 Identity、Portable Configuration 与 Device Local Binding 的规范真相源。JSON Schema 等尚未确认的部分仍以“未决”处理，不得从示例或工作稿推断。
 
 ## 1. 文档语义
 
@@ -103,18 +103,128 @@ PlanAuthority、Import/Register 方式、registration path 和 authority convers
 
 `*.backupplan` + Current + History 应足以在新设备重新注册并重新绑定 portable configuration，但不承诺恢复旧机器的 baseline 或运行历史；这些本地 durable state 需要 `config.db` 一致快照。
 
-重新注册不能依据文档物理路径认定 Plan identity。文档需要稳定逻辑 identity，但具体 ID 格式、clone/import 保留规则和跨设备 baseline 隔离属于下一项 P0。
+重新注册不能依据文档物理路径认定 Plan identity。Plan 的 portable identity 可以跨设备识别同一份声明配置，但每台设备的 registration、binding、baseline 与运行状态保持本机隔离。
 
-## 9. 当前未决顺序
+## 9. 稳定 Identity
 
-JSON Schema 前按以下顺序解决：
+以下 portable 对象必须具有显式、持久、稳定的 UUID v4：
 
-1. Plan / Source / ArchiveUnit identity；
-2. Portable Path 与 Local Binding；
-3. Global Rules 的 snapshot/reference 语义；
-4. FILE_MANAGED `.backupignore` 的引用与发现语义；
-5. Secret Reference / Encryption configuration；
-6. Schedule portability；
-7. History / output 配置的可移植边界；
-8. Schema compatibility 与 unknown fields；
-9. Import identity conflict / merge semantics。
+- `PlanId`；
+- `SourceId`；
+- `ArchiveUnitId`；
+- `ExternalSourceId`。
+
+外部文本使用 RFC 4122/9562 常见的 canonical lowercase `8-4-4-4-12` 格式，并验证 version 为 4、variant 合法。领域层应使用互不混用的强类型 ID；数据库 row id 即使存在，也不是领域 identity。
+
+Name、LogicalPath、RelativePath、physical/absolute path、realpath、文件位置、数组下标、hostname 和数据库自增键都不能生成或替代 identity。
+
+- `PlanId` 跟随 portable document；不同设备 Register 同一文档时看到相同 PlanId；
+- `SourceId` 表示逻辑 Source，与当前机器的 SourceRoot 无关；
+- `ArchiveUnitId` 表示逻辑 Crate，与其当前 Source-relative path 无关；
+- `ExternalSourceId` 表示逻辑外部输入，与本机实际文件位置无关。
+
+SourceId 变化属于来源语义变化并参与 SelectionFingerprint。ArchiveUnitId 当前是否直接进入 SelectionFingerprint 与现有 `CHANGE-DETECTION.md` 存在差异，按第 15 节处理。
+
+## 10. ID 生命周期
+
+| 操作 | PlanId | SourceId | ArchiveUnitId | ExternalSourceId |
+|---|---|---|---|---|
+| 修改显示名称 | 保持 | 保持 | 保持 | 保持 |
+| 修改本机 binding | 保持 | 保持 | 保持 | 保持 |
+| Archive Unit rename/move（明确为同一对象） | 保持 | 保持 | 保持 | 保持 |
+| External Source 修改本机路径或显示名 | 保持 | 保持 | 保持 | 保持 |
+| Export Managed Plan | 保持 | 保持 | 保持 | 保持 |
+| Import as Managed | 保持 | 保持 | 保持 | 保持 |
+| Register File-backed | 保持 | 保持 | 保持 | 保持 |
+| Save As / Copy 文档 | 保持 | 保持 | 保持 | 保持 |
+| Managed ↔ File-backed | 保持 | 保持 | 保持 | 保持 |
+| Update existing identity（用户明确选择） | 保持 | 保持 | 保持 | 保持 |
+| Clone as new Plan | 重新生成 | 全部重新生成 | 全部重新生成 | 全部重新生成 |
+
+Import 表示接管同一逻辑 Plan，默认保留全部 portable IDs；Clone 才表示创建新的逻辑 Plan。Clone 不继承 ArchiveVersion、CurrentVersion、Committed Baseline、local binding、secret binding 或 scheduler installation。
+
+Save As 只是同一 Plan Document 的物理副本，不能把两个相同 PlanId 的副本在同一 DeviceId 下注册成两个独立计划。用户可以显式把既有 File-backed registration 重定位到副本；若想并存运行，必须使用 Clone 生成全新递归 identity。Managed Plan 的 Export 若随后要 Register 为同一 Plan，也必须走显式 authority conversion，不能形成双 authority。
+
+导入或注册时发现同 PlanId 已存在但文档语义不同，必须返回 IdentityConflict；不得自动覆盖、合并或重新生成 ID。Update existing、Clone as new、Cancel 的最终交互与 merge 规则仍属于后续 P0。
+
+删除对象后从无 identity 的物理路径重新发现，不自动恢复旧 ID。只有 portable 声明、`.backupignore @id`、显式 Import/Restore 或用户确认的 identity migration 可以接续原 identity。
+
+## 11. Portable Configuration 与 Device Local Binding
+
+Portable Configuration 描述可 Git 管理、Import/Export 和跨设备复用的 desired configuration，包括 portable IDs、显示名、逻辑路径、Archive Units、规则、ArchiveSpec、LinkPolicy、Change Detection mode、History policy、schedule intent 与 External Source declaration。
+
+Device Local Binding 描述本机如何解析这些逻辑对象，包括：
+
+- SourceId → physical SourceRoot；
+- plan storage slots → physical CurrentRoot、HistoryRoot；
+- ExternalSourceId → physical file/directory；
+- portable secret slot → 本机 Secret Store reference；
+- scheduler intent → 本机 scheduler installation state。
+
+SourceRoot、CurrentRoot、HistoryRoot 和 External Source physical path 不属于 portable document，不得写入 `*.backupplan v1`，也不随普通 Export 导出。未来若提供 Device Binding Export，必须使用独立格式和明确隐私提示。
+
+ArchiveUnit path 永远是相对于 SourceId 对应 SourceRoot 的逻辑路径，使用 `/`，不得包含盘符、反斜杠、绝对路径或 `..`。External Source 的 archive destination 也是 archive-relative LogicalPath；其物理输入来自 Local Binding。
+
+## 12. DeviceId 与绑定作用域
+
+每个本机安装生成并持久保存一个 UUID v4 `DeviceId`。DeviceId 是 local runtime identity，不进入 `*.backupplan`、PlanSemanticFingerprint、SelectionFingerprint 或 ArchiveSpecFingerprint。DeviceName/hostname 仅用于显示，修改设备名称不创建新 DeviceId。
+
+Local Binding 至少按 `PlanId + DeviceId` 命名空间，并引用 SourceId、ExternalSourceId 或 plan storage slot。多个设备 Register 同一 Plan 时 portable IDs 相同，但 bindings、ArchiveVersion、Committed Baseline 与运行状态不得串用。
+
+`CHANGE-DETECTION.md` 的 `PlanId + ArchiveUnitId` baseline identity 保持为 portable unit key；在持久化/运行时它位于当前 DeviceId/registration 的本机命名空间中。本文不提前定义 SQLite 复合键。
+
+缺少任何 required Source、Current、History（启用时）或 External Source binding 时，Plan 状态为 `PlanNotReady` 并安全失败，不能静默跳过。External Source v1 默认 required；optional 语义尚未设计。
+
+## 13. Local Path Expression v1
+
+Local Binding 可以保存本机绝对路径，或使用 StowCrate 定义的有限 path variable。v1 只规定：
+
+```text
+${HOME}
+```
+
+`${HOME}` 由受控的平台用户目录服务解析，不读取任意同名环境变量作为不受审阅的输入。它只能作为 path expression 的根 anchor；展开、规范化后必须得到绝对路径。
+
+v1 不支持 `${MY_CODE}`、`%APPDATA%`、shell expansion、命令替换、任意进程环境变量或未声明 variable。发现未知 `${...}` 必须 validation failure，不能保留原文、展开为空或交给 shell。
+
+`${DESKTOP}`、`${DOCUMENTS}`、`${DOWNLOADS}` 等不属于 v1；未来增加时必须定义跨平台缺失行为和 semantics version。
+
+所有 binding 解析后必须执行 lexical normalization、平台 case 规则、Link/Junction physical canonicalization，以及 SourceRoot/CurrentRoot/HistoryRoot 两两不重叠验证。SourceRoot 仍必须遵守 `FILESYSTEM.md` 的真实目录约束。
+
+Binding 或文档物理位置不进入 archive semantic fingerprint。SourceRoot 改变后必须重新扫描，真实数据差异通过 EntrySetFingerprint 体现；CurrentRoot/HistoryRoot 改变产生 Storage Relocation，不伪装为 rebuild。
+
+## 14. FILE_MANAGED Archive Unit Identity
+
+UI_MANAGED ArchiveUnitId 由 authoritative Managed/File-backed plan configuration 保存。FILE_MANAGED Archive Unit 的 `.backupignore` 可以使用可选 `@id <uuid-v4>` 声明其 portable ArchiveUnitId；完整语法见 `BACKUPIGNORE.md`。
+
+- `.backupignore` 为空时仍合法；`@id` 不是必填；
+- StowCrate 不得为了生成 identity 自动修改用户文件或污染 Git working tree；
+- 用户主动执行“写入稳定 ID”操作时才可修改文件，并必须预览/确认；
+- 没有 `@id` 的自动发现单元可在本机 registration 中生成并记录 ArchiveUnitId；路径改变默认视为旧单元删除 + 新单元创建；
+- 用户可以显式确认 rename/move 并迁移 identity；不得根据 inode、FileId、realpath 或内容 hash 自动猜测；
+- portable plan 已声明 ArchiveUnitId 且 `.backupignore` 也有 `@id` 时，两者必须相同；不同则 IdentityConflict/Fatal；
+- 同一 Plan 中重复的 ArchiveUnitId 或 ExternalSourceId 是 Fatal validation error。
+
+`@id` 只标识当前 `.backupignore` 所在 Archive Unit，不声明 child identity，也不改变 RuleMode/Rules。它属于文档 metadata；修改该行会改变被归档 `.backupignore` 文件内容，但 identity 本身是否直接触发 SelectionFingerprint 仍受第 15 节现有规范约束。
+
+## 15. 与现有正式规范的差异
+
+1. **`.backupignore v1` Directive 集合变化**：现有规范此前只允许 `@version/@mode/@case`，未知 directive fatal。本次根据明确决定加入可选 `@id`，并在 `BACKUPIGNORE.md` 记录演进。当前 parser 尚未实现 `@id`，本轮禁止修改业务代码；实现前仓库存在已知规范/代码差距。
+2. **ArchiveUnitId 与 SelectionFingerprint**：`CHANGE-DETECTION.md` 当前要求 Archive Unit 稳定 identity/path 进入 SelectionFingerprint；设计稿建议 ArchiveUnitId 只作为 manifest/version/baseline key，不直接触发 archive bytes rebuild。两者有实质差异，本次不覆盖 Change Detection：现行正式规则仍是 identity 参与 SelectionFingerprint，等待维护者后续明确。
+3. **Baseline key 与 DeviceId**：Change Detection 将 portable baseline identity 写为 `PlanId + ArchiveUnitId`；本设计加入 DeviceId，但仅作为本机 registration/binding/runtime namespace，不替换 portable unit key，因此不构成覆盖。
+4. **路径表达位置收紧**：PRODUCT 先前只说计划采用逻辑源和分平台映射并允许 `${HOME}`，未明确映射是否存入 portable document。本规范将 physical mapping 固定为 Device Local Binding；已同步 PRODUCT/ARCHITECTURE。
+5. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无 ExternalSource identity、DeviceId、Local Binding 或 `@id` parser。本规范不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
+
+## 16. 当前未决顺序
+
+Identity 与 Portable Path/Local Binding P0 已确认。JSON Schema 前继续按以下顺序解决：
+
+1. Global Rules 的 snapshot/reference 语义；
+2. FILE_MANAGED `.backupignore` 与 Backup Plan declaration 的完整规则/发现关系（identity 部分已确认）；
+3. Secret Reference / Encryption configuration；
+4. Schedule portability；
+5. History / output 配置的可移植边界；
+6. Schema compatibility 与 unknown fields；
+7. Import identity conflict / merge semantics。
+
+ArchiveSpec override 与 External Source 的完整行为仍需设计，但不得提前固化 JSON 字段。
