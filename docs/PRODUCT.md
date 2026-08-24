@@ -137,6 +137,8 @@ Import 与 Register 是不同操作。Register 保持文件 authoritative，后�
 
 `*.backupplan` 必须带正整数 `schemaVersion` 并使用严格 UTF-8 JSON。已知版本采用 closed-world contract：任何层级的未知字段、未知枚举值、未知联合类型或重复字段都必须拒绝，不能忽略后继续备份；未来版本必须安全提示需要新版 StowCrate，不能降级猜测。读取旧版文档只做内存迁移，不自动改写 File-backed 文件；升级和保存为新 schemaVersion 必须是用户明确操作。文档有效性、本机 binding/readiness 与归档平台 capability 是不同状态，必须分别报告。
 
+v1 不提供自动、字段级、部分或 three-way merge。Update Existing 只对相同 PlanId 做整份 portable desired configuration 替换，并在确认 semantic diff 后按稳定 ID 保留适用的本机/运行状态；新增对象需要重新绑定/首次备份，移除对象的 Current、History 与 baseline 进入 inactive recovery state，不自动删除。Clone 才递归生成全部 portable IDs，且不继承 binding、Current、History、baseline 或调度状态。Managed/File-backed authority 转换和 File-backed registration relocation 即使语义相同也必须显式确认。
+
 Portable document 只保存逻辑 Source、Archive Unit 相对路径和 External Source declaration，不保存设备绝对 SourceRoot、CurrentRoot、HistoryRoot 或 External Source 路径。这些物理位置属于按 DeviceId 隔离的 Local Binding；同一个 Plan 可在不同设备重新绑定。
 
 Local Binding v1 可以使用 StowCrate 定义的 `${HOME}` 根变量，但不支持任意环境变量、shell expansion 或命令替换。binding 展开后必须得到绝对路径并完成 physical canonicalization 与三根两两不重叠验证。

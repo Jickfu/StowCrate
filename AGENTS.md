@@ -46,6 +46,7 @@
 - Change Detection 以 Archive Unit 为提交粒度；Observed、Candidate、Committed Baseline 不得混用，失败、取消或发布前状态不得推进 baseline。
 - `*.backupplan` 是可移植声明文档，不是数据库或运行状态备份。Managed 与 File-backed 只能选择一个配置真相源，禁止与 SQLite 隐式双向同步；Core 不得感知 authority 或文档物理路径。
 - `*.backupplan` 必须按必填正整数 `schemaVersion` 使用 version-specific closed-world reader；未知字段、枚举或联合类型一律拒绝，禁止 case-insensitive property、任意 extension bag 或降级猜测未来版本。旧文档只允许内存迁移，未经用户明确升级不得改写 File-backed 文件。
+- Import/Update 以完整 Plan aggregate 为单位，禁止 automatic/field/partial/three-way merge；Update 只按稳定 ID 对应并原子替换 portable configuration，不得清空 baseline 或自动删除 removed identity 的 Current/History。Clone 必须递归生成全部 portable IDs 且不复制任何 local/runtime state；authority conversion 与 registration relocation 必须显式确认。
 - Plan、Source、Archive Unit、External Source 使用稳定 UUID v4 identity；名称、逻辑/物理路径、文件位置、数组下标和数据库键都不是 identity。Portable Configuration 不保存设备绝对路径，物理 Source/Current/History/External 路径属于 Device Local Binding。
 - `SourceOutputPath`、History Enabled/Retention 属于 Portable Configuration；CurrentRoot 永远是 required local binding，HistoryRoot 仅在至少一个单元 effective History Enabled 时 required。Retention cleanup 必须在 Current/baseline durable commit 后执行，失败不得回滚有效 Current。
 - OutputLayout 与 effective History Enabled 属于 ExecutionSemanticFingerprint；RetentionPolicy 不属于。物理 Source/Current/effective History/External binding 进入仅用于单次运行 stale check 的 ExecutionBindingFingerprint，不进入 archive fingerprint 或 Committed Baseline。

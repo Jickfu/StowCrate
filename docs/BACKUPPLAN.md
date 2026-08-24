@@ -163,7 +163,7 @@ Import 表示接管同一逻辑 Plan，默认保留全部 portable IDs；Clone �
 
 Save As 只是同一 Plan Document 的物理副本，不能把两个相同 PlanId 的副本在同一 DeviceId 下注册成两个独立计划。用户可以显式把既有 File-backed registration 重定位到副本；若想并存运行，必须使用 Clone 生成全新递归 identity。Managed Plan 的 Export 若随后要 Register 为同一 Plan，也必须走显式 authority conversion，不能形成双 authority。
 
-导入或注册时发现同 PlanId 已存在但文档语义不同，必须返回 IdentityConflict；不得自动覆盖、合并或重新生成 ID。Update existing、Clone as new、Cancel 的最终交互与 merge 规则仍属于后续 P0。
+导入或注册时发现同 PlanId 已存在但文档语义不同，必须返回 IdentityConflict；不得自动覆盖、合并或重新生成 ID。完整的 Import / Update / Clone / Register 冲突语义见第 20 节。
 
 删除对象后从无 identity 的物理路径重新发现，不自动恢复旧 ID。只有 portable 声明、`.backupignore @id`、显式 Import/Restore 或用户确认的 identity migration 可以接续原 identity。
 
@@ -697,17 +697,80 @@ Schema evolution 必须分类处理：实现优化、错误消息或文档修正
 
 本节只固定 compatibility、closed-world、migration、validation pipeline、writer safety 与 fingerprint 边界；不创建 JSON Schema，不定义具体字段名/结构，不实现 serializer/migrator，也不定义 SQLite schema、Entity、Repository 或 migration。
 
-## 20. 与实现现状的差异和迁移约束
+## 20. Import / Update / Clone 与冲突语义 v1
+
+### 20.1 操作与 whole-document replacement
+
+v1 明确区分四种操作：Import 把不存在的 PlanId 导入为 Managed Plan；Update Existing 以相同 PlanId 的 incoming document 完整替换既有 Managed Plan 的 portable desired configuration；Clone 递归生成新 portable identity 后创建新的 Managed Plan；Register 把不存在的 PlanId 注册为 File-backed Plan。
+
+一个 `*.backupplan` 是完整 Plan aggregate，不是 patch。v1 不支持 automatic/field/partial/three-way merge，也不允许只选择部分 Source 导入。Update 后 active 对象集合完全等于 incoming aggregate；不得把 existing-only 与 incoming 集合求并集。File-backed 文本冲突由用户使用 Git 等文本工具处理，StowCrate 只解析最终完整文档。
+
+对象对应只使用 `SourceId`、`ArchiveUnitId`、`ExternalSourceId`、`SecretSlotId` 等稳定 ID，绝不按 name、logical/physical path、数组位置、内容或相似性猜 identity。相同 ID 的 rename、move 或配置改变是 Modified；相同 name/path 但不同 ID 是 Removed + Added。显式 identity migration 是独立操作，不属于 Update 猜测。
+
+### 20.2 幂等、冲突与 Semantic Diff
+
+同 PlanId 且 PlanSemanticFingerprint 相同的重复 Import/Update 返回 `AlreadyExistsSameSemantic` / NoOp：不修改 PlanRevision、binding、baseline、runtime state 或 scheduler installation，也不触发 rebuild/reconcile。同 PlanId 但语义不同返回 `IdentityConflict`，只能由用户明确选择 Update Existing、Clone As New 或 Cancel；不得自动 overwrite、merge 或生成新 PlanId。
+
+Update 前必须基于 validated、migrated、defaults-expanded current semantic model 生成 `PlanSemanticDiff`，而不是 diff raw JSON。diff 至少区分 Metadata、Added、Removed、Modified，以及 ExecutionCritical、ArchiveRebuild、OutputReorganization、HistoryChange、ScheduleChange、BindingRequirementChange、SecretRequirementChange。formatting、property order、旧 schema 结构和 omitted-vs-explicit default 不产生假差异。Update Requires Confirmation；incoming schema/semantic 无效、identity 重复或引用损坏时 existing state 保持零修改。
+
+### 20.3 原子配置提交与状态保留
+
+Update Existing 是单个原子 config operation：验证与 semantic diff 完成并获得确认后，在一个事务内替换 authoritative portable configuration，按 identity 保留适用 local/runtime state，标记后续 readiness/reconciliation 状态，再整体 commit。不得出现 Source 已换而 Archive Unit 尚未换的半更新状态。
+
+运行状态按对象分类处理：
+
+| 分类 | 处理 |
+|---|---|
+| Preserved | incoming/existing 都有相同 ID：保留 local binding、Current、History、ArchiveVersion 与 Committed Baseline，并在后续使用前重新验证 |
+| Added | incoming 新 ID：没有 local/runtime state；按需 MissingBinding / PlanNotReady，Archive Unit 自然 FirstBackup |
+| Removed | existing-only ID：退出 active Plan，但 binding、baseline、Current/History 等转为 retained inactive/recovery state，不自动删除 |
+| Modified | 相同 ID、语义变化：保留 runtime identity，由现有 fingerprints、Change Detector 和 reconciliation 状态决定 rebuild/relocation/maintenance |
+
+Update/Import 层不得因为“配置改变”清空 baseline，也不得自行判断 rebuild。`CHANGE-DETECTION.md` 的 EntrySet/Selection/ArchiveSpec fingerprints 与 Change Detector 是唯一业务判断者。恢复此前 removed identity 时必须重新验证 artifact/baseline 完整性，不能盲目信任 dormant state。
+
+清理 removed Archive Unit 的 Current、History、ArchiveVersion、baseline 或 detached binding 是独立的 destructive operation，必须列出影响并明确确认。删除 SecretSlot/Plan/registration 也不得自动删除 OS Secret。History Disabled 仍不等于 Purge History。
+
+### 20.4 Readiness 与 commit 后协调
+
+相同 Source/External/Secret identity 的本机 binding 在 Update 后保留；新增 identity 不按名称自动绑定，缺少 binding 时 config update 仍可成功，但状态为相应 `PlanNotReady` / `MissingSourceBinding` / `MissingExternalBinding` / `MissingSecretBinding`。删除 identity 的 binding 转为 inactive/detached state，等待显式 cleanup。
+
+Scheduler reconcile、Secret binding、OutputReorganization、StorageRelocation 与 History maintenance 都是 config commit 后的独立操作，不进入 Update transaction。合法结果可以是 Updated + PlanNotReady、ScheduleOutOfSync 或 OutputReorganizationRequired；这些状态不得回滚已确认的 portable configuration。Schedule installation 继续遵守第 17 节，输出与 History 继续遵守第 18 节。
+
+### 20.5 Register、registration relocation 与 authority conversion
+
+同一 DeviceId 下同一 PlanId 只能有一个 registration/authority：
+
+- 相同 path、PlanId 与语义的重复 Register 返回 `AlreadyRegistered` / NoOp；
+- 同 PlanId 已是 File-backed、但 incoming 是另一文件路径：`RegistrationConflict`，只允许 Relocate Existing Registration、Clone As New 或 Cancel；
+- Existing Managed 遇到同 PlanId Register：`AuthorityConflict`，只允许显式 Convert Managed → File-backed、Clone As New 或 Cancel；
+- Existing File-backed 遇到同 PlanId Import：`AuthorityConflict`，只允许显式 Convert File-backed → Managed、Clone As New 或 Cancel。
+
+语义相同也不得静默切换 authority。显式 conversion/relocation 必须验证同 PlanId，展示 semantic diff 和 authority/path 后果，并原子切换唯一真相源；新 File-backed 目标随后整体成为 authoritative document，不发生 merge。File-backed → Managed 后原文件变化不再影响 Plan。
+
+注册后的 authoritative File-backed 文件内容从语义 X 改为 Y 是正常 desired configuration change，不是 Import/IdentityConflict；Application 按本节相同 ID 分类保留 runtime state，并运行 fingerprint/reconciliation。若文件中的 PlanId 从 registration 绑定的 A 变为 B，则返回 `RegisteredDocumentIdentityChanged` + PlanNotReady，不得自动改变 registration identity；用户必须恢复原 ID，或显式 Unregister 后 Register/Clone/identity migration。
+
+### 20.6 Clone 与 Save As
+
+Clone 必须为 PlanId、全部 SourceId、ArchiveUnitId、ExternalSourceId、SecretSlotId 递归生成 UUID v4，并同步重写所有内部引用，尽可能保持其他 portable semantics。Clone 不复制 Source/Current/History/External/Secret binding、ScheduleInstallation、ArchiveVersion、Current、History、baseline 或任何 runtime state，因此通常 PlanNotReady，所有 Archive Unit 首次运行都是 FirstBackup；即使 archive bytes 可能相同，也不得借用原 Plan Current。
+
+Save As / Copy 只复制同一个 document，保留 PlanId 与全部 child IDs，不是 Clone。同一设备不能同时 Register 原件与副本；只能显式 relocation 或先 Clone。
+
+至少区分 `IdentityConflict`、`AuthorityConflict`、`RegistrationConflict`、`RegisteredDocumentIdentityChanged`、`AlreadyExistsSameSemantic`、`AlreadyRegistered`、`UpdateRequiresConfirmation` 与 `DocumentUpgradeRequired`。本节不定义 UI 布局、JSON Schema、SQLite schema/transaction 实现或 cleanup 物理算法。
+
+## 21. 与实现现状的差异和迁移约束
 
 1. **`.backupignore v1` Directive 集合变化**：规范最初只允许 `@version/@mode/@case`；现在已正式加入可选 `@id`。当前 parser 尚未实现 `@id`，后续业务实现必须同步 parser、领域返回类型和兼容性测试。
 2. **Fingerprint 强类型与字段**：ArchiveUnitId/ExternalSourceId 已正式排除于 SelectionFingerprint，logical source/path/mapping 仍包含；当前 Core 尚未实现这些强类型 fingerprint，不得把旧聚合 string 当作 v1 durable baseline。
 3. **Baseline key 与 DeviceId**：Change Detection 的 `PlanId + ArchiveUnitId` 是 portable unit key；DeviceId 只作为本机 registration/binding/runtime namespace，不替换该 key。
-4. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无完整 declaration/discovery resolver、ExternalSource/SecretSlot identity、DeviceId、Local/Secret/Schedule/Storage Binding、Global Rules Snapshot、ProtectionCapabilities、ScheduleIntent、History policy、OutputLayout/ExecutionBinding fingerprint、relocation、version-specific document reader/migrator 或完整的 Current/History publish。本文不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
+4. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无完整 declaration/discovery resolver、ExternalSource/SecretSlot identity、DeviceId、Local/Secret/Schedule/Storage Binding、Global Rules Snapshot、ProtectionCapabilities、ScheduleIntent、History policy、OutputLayout/ExecutionBinding fingerprint、relocation、version-specific document reader/migrator、Import/Update/Clone workflow 或完整的 Current/History publish。本文不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
 
-## 21. 当前未决顺序
+## 22. 当前未决顺序
 
-Identity、Portable Path/Local Binding、Global Rules、FILE_MANAGED declaration/discovery、Protection Configuration/Secret Binding、Schedule Portability、History/Output Portability 与 Schema Compatibility/Unknown Fields P0 已确认。JSON Schema 前只剩：
+Identity、Portable Path/Local Binding、Global Rules、FILE_MANAGED declaration/discovery、Protection Configuration/Secret Binding、Schedule Portability、History/Output Portability、Schema Compatibility/Unknown Fields 与 Import/Update/Clone 冲突语义 P0 已确认，Backup Plan P0 已全部冻结。
 
-1. Import identity conflict / merge semantics。
+正式冻结 Backup Plan v1 Domain Model 和编写 JSON Schema 前，仍须依次完成会改变 schema 结构的设计：
 
-ArchiveSpec override 与 External Source 的完整行为仍需设计，但不得提前固化 JSON 字段。本轮同样不定义 JSON Schema、SQLite schema、Entity、Repository 或 migration。
+1. ArchiveSpec default / per-unit override；
+2. External Source 完整语义。
+
+完成后才可冻结领域模型并设计 `backupplan-v1.schema.json`、Document DTO/serializer，随后进入 Persistence / SQLite。本轮不定义 JSON Schema、SQLite schema、Entity、Repository 或 migration。

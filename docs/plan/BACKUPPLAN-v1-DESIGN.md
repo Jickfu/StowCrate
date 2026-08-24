@@ -79,10 +79,12 @@ Committed Baseline identity 需要稳定 `PlanId + ArchiveUnitId`。物理路径
 - Managed 与 File-backed 必须解析成相同的 identity/value types，authority 不进入 Core；
 - File-backed 以 PlanSemanticFingerprint 处理运行中变化，不要求用户手工维护单调 revision。
 
-### 后续 Import/merge P0 仍未决
+### Import/Update/Clone P0 已确认
 
-- 手工合并 Git 分支导致 revision 回退/分叉时的冲突策略；
-- 导入同 PlanId 时是 update、fork，还是要求用户明确选择。
+- v1 不做 automatic/field/partial/three-way merge；Git 分支的文本 merge 由 Git 和用户完成；
+- same PlanId + same semantic 是幂等 NoOp；语义不同时必须明确选择 Update Existing、Clone As New 或 Cancel；
+- Update 是 whole-document semantic replacement，只按稳定 ID 对应并保留适用 runtime state；
+- Clone 递归生成全部 portable IDs，不继承 binding、Current、History、baseline 或 scheduler state。
 
 ## 5. Source 与路径绑定（P0 已确认）
 
@@ -128,7 +130,7 @@ Local Binding 的数据库结构、UI 编辑方式和未来 Device Binding Expor
 - 所有 rule list 保持原始顺序；JSON object/property 顺序不能承担规则优先级；
 - Boundary 由所有 Archive Unit logical roots 独立构造，不保存可漂移的派生 boundary list。
 
-未决：Global Rules 在导出文件中保存 snapshot，还是通过稳定 RuleSet ID 引用并附带可选 snapshot。纯外部引用会削弱文件的灾难恢复完整性；完全复制又需要定义后续同步语义。
+已确认 Global Rules 在 Plan 中保存 authoritative pinned snapshot；Library ID/revision 等只可作为 optional provenance，不是运行时依赖。FILE_MANAGED declaration/discovery 合成和 `.backupignore @id` 冲突规则也已进入 `BACKUPPLAN.md`。
 
 ## 7. ArchiveSpec
 
@@ -138,16 +140,12 @@ Local Binding 的数据库结构、UI 编辑方式和未来 Device Binding Expor
 - compression algorithm/level、solid mode、volume size；
 - metadata preservation policy；
 - protection mode；
-- SecretReferenceId + SecretRevision（没有 secret value）；
+- portable SecretSlotId；resolved execution 另携带本机 SecretRevision（没有 secret value）；
 - manifest/archive semantics version。
 
 格式能力必须在执行前验证。无法 Preserve 某种 Link/metadata 时安全失败，不能自动 dereference 或静默降级。
 
-未决：
-
-- 首版每种格式允许的精确参数集合与 portable default；
-- SecretReferenceId 是否适合跨设备导出，还是只导出 logical secret slot 并要求重新绑定；
-- ArchiveSpec 是 Plan 默认值 + unit override，还是每个 unit 完整展开。前者便于管理，后者更利于审阅和确定性。
+未决：首版每种格式允许的精确参数集合与 portable default，以及 ArchiveSpec default + unit override 的结构和继承语义。Secret 已确认使用 portable logical SecretSlot + device-local SecretBinding。
 
 ## 8. Change Detection、Retention 与 Schedule
 
@@ -156,7 +154,7 @@ Local Binding 的数据库结构、UI 编辑方式和未来 Device Binding Expor
 - Schedule 是调用 CLI/use case 的意图描述，不保存平台 scheduler 的内部 task ID；
 - 这些非归档设置的修改可以增加 PlanRevision，但不能改变 ArchiveSpecFingerprint。
 
-未决：schedule 是否属于 portable `*.backupplan` 的规范主体，还是作为可选 deployment section；时区、DST、错过运行补偿和并发策略也尚未决定。
+Schedule 已确认为 portable ScheduleIntent，本机 scheduler installation 独立；local wall-clock、DST、missed-run 与并发策略见 `BACKUPPLAN.md`。History/Output portable policy、retention 与 storage relocation 也已确认。
 
 ## 9. External Sources
 
@@ -182,20 +180,20 @@ External Source 必须通过稳定 ID、实际路径 binding、目标 ArchiveUni
 - Core 与执行管线只接收统一 ResolvedPlanSnapshot，不感知配置来源；
 - v1 不要求未注册文档支持无状态 one-shot execution。
 
-## 11. Schema v1 之前必须确认的 P0
+## 11. Schema v1 之前的 P0 状态
 
 1. ~~Backup Plan Document Authority~~：已确定，见 `BACKUPPLAN.md`；
-2. ~~Plan / Source / ArchiveUnit / ExternalSource identity 与基本 ID 生命周期~~：已确定；Import conflict/merge 的交互留在第 10 项；
+2. ~~Plan / Source / ArchiveUnit / ExternalSource identity 与基本 ID 生命周期~~：已确定；
 3. ~~Portable Path、Local Binding、DeviceId 与 Source/Current/History 所有权~~：已确定；
-4. Global Rules 的 snapshot/reference 语义；
-5. FILE_MANAGED `.backupignore` 的引用与发现语义：`@id` identity 部分已确定，rules/declaration 合成仍未决；
-6. Secret Reference / Encryption configuration；
-7. Schedule portability；
-8. History / output 配置的可移植边界；
-9. Schema compatibility、unknown fields 与新版本读取策略；
-10. Import identity conflict / merge semantics。
+4. ~~Global Rules 的 snapshot/reference 语义~~：已确定；
+5. ~~FILE_MANAGED `.backupignore` 的引用与发现语义~~：已确定；
+6. ~~Secret Reference / Encryption configuration~~：已确定；
+7. ~~Schedule portability~~：已确定；
+8. ~~History / output 配置的可移植边界~~：已确定；
+9. ~~Schema compatibility、unknown fields 与新版本读取策略~~：已确定；
+10. ~~Import identity conflict / merge semantics~~：已确定。
 
-ArchiveSpec override 与 External Source 字段形状仍需设计，但不能越过上述身份、路径和兼容性基础提前固化 Schema。
+Backup Plan P0 已全部冻结。ArchiveSpec default/override 与 External Source 完整语义仍会改变字段形状，必须完成后才能冻结 v1 Domain Model 和创建 Schema。
 
 ## 12. Identity + Portable Binding 结论
 
@@ -230,25 +228,23 @@ ResolvedPlanSnapshot
 
 这些语义已经进入 `BACKUPPLAN.md` 与 `BACKUPIGNORE.md`，但仍不生成 canonical JSON 示例。
 
-## 13. 当前设计焦点：Rules 与 FILE_MANAGED declaration
+## 13. 当前设计焦点：Schema-shaping domain design
 
 下一项按顺序解决：
 
-1. Global Rules 在 portable plan 中保存 snapshot、reference，还是组合模型；
-2. Plan Rules 与 UI_MANAGED Local Rules 如何共享 `BACKUPIGNORE.md` pattern semantics；
-3. FILE_MANAGED declaration 是否必须显式列在 Plan、允许纯 discovery，或两者并存；
-4. Plan declaration 的 ArchiveUnitId/path 与 `.backupignore @id` 缺失、匹配、冲突时的完整验证；
-5. Global/Plan/Local 的版本、顺序与 semantic fingerprint canonicalization。
-
-该 P0 确认前继续禁止设计 JSON Schema。
+1. ArchiveSpec portable default 与 per-unit override 的合法字段、继承、显式默认和 fingerprint 语义；
+2. External Source 的文件/目录类型、mapping、规则、冲突、边界、link 与 incomplete observation 语义；
+3. 冻结 Backup Plan v1 Domain Model；
+4. 最后才设计 canonical JSON 示例与 JSON Schema。
 
 ## 14. 后续产物
 
-P0 决策完成后依次产出：
+后续依次产出：
 
 1. 继续增量完善正式 `docs/BACKUPPLAN.md`；
-2. 完成其余 P0 后才创建 canonical JSON 示例与 JSON Schema；
-3. 导入、注册、clone、update、冲突和 secret rebinding 测试矩阵；
-4. Application ports 与纯领域 contract；
-5. `docs/PERSISTENCE.md`；
-6. 最后才设计 SQLite schema 和 migration。
+2. 完成 ArchiveSpec override 与 External Source 设计并冻结领域模型；
+3. 创建 canonical JSON 示例与 JSON Schema；
+4. 导入、注册、clone、update、冲突和 secret rebinding 测试矩阵；
+5. Application ports 与纯领域 contract；
+6. `docs/PERSISTENCE.md`；
+7. 最后才设计 SQLite schema 和 migration。

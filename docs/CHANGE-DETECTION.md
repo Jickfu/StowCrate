@@ -54,6 +54,8 @@ Committed Baseline 是最近一个已验证、成功发布为 Current，并完�
 
 `PlanId`、`ArchiveUnitId`、`ExternalSourceId`、`DeviceId`、数据库 ID、authority、registration path，以及 Global Rule Library 的 ID、名称、revision/provenance 都不进入 SelectionFingerprint。它们是 identity、运行命名空间或 authoring metadata，不是归档内容选择语义。`PlanId + ArchiveUnitId` 仍是 baseline key；更换该 key 会因为没有对应 baseline 得到 `FirstBackup`，不需要把 identity 再编码进 SelectionFingerprint。
 
+Import/Update 不得因 portable configuration 被整体替换而清空 baseline。incoming/existing 都保留同一 `ArchiveUnitId` 时继续加载原 baseline，由本规范的 fingerprints 决定 Unchanged/RebuildRequired；新增 identity 自然 FirstBackup。removed identity 的 baseline 与 Current/History 转为 inactive recovery state，不自动删除；日后相同 identity 恢复 active 时必须先重新验证 durable artifact/baseline 完整性。是否 rebuild 始终由 Change Detector 判断，不得由 Import workflow 另设“配置有变化即重建”的旁路规则。
+
 Archive Unit logical path 仍然进入 SelectionFingerprint：即使 identity 保持不变，路径变化也会改变来源与 manifest/Current 的逻辑结构。External Source 同理，进入 fingerprint 的是逻辑映射与归档目标，而不是 `ExternalSourceId` 自身。FILE_MANAGED 的 `@id` 文本虽然不作为独立 identity 字段进入 SelectionFingerprint，但 `.backupignore` 是本单元的保留归档内容；修改其 bytes 会自然改变 EntrySetFingerprint。
 
 ### ArchiveSpecFingerprint

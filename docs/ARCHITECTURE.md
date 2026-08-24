@@ -48,6 +48,7 @@ StowCrate.slnx
 - 检测变化、执行备份、发布 Current、管理 History；
 - 导入/导出 `.backupignore` 和 Backup Plan 文件（`*.backupplan`）；
 - Import Managed Plan、Register File-backed Plan，并把两种 authority 解析为统一的 immutable Plan Snapshot；
+- 生成 semantic diff，协调 same-PlanId whole-document Update、递归 identity Clone、registration relocation 与显式 authority conversion；
 - 管理 Secret Slot 的显式 Bind/Set/Replace/Unbind，用 local SecretRevision 维护变更语义并验证交互式/无头 readiness；
 - 保存 ScheduleIntent、协调本机 scheduler installation/status，并由所有触发方式调用同一 Run Plan 用例；
 - 验证 OutputLayout、协调 Current/History publish、retention maintenance 与 CurrentRoot/HistoryRoot 的受控 relocation；
@@ -102,6 +103,10 @@ Raw bytes → strict parse → versioned schema/semantic validation → in-memor
 ```
 
 读取、预览、Register 或运行不得自动升级 File-backed 文件。显式 upgrade/save 通过 Application 用例协调 preview；writer 投影合法 document 后执行 schema validation、临时写入、round-trip read/validate 和原子替换。Managed Import 可在不修改来源文件的前提下迁移到当前内部模型。
+
+Import/Update 的单位是完整 Plan aggregate，v1 没有 automatic、field、partial 或 three-way merge。Application 只按稳定 ID 匹配对象；Update 在确认 semantic diff 后原子替换 portable configuration，并把相同 identity 的 local/runtime state 保留给 Change Detector 重新验证。新增 identity 没有 binding/baseline；removed identity 的 state/artifacts 转为 inactive recovery state，任何 purge 都是独立破坏性用例。scheduler、binding、output/history relocation/maintenance 等副作用只在 config commit 后独立协调。
+
+同一 DeviceId/PlanId 只能有一个 authority/registration。Managed ↔ File-backed conversion、第二个 File-backed path 的 registration relocation 都必须显式确认；File-backed 文档原地改变 PlanId 时安全进入 `RegisteredDocumentIdentityChanged`，不能让 registration 偷换 identity。Clone 递归重写全部 portable IDs 和引用，不复制任何 local/runtime state。
 
 Portable identity 使用强类型 UUID v4 `PlanId`、`SourceId`、`ArchiveUnitId`、`ExternalSourceId`、`SecretSlotId`。Application 将 portable declaration 与当前 DeviceId 下的 Local Binding 合成为 `ResolvedPlanSnapshot`；Core 不读取 DeviceId、hostname、环境变量、registration path、OS SecretReference 或数据库键。
 
@@ -290,7 +295,7 @@ ArchiveVersion 的 durable identity 与物理绝对路径分离：概念上记�
 ## 11. 测试策略
 
 - **Core 单元测试**：规则语义、层级边界、路径规范化、ArchivePlan 稳定性。
-- **Application 测试**：变化原因、独立 baseline commit、History capture/retention 顺序、取消、失败补偿、预览与结果，schema validity/semantic validity/local readiness/capability 的错误分层，旧文档内存迁移与显式 upgrade，MissingSecretBinding/SecretUnavailable/SecretStoreError、SecretRevision drift、headless 不降级，schedule reconcile/out-of-sync、schedule-only stale change 不阻止发布、SkipIfRunning，以及 History Enabled/Retention/OutputLayout/ExecutionBinding drift 的不同发布结果。
+- **Application 测试**：变化原因、独立 baseline commit、History capture/retention 顺序、取消、失败补偿、预览与结果，schema validity/semantic validity/local readiness/capability 的错误分层，旧文档内存迁移与显式 upgrade，Import 幂等/IdentityConflict、whole-document Update 的 stable-ID diff 与原子性、state preserved/added/removed/modified、Clone 递归重写、authority conversion/registration relocation、registered PlanId drift，MissingSecretBinding/SecretUnavailable/SecretStoreError、SecretRevision drift、headless 不降级，schedule reconcile/out-of-sync、schedule-only stale change 不阻止发布、SkipIfRunning，以及 History Enabled/Retention/OutputLayout/ExecutionBinding drift 的不同发布结果。
 - **Infrastructure 集成测试**：UTF-8/BOM、严格 JSON、property 大小写/重复检测、各层 unknown property/enum/variant、schemaVersion dispatch、writer round-trip/原子替换，SQLite migration/backup、文件锁、Current/History relocation、跨文件系统 copy/verify、output collision/case semantics、跨 Plan root overlap、scheduler install/update/remove/status、DST/missed-run 映射与 native identity lifecycle。
 - **Archiving 契约测试**：每种格式的创建、测试、恢复、加密、Unicode、大文件和分卷；验证 protection capabilities，且 SecretValue 不出现在参数、环境、日志或诊断输出。
 - **跨平台测试**：Windows/macOS/Linux CI，大小写、权限、链接和长路径 fixture；Secret Store prototype 还必须覆盖 GUI 用户与 Task Scheduler/launchd/systemd timer/cron 的实际执行身份。
