@@ -51,6 +51,14 @@ public sealed class ProjectDependencyTests
         }
     }
 
+    [Theory]
+    [InlineData(@"..\StowCrate.Core\StowCrate.Core.csproj", "StowCrate.Core")]
+    [InlineData("../StowCrate.Core/StowCrate.Core.csproj", "StowCrate.Core")]
+    public void ProjectReferenceNamesAreParsedAcrossPlatforms(string reference, string expectedName)
+    {
+        Assert.Equal(expectedName, GetReferencedProjectName(reference));
+    }
+
     private static bool IsUiOrDatabasePackage(string packageName)
     {
         return packageName.StartsWith("Avalonia", StringComparison.OrdinalIgnoreCase)
@@ -66,9 +74,16 @@ public sealed class ProjectDependencyTests
     private static string[] ReadProjectReferences(string projectPath)
     {
         return ReadReferences(projectPath, "ProjectReference")
-            .Select(reference => Path.GetFileNameWithoutExtension(reference)
-                ?? throw new InvalidDataException($"无效的项目引用路径：{reference}"))
+            .Select(GetReferencedProjectName)
             .ToArray();
+    }
+
+    private static string GetReferencedProjectName(string reference)
+    {
+        var normalizedReference = reference.Replace('\\', '/');
+
+        return Path.GetFileNameWithoutExtension(normalizedReference)
+            ?? throw new InvalidDataException($"无效的项目引用路径：{reference}");
     }
 
     private static string[] ReadPackageReferences(string projectPath)
