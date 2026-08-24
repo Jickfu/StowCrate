@@ -5,7 +5,7 @@
 
 StowCrate 将目录整理成一组可理解、可独立恢复的标准归档文件，而不是只有原软件才能读取的专有备份仓库。
 
-项目处于设计与工程初始化阶段，采用 [Apache License 2.0](LICENSE)。
+项目已进入 **Milestone 1 — Planning Kernel**，采用 [Apache License 2.0](LICENSE)。
 
 ## 设计原则
 
@@ -19,8 +19,12 @@ StowCrate 将目录整理成一组可理解、可独立恢复的标准归档文�
 
 - [产品设计](docs/PRODUCT.md)
 - [技术架构](docs/ARCHITECTURE.md)
+- [`.backupignore` v1 规范](docs/BACKUPIGNORE.md)
+- [Milestone 1 — Planning Kernel](docs/milestones/MILESTONE-1-PLANNING-KERNEL.md)
 - [仓库开发约束](AGENTS.md)
 
 ## 当前状态
 
-当前只建立项目文档与初始解决方案骨架，尚未实现业务功能。待确认事项统一记录在产品设计文档中。
+规划内核已经具备跨平台逻辑路径、`.backupignore` v1 解析与规则合成、Archive Unit 边界树、不可变 `ArchivePlan` 以及确定性 fingerprint，并通过端到端 dry-run 测试。
+
+Milestone 1 暂不实现 Avalonia UI、SQLite、归档执行器和真实文件系统 Scanner；这些外层能力将在领域模型和符号链接策略稳定后接入。尚未决策事项统一记录在产品设计文档中。

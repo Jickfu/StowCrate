@@ -2,7 +2,7 @@
 
 ## 1. 架构目标
 
-StowCrate 采用 C#、.NET 10、Avalonia 和 MVVM，核心为平台无关的模块化架构。首版可以 Windows 优先，但不得把 Windows 路径、API 或调度模型写入领域层。
+StowCrate 采用 C#、.NET 10、Avalonia 和 MVVM，核心为平台无关的模块化架构。首版同时交付 Windows、macOS 和 Linux，不得把任一平台的路径、API 或调度模型写入领域层。
 
 系统优先保证：长期可恢复、规划可解释、写入原子性、失败不破坏上次有效备份、秘密不泄漏，以及无平台优化时仍能正确工作。
 
@@ -71,6 +71,8 @@ StowCrate.slnx
 
 外部可执行文件的许可、版本、路径和能力必须显式管理。应用层不得拼接命令行。
 
+首版发行包随平台携带固定兼容版本的 7-Zip/7zz；Archiving 通过能力探测验证随包二进制，打包流程必须附带对应许可证和第三方归属信息。
+
 ### StowCrate.App / StowCrate.Cli
 
 二者是组合根：注册依赖、解析用户输入并调用相同应用用例。GUI 负责 Avalonia Views、ViewModels、导航、进度和交互；CLI 负责非交互命令、退出码和调度器集成。两者不实现备份规则。
@@ -96,6 +98,17 @@ Infrastructure 和 Archiving 只实现向内层定义的端口。组合根选择
 
 执行前必须先生成不可变、可审阅的 `ArchivePlan`，不得边扫描边直接改写 Current。
 
+```text
+BackupPlan
+  → SourceSnapshot
+  → Archive Unit Discovery / Tree
+  → Rule Resolution
+  → ArchivePlan
+  → Dry-run / Preview
+```
+
+`SourceSnapshot` 是 Scanner 输出给纯规划内核的不可变边界。同一份 Source Snapshot、BackupPlan 与规则必须生成内容、顺序和 fingerprint 均相同的 ArchivePlan。Milestone 1 先用可构造快照验证规划内核；真实文件系统 Scanner 在首版符号链接策略确定后实现。
+
 1. 解析设备路径映射并按目标平台规则规范化路径；验证 `SourceRoot`、`CurrentRoot`、`HistoryRoot` 两两不相等且不存在任何祖先/子孙关系，并验证 staging 不会形成递归输入。
 2. 发现 UI 管理或 `.backupignore` 管理的 Archive Unit。
 3. 构建 Archive Unit 树；把所有直接子单元注册为父单元的停止边界。
@@ -105,7 +118,7 @@ Infrastructure 和 Archiving 只实现向内层定义的端口。组合根选择
 7. 生成规范排序的 entries、警告、预估与变更指纹。
 8. 只有经过用户确认或无头策略允许的计划才进入执行阶段。
 
-路径匹配器必须独立测试以下情况：不同分隔符、根路径、`!`、`*`、`**`、尾随斜杠、Unicode、大小写敏感文件系统、符号链接循环和嵌套边界。
+路径匹配器必须独立测试以下情况：不同分隔符、根路径、`!`、`*`、`**`、尾随斜杠、Unicode、大小写敏感文件系统和嵌套边界。Scanner 实现时还必须独立测试符号链接循环及逃逸 Source 的链接。
 
 ## 5. 执行与原子发布
 
