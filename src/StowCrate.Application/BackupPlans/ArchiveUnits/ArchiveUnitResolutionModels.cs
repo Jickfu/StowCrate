@@ -66,6 +66,7 @@ public sealed class ArchiveUnitResolutionResult
     public ImmutableArray<PendingArchiveUnitRegistration> PendingRegistrations { get; }
     public ImmutableArray<ArchiveUnitResolutionIssue> Issues { get; }
     public bool IsSuccess => ResolvedSet is not null && Issues.IsEmpty;
+    public bool CanPreview => ResolvedSet is not null;
     public bool RequiresDurableRegistrationCommit => !PendingRegistrations.IsEmpty;
 }
 

@@ -127,6 +127,7 @@ public sealed class ResolvedPlanSnapshotResolver : IResolvedPlanSnapshotResolver
         var snapshot = new ResolvedPlanSnapshot(
             plan.Id,
             bindings.DeviceId,
+            plan.Semantics,
             resolvedSources,
             bindings.CurrentRoot!,
             bindings.HistoryRoot,

@@ -55,7 +55,7 @@ public sealed class ArchiveUnitResolver(IArchiveUnitIdGenerator idGenerator) : I
             }
         }
 
-        if (issues.Count != 0)
+        if (issues.Any(IsHardFailure))
         {
             return new ArchiveUnitResolutionResult(null, pending, issues);
         }
@@ -183,14 +183,14 @@ public sealed class ArchiveUnitResolver(IArchiveUnitIdGenerator idGenerator) : I
         }
 
         ValidateRelocations(plan.DeclaredArchiveUnits, discovered, registrationsByPath, issues);
-        if (issues.Count != 0)
+        if (issues.Any(IsHardFailure))
         {
             return new ArchiveUnitResolutionResult(null, pending, issues);
         }
 
         var units = BuildBoundaries(provisional);
         ValidateExternalBoundaries(plan, units, issues);
-        if (issues.Count != 0)
+        if (issues.Any(IsHardFailure))
         {
             return new ArchiveUnitResolutionResult(null, pending, issues);
         }
@@ -412,6 +412,9 @@ public sealed class ArchiveUnitResolver(IArchiveUnitIdGenerator idGenerator) : I
         ArchiveUnitResolutionIssueCode code,
         string message,
         SourceId sourceId) => new(code, message, sourceId);
+
+    private static bool IsHardFailure(ArchiveUnitResolutionIssue issue) =>
+        issue.Code is not ArchiveUnitResolutionIssueCode.IncompleteObservation;
 
     private sealed record DiscoveredUnit(
         SourceId SourceId,

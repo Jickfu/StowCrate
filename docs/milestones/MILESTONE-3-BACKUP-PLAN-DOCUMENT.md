@@ -80,6 +80,18 @@ ResolvedPlanSnapshot
 - 最终 discovered unit set 建立 typed parent/child boundaries，并重新检查 External destination 穿越新发现 child boundary；
 - observation issues、ArchiveUnit resolution issues 与 document/semantic/binding errors 保持分层；incomplete observation 不产生 complete resolved set。
 
-## 下一项：Candidate Archive Composition + Execution Readiness
+## 已完成：Candidate Archive Composition + Execution Readiness
 
-把 normal selected entries、External explicit entries 与 generated metadata 合成为 Candidate ArchiveSet，再统一处理 discovered boundaries、ownership collision、conditional HistoryRoot、SecretRevision、archive capability、output collision 与 execution readiness。仍不提前实现 SQLite、Archiver、External staging/TOCTOU materialization 或 backup execution。
+- `ResolvedPlanSnapshot` 携带 authoritative Rules/Archive/OutputPathEncoding semantics pins；
+- Candidate composition 与 Execution Readiness 是两个独立 pure stages；
+- normal selection 按 Safety、reserved namespace、LinkPolicy、EffectiveRuleSet，并停止于 direct child boundary；FILE_MANAGED own control entry 强制保留；
+- External File/Directory observation 映射为 explicit inclusion，不经过 Rules；
+- normal/external/generated actual owners 在统一 archive-path ownership validation 中检查 same-path 与 non-directory ancestor collision；
+- `__stowcrate__/manifest.json` 由无 runtime bytes 的 `GeneratedMetadataPlan` 预留；
+- v1 source/unit/format mapping在 Application 决定 per-unit OutputRelativePath 并检查同 Plan logical output collision；
+- Readiness 仅对实际 units 检查 conditional HistoryRoot、Secure SecretSlotId+SecretRevision、archive capability 与 pending identity durable registration；
+- incomplete observation 可保留已知 resolved state并生成 diagnostic Candidate，但 `CanExecute=false`。
+
+## 下一项：Candidate Fingerprints + Change Decision Integration
+
+正式实现强类型 EntrySet / Selection / ArchiveSpec / OutputLayout / ExecutionSemantic / ExecutionBinding fingerprints，并把新版 Candidate 接入 Change Detection。仍不提前实现 Archiver、External staging/TOCTOU、SQLite/EF、baseline persistence 或 Current/History publish。

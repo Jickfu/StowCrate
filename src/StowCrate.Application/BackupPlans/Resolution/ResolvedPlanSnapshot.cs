@@ -10,6 +10,7 @@ public sealed class ResolvedPlanSnapshot
     public ResolvedPlanSnapshot(
         PlanId planId,
         DeviceId deviceId,
+        PortableSemanticsPins semantics,
         IEnumerable<ResolvedBackupSource> sources,
         ResolvedPhysicalPath currentRoot,
         ResolvedPhysicalPath? historyRoot,
@@ -22,8 +23,10 @@ public sealed class ResolvedPlanSnapshot
         IEnumerable<ResolvedExternalSource> externalSources,
         IEnumerable<SecretBindingFact> secretBindings)
     {
+        ArgumentNullException.ThrowIfNull(semantics);
         PlanId = planId;
         DeviceId = deviceId;
+        Semantics = semantics;
         Sources = [.. sources];
         CurrentRoot = currentRoot;
         HistoryRoot = historyRoot;
@@ -39,6 +42,7 @@ public sealed class ResolvedPlanSnapshot
 
     public PlanId PlanId { get; }
     public DeviceId DeviceId { get; }
+    public PortableSemanticsPins Semantics { get; }
     public ImmutableArray<ResolvedBackupSource> Sources { get; }
     public ResolvedPhysicalPath CurrentRoot { get; }
     public ResolvedPhysicalPath? HistoryRoot { get; }

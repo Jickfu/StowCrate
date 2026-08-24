@@ -34,6 +34,7 @@ public sealed class ResolvedPlanSnapshotResolverTests
 
         Assert.True(result.IsSuccess, string.Join(Environment.NewLine, result.Issues));
         Assert.Null(result.Snapshot!.HistoryRoot);
+        Assert.Equal(plan.Semantics, result.Snapshot.Semantics);
         Assert.Empty(result.Snapshot.SecretBindings);
         Assert.IsType<EffectiveHistoryEnabled>(result.Snapshot.DefaultUnitPolicy.History);
         Assert.IsType<SecureProtection>(result.Snapshot.DefaultUnitPolicy.ArchiveSpec.Protection);

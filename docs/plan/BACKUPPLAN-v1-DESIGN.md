@@ -238,7 +238,9 @@ Backup Plan v1 Document Contract Runtime 已完成：frozen DTO、strict UTF-8/d
 
 `Source/External Observation + Archive Unit Resolution Contract` 已完成：typed Source/External observations、`.backupignore @id`、FILE_MANAGED discovery/identity registration、effective unit policies、typed boundaries 与 discovered-boundary External validation 已合成为 `ResolvedArchiveUnitSet`。
 
-下一项推进为 **Candidate Archive Composition + Execution Readiness**：合成 normal selected、External explicit 与 generated entries 后，再检查 ownership collision、conditional History/Secret、capability 与最终 output collision；仍不实现 Import/Update、Local Binding persistence、SQLite 或 EF。
+`Candidate Archive Composition + Execution Readiness` 已完成为两个独立 pure stages：Candidate 冻结 normal/external/generated content 与 v1 logical output mapping；Readiness 冻结 capability、effective History、Secure revision requirements，并对 incomplete observation、conditional binding 与 pending registration 安全阻止执行。
+
+下一项推进为 **Candidate Fingerprints + Change Decision Integration**：实现强类型 EntrySet / Selection / ArchiveSpec / OutputLayout / ExecutionSemantic / ExecutionBinding fingerprints，并把新版 Candidate 接入 Change Detection；仍不实现 Import/Update、Local Binding persistence、SQLite 或 EF。
 
 ## 14. 后续产物
 

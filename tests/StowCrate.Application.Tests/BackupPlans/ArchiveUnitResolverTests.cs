@@ -101,7 +101,7 @@ public sealed class ArchiveUnitResolverTests
     }
 
     [Fact]
-    public void IncompleteObservationCannotProduceCompleteResolvedSet()
+    public void IncompleteObservationProducesPreviewCapableButUnsuccessfulResolvedSet()
     {
         var plan = CreatePlan(includeFileDeclaration: false);
         var incomplete = SourceObservation([], ObservationCompleteness.Incomplete);
@@ -112,7 +112,9 @@ public sealed class ArchiveUnitResolverTests
             [ExternalObservation()],
             []);
 
-        Assert.Null(result.ResolvedSet);
+        Assert.NotNull(result.ResolvedSet);
+        Assert.True(result.CanPreview);
+        Assert.False(result.IsSuccess);
         Assert.Contains(result.Issues, issue => issue.Code == ArchiveUnitResolutionIssueCode.IncompleteObservation);
     }
 
@@ -166,6 +168,7 @@ public sealed class ArchiveUnitResolverTests
         return new ResolvedPlanSnapshot(
             new PlanId(Guid.Parse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")),
             new DeviceId(Guid.Parse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")),
+            new PortableSemanticsPins(1, 1, 1),
             [new ResolvedBackupSource(SourceId, new LogicalPath("out"), new ResolvedPhysicalPath("/source", "/source"))],
             new ResolvedPhysicalPath("/current", "/current"),
             null,
