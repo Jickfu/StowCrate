@@ -191,7 +191,7 @@ Local Binding 至少按 `PlanId + DeviceId` 命名空间，并引用 SourceId、
 
 `CHANGE-DETECTION.md` 的 `PlanId + ArchiveUnitId` baseline identity 保持为 portable unit key；在持久化/运行时它位于当前 DeviceId/registration 的本机命名空间中。本文不提前定义 SQLite 复合键。
 
-CurrentRoot 对所有可执行 Plan 都是 required binding；至少一个 Archive Unit effective History Enabled 时 HistoryRoot 才是运行所需 binding。缺少 required Source、Current、conditional History、External Source 或 Secure Secret binding 时，Plan 状态为 `PlanNotReady` 并安全失败，不能静默跳过。External Source v1 默认 required；optional 语义尚未设计。binding 存在但当前执行上下文无法读取 secret 时，运行以 SecretUnavailable/SecretStoreError 阻止，不能降级或在 headless 中等待交互。
+CurrentRoot 对所有可执行 Plan 都是 required binding；至少一个 Archive Unit effective History Enabled 时 HistoryRoot 才是运行所需 binding。缺少 required Source、Current、conditional History、External Source 或 Secure Secret binding 时，Plan 状态为 `PlanNotReady` 并安全失败，不能静默跳过。External Source v1 全部 required，不提供 optional 字段。binding 存在但当前执行上下文无法读取 secret 时，运行以 SecretUnavailable/SecretStoreError 阻止，不能降级或在 headless 中等待交互。
 
 ## 13. Local Path Expression v1
 
@@ -806,19 +806,80 @@ ArchiveSpecFingerprint 至少基于 EffectiveArchiveSpec、ArchiveSemanticsVersi
 
 本节只固定 portable intent、inheritance、effective resolution、single-volume、capability 与 fingerprint 边界；不定义 JSON Schema、具体 backend 参数、Archiver 实现、SQLite schema 或 metadata carrier。TarZstd 在 Schema freeze 前仍需最小 capability sanity check。
 
-## 22. 与实现现状的差异和迁移约束
+## 22. External Source v1
+
+### 22.1 Explicit supplemental input
+
+External Source 是显式附加输入：把 BackupSource 之外的一个本机文件或目录完整映射到一个 Archive Unit 的指定归档内路径。它不是第二套 BackupSource、Rule Source、Archive Unit discovery、生成 hook 或远程输入。
+
+portable declaration 概念模型为：
+
+```text
+ExternalSourceDeclaration
+  ExternalSourceId       # stable UUID v4
+  Name                   # display only
+  Kind                   # File | Directory
+  TargetArchiveUnitId    # must reference a declared unit
+  ArchiveDestination     # non-empty archive-relative LogicalPath
+```
+
+目标必须是 Plan 中显式 declared Archive Unit；FILE_MANAGED 可以作为目标，但必须先 declaration。一个 ExternalSourceId 对应一个 device-local physical root，不支持 glob、wildcard、multi-root、optional 或按名称/path 猜 binding。Clone 重写 ExternalSourceId 和 TargetArchiveUnitId 引用，但不复制 physical binding；新增/Clone 缺 binding 时 PlanNotReady，删除时 binding metadata 转为 inactive state 而不自动 purge。
+
+### 22.2 Binding、root 与扫描
+
+Kind 是 portable contract。File binding 必须 physical-canonicalize 为真实 regular file，Directory binding 必须是 ordinary directory；symlink、junction、mount-point alias、special/unknown reparse root 均为 `ExternalSourceInvalidRoot`，类型不符为 `ExternalSourceKindMismatch`。缺少 binding 是 `MissingExternalSourceBinding` / PlanNotReady；binding target 缺失、不可读分别是 `ExternalSourceMissing`、`ExternalSourceUnreadable`，都阻止目标单元执行，绝不能当作用户删除输入。
+
+External Directory 内部使用 `FILESYSTEM.md` 的同一 no-follow、filesystem boundary、ScanIssue、IncompleteObservation 与 IntentionalSkip 语义，并使用目标 Archive Unit/Plan 的 Standard 或 Strict change detection；External Source 没有独立 ChangeDetectionMode。目录内部不执行 Archive Unit discovery：`.backupignore` 是普通 payload，不解析为 Local Rules/Boundary，默认随 payload 进入归档（仍受 control-entry safety）。LinkPolicy 使用目标 Archive Unit 的 effective policy。
+
+External Source 是 explicit inclusion，不经过 Global/Plan/Local include/exclude Rules；但绝不绕过 no-follow、filesystem/Archive boundary、reserved/control namespace、collision、completeness、TOCTOU、LinkPolicy 或 archive capability validation。
+
+### 22.3 ArchiveDestination 与 ownership collision
+
+ArchiveDestination 必须是非空、使用 `/` 的 archive-relative LogicalPath；禁止 absolute path、drive letter、`..`、empty segment、反斜杠、NUL，以及 `__stowcrate__` reserved namespace。File destination 是文件完整归档路径，不追加原 basename；Directory destination 是映射根，external root basename 不参与。
+
+External destination 不得等于目标 Archive Unit 根控制条目（包括根 `.backupignore`），也不得等于或位于任何 child Archive Boundary 之下；需要进入 child unit 时 TargetArchiveUnitId 必须直接指向该 child declaration。
+
+normal selected entries、External entries 与 generated/reserved entries 必须在写归档前进入统一 path-trie ownership/collision validation。相同 archive logical path 由不同 input owner 提供时一律 `ArchiveEntryConflict` / Fatal，包括 file/file、file/directory 和 directory metadata collision；v1 不支持 directory overlay/merge 或 last-writer-wins。只共享没有独立 owner 冲突的 parent container 可以合法存在。
+
+### 22.4 Observation、staging 与 TOCTOU
+
+运行时流程固定为：
+
+```text
+declaration → local binding → no-follow observation → explicit inclusion
+            → run-scoped private staging → collision/boundary validation
+            → Candidate Archive Unit → Change Detection → IArchiveWriter
+```
+
+physical external input 永远只读；不得 rename、写临时文件、改 metadata 或生成 manifest 到原路径。staging 是 run-scoped implementation detail，不进入 Plan、baseline、ArchiveVersion 或 Current；陈旧 staging 只能 cleanup/diagnostics。staging 不能位于 SourceRoot、任一 External input tree 或有效 Current/History artifact namespace，也不能被 Scanner 当输入。
+
+staging implementation metadata 不能替代业务 metadata。Candidate/EntrySetFingerprint 必须使用与真正 staged payload 对应的 external observed path/kind/metadata/content state；执行 materialization 要重新验证 path、entry kind 与 metadata identity，File→Link、Directory→Junction、copy/enumeration 不完整或 observation/payload 不一致均产生 IncompleteObservation 并阻止目标单元发布。其他独立单元仍按 per-unit commit 语义运行。
+
+### 22.5 Fingerprints、manifest 与生命周期
+
+目标单元的 SelectionFingerprint 包含 Kind、ArchiveDestination、mapping semantics version 和该单元 canonical explicit mapping set；declaration 数组顺序不具语义，集合按真正语义字段稳定排序。ExternalSourceId、Name、physical binding 与 TargetArchiveUnitId identity 本身不直接进入 archive fingerprints：移动 mapping 在旧目标移除、在新目标加入，自然改变两个单元的 mapping set。
+
+external file/directory 的最终 logical archive path、kind、size、mtime、metadata、link raw target 和 Standard/Strict 所需 content hash 进入目标单元 EntrySetFingerprint。内容/metadata 改变或删除 declaration 会正常 RebuildRequired；纯 ExternalSourceId migration 在 mapping、effective content 不变时不要求重建。
+
+resolved `ExternalSourceId → physical-canonical path/kind` binding 进入 ExecutionBindingFingerprint。运行中 binding drift 必须阻止本轮 Publish，下一轮重新扫描；仅换物理路径而下一轮 observed logical data 完全一致时不因地址本身 rebuild。
+
+manifest 可记录 external logical destination、kind 和创建时的非秘密 provenance identity，但不得保存 device-local physical path。removed ExternalSource 的 local metadata 不在 whole-document Update transaction 中破坏性删除；显式 cleanup、Clone 与 identity migration 继续遵守第 20 节。
+
+v1 明确不支持 optional external、glob/multi-root、external rules/`.backupignore` semantics、nested units、follow links、overlay、transform、command-generated source、pre-backup scripts、remote URL、cloud object 或 database dump hook。这些能力必须另行设计安全与版本语义。
+
+本节只固定 External Source 的 portable/local、mapping、selection、observation、staging、fingerprint 与 lifecycle 语义；不定义 JSON Schema、staging 实现、SQLite schema、Entity、Repository 或 migration。
+
+## 23. 与实现现状的差异和迁移约束
 
 1. **`.backupignore v1` Directive 集合变化**：规范最初只允许 `@version/@mode/@case`；现在已正式加入可选 `@id`。当前 parser 尚未实现 `@id`，后续业务实现必须同步 parser、领域返回类型和兼容性测试。
 2. **Fingerprint 强类型与字段**：ArchiveUnitId/ExternalSourceId 已正式排除于 SelectionFingerprint，logical source/path/mapping 仍包含；当前 Core 尚未实现这些强类型 fingerprint，不得把旧聚合 string 当作 v1 durable baseline。
 3. **Baseline key 与 DeviceId**：Change Detection 的 `PlanId + ArchiveUnitId` 是 portable unit key；DeviceId 只作为本机 registration/binding/runtime namespace，不替换该 key。
-4. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无完整 declaration/discovery resolver、ExternalSource/SecretSlot identity、DeviceId、Local/Secret/Schedule/Storage Binding、Global Rules Snapshot、ProtectionCapabilities、ScheduleIntent、ArchiveSpec default/override/effective resolution、History policy、OutputLayout/ExecutionBinding fingerprint、relocation、version-specific document reader/migrator、Import/Update/Clone workflow 或完整的 Current/History publish。本文不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
+4. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无完整 declaration/discovery resolver、ExternalSource observation/staging、SecretSlot identity、DeviceId、Local/Secret/Schedule/Storage Binding、Global Rules Snapshot、ProtectionCapabilities、ScheduleIntent、ArchiveSpec default/override/effective resolution、History policy、OutputLayout/ExecutionBinding fingerprint、relocation、version-specific document reader/migrator、Import/Update/Clone workflow 或完整的 Current/History publish。本文不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
 
-## 23. 当前未决顺序
+## 24. 当前未决顺序
 
 Identity、Portable Path/Local Binding、Global Rules、FILE_MANAGED declaration/discovery、Protection Configuration/Secret Binding、Schedule Portability、History/Output Portability、Schema Compatibility/Unknown Fields 与 Import/Update/Clone 冲突语义 P0 已确认，Backup Plan P0 已全部冻结。
 
-正式冻结 Backup Plan v1 Domain Model 和编写 JSON Schema 前，只剩一项会改变 schema 结构的设计：
+Backup Plan v1 的 schema-shaping domain design 已全部完成。下一步必须先进行一次 Domain Freeze Review，横向检查 `BACKUPPLAN.md`、`BACKUPIGNORE.md`、`CHANGE-DETECTION.md`、`FILESYSTEM.md`、`PRODUCT.md` 与 `ARCHITECTURE.md` 的 fingerprint 分类、authority、required binding/readiness、override inheritance、publish 时序和领域落点，并对 TarZstd 等格式做最小 capability sanity check。
 
-1. External Source 完整语义。
-
-完成后还需进行一次 Backup Plan v1 Domain Freeze Review，检查跨规范冲突，并对 TarZstd 等格式做最小 capability sanity check；通过后才可设计 `backupplan-v1.schema.json`、Document DTO/serializer，随后进入 Persistence / SQLite。本轮不定义 JSON Schema、SQLite schema、Entity、Repository 或 migration。
+Freeze Review 无 blocker 后才可冻结领域模型并设计 `backupplan-v1.schema.json`、Document DTO/serializer，随后进入 Persistence / SQLite。本轮不定义 JSON Schema、SQLite schema、Entity、Repository 或 migration。

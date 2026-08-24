@@ -117,7 +117,7 @@ File-backed 文档只保存 portable logical configuration；registration 在每
 - Source/Current/History/External physical path 全部属于 Local Binding，不进入普通 Export；
 - v1 只支持受控 `${HOME}` anchor，不支持任意环境变量；
 - ArchiveUnit path 是 Source-relative `/` 逻辑路径；
-- required binding 缺失时 PlanNotReady；External Source v1 默认 required；
+- required binding 缺失时 PlanNotReady；External Source v1 全部 required，不提供 optional；
 - binding 变化不进入 Selection/ArchiveSpec fingerprint，数据变化由重新扫描后的 EntrySet 体现。
 
 Local Binding 的数据库结构、UI 编辑方式和未来 Device Binding Export 格式属于 Persistence/UX 后续设计，不改变这里已经确认的语义，也不能提前固化 SQLite Schema。
@@ -157,16 +157,15 @@ Schedule 已确认为 portable ScheduleIntent，本机 scheduler installation �
 
 ## 9. External Sources
 
-External Source 必须通过稳定 ID、实际路径 binding、目标 ArchiveUnitId 与归档内 LogicalPath 表达。不得把外部内容临时写进真实 Source；执行使用独立 staging。
+External Source v1 已确认为 explicit supplemental input，完整规范见 `BACKUPPLAN.md` 第 22 节：
 
-未决：
-
-- external mapping 的规则应用层级；
-- 文件与目录映射的冲突/覆盖规则；
-- external source 是否允许另一个 Backup Source 内的路径；
-- link、filesystem boundary 和 incomplete observation 如何传播到目标单元。
-
-在这些问题确认前，v1 Schema 不应固定 ExternalSources 字段形状。
+- declaration 使用 ExternalSourceId、Name、File/Directory Kind、declared TargetArchiveUnitId 与非空 ArchiveDestination；
+- 一个 declaration 对应一个 required device-local physical root，不支持 optional/glob/multi-root；
+- external entries 绕过普通 Rules，但遵守 no-follow、filesystem/child boundary、LinkPolicy、reserved namespace、collision、completeness、TOCTOU 与 capability；
+- external directory 不做 Archive Unit discovery，`.backupignore` 是普通 payload；
+- normal/external/generated entry 不允许不同 owner overlay；
+- private staging 保持原路径只读，Candidate fingerprint 必须对应真正 staged payload；
+- mapping 进入 SelectionFingerprint，payload 进入 EntrySetFingerprint，physical binding 只进入 ExecutionBindingFingerprint。
 
 ## 10. 文件角色与真相源关系
 
@@ -192,7 +191,7 @@ External Source 必须通过稳定 ID、实际路径 binding、目标 ArchiveUni
 9. ~~Schema compatibility、unknown fields 与新版本读取策略~~：已确定；
 10. ~~Import identity conflict / merge semantics~~：已确定。
 
-Backup Plan P0 与 ArchiveSpec default/override 已冻结。External Source 完整语义仍会改变字段形状，必须完成后才能冻结 v1 Domain Model 和创建 Schema。
+Backup Plan P0 与全部 schema-shaping domain design 已完成。下一步必须先做跨规范 Domain Freeze Review，确认无 blocker 后才能冻结 v1 Domain Model 和创建 Schema。
 
 ## 12. Identity + Portable Binding 结论
 
@@ -227,13 +226,13 @@ ResolvedPlanSnapshot
 
 这些语义已经进入 `BACKUPPLAN.md` 与 `BACKUPIGNORE.md`，但仍不生成 canonical JSON 示例。
 
-## 13. 当前设计焦点：Schema-shaping domain design
+## 13. 当前设计焦点：Domain Freeze Review
 
 下一项按顺序解决：
 
-1. External Source 的文件/目录类型、mapping、规则、冲突、边界、link 与 incomplete observation 语义；
-2. 执行一次 Backup Plan v1 Domain Freeze Review 与最小 Archiving capability sanity check；
-3. 冻结 Backup Plan v1 Domain Model；
+1. 横向检查 BACKUPPLAN/BACKUPIGNORE/CHANGE-DETECTION/FILESYSTEM/PRODUCT/ARCHITECTURE 的 fingerprint、authority、binding/readiness、override 与 publish 时序；
+2. 对 TarZstd 等格式执行最小 Archiving capability sanity check；
+3. 修复 blocker 后冻结 Backup Plan v1 Domain Model；
 4. 最后才设计 canonical JSON 示例与 JSON Schema。
 
 ## 14. 后续产物
@@ -241,7 +240,7 @@ ResolvedPlanSnapshot
 后续依次产出：
 
 1. 继续增量完善正式 `docs/BACKUPPLAN.md`；
-2. 完成 External Source 设计与 Domain Freeze Review；
+2. 完成 Domain Freeze Review；
 3. 创建 canonical JSON 示例与 JSON Schema；
 4. 导入、注册、clone、update、冲突和 secret rebinding 测试矩阵；
 5. Application ports 与纯领域 contract；

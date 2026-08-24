@@ -9,6 +9,7 @@
 - `SourceSnapshot` 只包含不可变、平台无关的数据，不包含 `FileInfo`、`DirectoryInfo`、Stream、Handle 或 OS 对象。
 - 扫描采用 best-effort consistent enumeration，不承诺 VSS/LVM/APFS snapshot 级的瞬时一致性。
 - 任何跳过、遗漏或无法识别的对象必须产生结构化 issue，不得静默忽略。
+- External Source 的 File/Directory observation 复用本规范的对象分类、no-follow、filesystem boundary 与完整性语义；其 declaration、rules bypass、destination collision 与 private staging 由 `BACKUPPLAN.md` 定义。External Directory 内不执行 Archive Unit discovery。
 
 ```text
 Physical File System

@@ -205,9 +205,11 @@ None 与 Privacy 禁止引用用户 Secret Slot；Secure 必须引用 Secret Slo
 
 ### 4.8 外部源
 
-外部文件或目录通过“实际路径 → 归档内逻辑路径”映射进入指定 Archive Unit。运行时使用独立 staging 区，绝不临时写入或污染真实备份源。任务结束或恢复清理阶段删除 staging 数据。
+External Source 是 BackupSource 之外的显式附加输入，不是第二套 Source、规则源或 Archive Unit discovery。portable declaration 使用稳定 ExternalSourceId、显示名、File/Directory Kind、显式 declared TargetArchiveUnitId 和非空 ArchiveDestination；FILE_MANAGED unit 可作为目标但必须先 declaration。一个 External Source 只绑定一个本机真实 regular file 或 ordinary directory root，全部 required；缺少/离线/不可读/kind mismatch 时 PlanNotReady 或阻止目标单元执行，不得静默跳过或解释成删除。
 
-External Source 在 portable configuration 中使用稳定 ExternalSourceId、显示名、目标 ArchiveUnitId 和归档内逻辑路径；本机实际输入路径属于 required Local Binding。缺少 binding 时 PlanNotReady，不得静默跳过。
+External Source 绕过 Global/Plan/Local include/exclude Rules，但仍遵守 no-follow、filesystem/child Archive Boundary、LinkPolicy、reserved/control namespace、collision、IncompleteObservation、TOCTOU 和 archive capability。External Directory 内的 `.backupignore` 是普通 payload，不声明 Crate 或局部规则。File destination 是完整归档路径；Directory destination 是映射根且不追加原 basename。Normal、External 与 generated entries 的任何不同-owner path collision 都 Fatal，v1 不支持 overlay。
+
+运行时通过只读 observation 和 run-scoped private staging 把 External payload 映射进目标 Archive Unit；绝不写入或污染真实路径。staging 不属于配置、baseline 或备份状态，不得形成递归输入，且 fingerprint/归档必须对应真正 staged 的 payload。manifest 不记录本机 physical binding。v1 不支持 optional、glob/multi-root、external rules、follow links、generated/remote/cloud source 或 pre-backup hook。
 
 ### 4.9 执行方式
 

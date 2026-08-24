@@ -54,6 +54,7 @@ StowCrate.slnx
 - 保存 ScheduleIntent、协调本机 scheduler installation/status，并由所有触发方式调用同一 Run Plan 用例；
 - 验证 OutputLayout、协调 Current/History publish、retention maintenance 与 CurrentRoot/HistoryRoot 的受控 relocation；
 - 按 declared Archive Unit 解析 ArchiveSpec default/override，为每单元生成 EffectiveArchiveSpec 后再执行 capability/readiness validation；
+- 解析 required External Source declaration/binding，协调 no-follow observation、private staging、entry ownership/boundary collision 与 TOCTOU revalidation；
 - 智能项目识别与建议确认；
 - 恢复、验证、配置快照和任务结果查询。
 
@@ -113,6 +114,8 @@ Import/Update 的单位是完整 Plan aggregate，v1 没有 automatic、field、
 Portable identity 使用强类型 UUID v4 `PlanId`、`SourceId`、`ArchiveUnitId`、`ExternalSourceId`、`SecretSlotId`。Application 将 portable declaration 与当前 DeviceId 下的 Local Binding 合成为 `ResolvedPlanSnapshot`；Core 不读取 DeviceId、hostname、环境变量、registration path、OS SecretReference 或数据库键。
 
 `ResolvedPlanSnapshot` 携带 authoritative 的 pinned Global Rules Snapshot，并为 Scanner 提供已验证的 local binding。Global Rule Library 属于 Application/Infrastructure 的 authoring facility，运行时不得 live-reference 本机 library。扫描后，Application 再把 Archive Unit declarations、物理 discovery、`.backupignore` metadata/rules 与本机 registration 合成为 resolved units。Declared/Discovered origin、Plan authority 和规则文件物理路径不进入 Planning Kernel。
+
+External Source 只指向 declared Archive Unit。它由独立 no-follow observation 作为 explicit inclusion 加入目标 Candidate，不经过普通 Rules，也不在 external directory 内做 `.backupignore` rule parsing 或 Archive Unit discovery。Application/Infrastructure 使用只读 private staging，并确保最终 EntrySet 状态对应真正 materialized payload；normal/external/generated entries 在统一 path trie 中验证 owner collision、reserved namespace 和 child Boundary。
 
 ```text
 Portable Configuration              Device Local State
@@ -186,10 +189,11 @@ Milestone 2 的 Scanner 按 [`FILESYSTEM.md`](FILESYSTEM.md) 将物理对象转�
 4. 构建 Archive Unit 树；把所有直接子单元注册为父单元的停止边界。
 5. 分别合成每个单元的 pinned global、方案和局部规则。
 6. 遍历单元内容；先检查边界，再匹配规则。边界优先于普通 include/exclude。
-7. 解析外部源映射和归档内逻辑路径，检测路径冲突。
-8. 由 SourceOutputPath、Archive Unit logical path、format extension 与版本化 OutputPathEncoding 生成 destination-safe Current relative path；按目标文件系统真实 case semantics 检测所有 output collision。
-9. 生成规范排序的 entries、警告、预估与变更/输出布局指纹。
-10. 只有经过用户确认或无头策略允许的计划才进入执行阶段。
+7. 解析 required External Source declaration 与 physical binding；验证 File/Directory root、no-follow observation、非空 destination、declared target、reserved/control namespace 和 child Boundary，并 materialize 到不递归的 private staging。
+8. 合并 normal selected、External explicit 与 generated entries，在统一 owner-aware path trie 中检测所有 file/directory/metadata collision；staged payload 与最终 Candidate metadata/content 不一致时按 IncompleteObservation 停止该单元。
+9. 由 SourceOutputPath、Archive Unit logical path、format extension 与版本化 OutputPathEncoding 生成 destination-safe Current relative path；按目标文件系统真实 case semantics 检测所有 output collision。
+10. 生成规范排序的 entries、警告、预估与变更/输出布局指纹。
+11. 只有经过用户确认或无头策略允许的计划才进入执行阶段。
 
 路径匹配器必须独立测试以下情况：不同分隔符、根路径、`!`、`*`、`**`、尾随斜杠、Unicode、大小写敏感文件系统和嵌套边界。Scanner 实现时还必须独立测试符号链接循环及逃逸 Source 的链接。
 
@@ -269,6 +273,7 @@ OutputLayoutFingerprint 与 ExecutionBindingFingerprint 都不进入 EntrySet/Se
 - 跨平台元数据能力与未保留项警告。
 
 manifest 不保存真实密码、密钥、token 或不必要的主机隐私信息。
+External Source 只记录 logical destination、kind 与必要的非秘密 provenance，不得记录 device-local physical binding path。
 
 ArchiveVersion 的 durable identity 与物理绝对路径分离：概念上记录 VersionId、ArchiveUnitId、StorageSlot（Current/History）、RelativeStoragePath、SHA-256、Size、PublishedAt 等；实际位置由当前 StorageRoot binding + relative path 解析。relocation 只改变 binding/location，不生成新 version 或推进 baseline。本段不预先规定 SQLite schema。
 
@@ -297,11 +302,11 @@ ArchiveVersion 的 durable identity 与物理绝对路径分离：概念上记�
 ## 11. 测试策略
 
 - **Core 单元测试**：规则语义、层级边界、路径规范化、ArchivePlan 稳定性，以及 ArchiveSpec 逐组件 inherit/override、explicit-same-value 与 per-unit effective fingerprint。
-- **Application 测试**：变化原因、独立 baseline commit、History capture/retention 顺序、取消、失败补偿、预览与结果，schema validity/semantic validity/local readiness/capability 的错误分层，旧文档内存迁移与显式 upgrade，Import 幂等/IdentityConflict、whole-document Update 的 stable-ID diff 与原子性、state preserved/added/removed/modified、Clone 递归重写、authority conversion/registration relocation、registered PlanId drift，ArchiveSpec default 只影响继承单元、format 同时改变 archive/output fingerprint、compression/protection 只改变 archive fingerprint、effective capability/secret readiness，MissingSecretBinding/SecretUnavailable/SecretStoreError、SecretRevision drift、headless 不降级，schedule reconcile/out-of-sync、schedule-only stale change 不阻止发布、SkipIfRunning，以及 History Enabled/Retention/OutputLayout/ExecutionBinding drift 的不同发布结果。
+- **Application 测试**：变化原因、独立 baseline commit、History capture/retention 顺序、取消、失败补偿、预览与结果，schema validity/semantic validity/local readiness/capability 的错误分层，旧文档内存迁移与显式 upgrade，Import 幂等/IdentityConflict、whole-document Update 的 stable-ID diff 与原子性、state preserved/added/removed/modified、Clone 递归重写、authority conversion/registration relocation、registered PlanId drift，ArchiveSpec default 只影响继承单元、format 同时改变 archive/output fingerprint、compression/protection 只改变 archive fingerprint、effective capability/secret readiness，External required binding/kind/declared target/destination/boundary/collision、rules bypass、per-unit completeness 与 fingerprint 分类，MissingSecretBinding/SecretUnavailable/SecretStoreError、SecretRevision drift、headless 不降级，schedule reconcile/out-of-sync、schedule-only stale change 不阻止发布、SkipIfRunning，以及 History Enabled/Retention/OutputLayout/ExecutionBinding drift 的不同发布结果。
 - **Infrastructure 集成测试**：UTF-8/BOM、严格 JSON、property 大小写/重复检测、各层 unknown property/enum/variant、schemaVersion dispatch、writer round-trip/原子替换，SQLite migration/backup、文件锁、Current/History relocation、跨文件系统 copy/verify、output collision/case semantics、跨 Plan root overlap、scheduler install/update/remove/status、DST/missed-run 映射与 native identity lifecycle。
 - **Archiving 契约测试**：每种格式与 CompressionPreset 的 single-volume 创建、测试、恢复、加密、Unicode 和大文件；验证 versioned preset/metadata/protection capabilities、split/raw option 不可表示，且 SecretValue 不出现在参数、环境、日志或诊断输出。
 - **跨平台测试**：Windows/macOS/Linux CI，大小写、权限、链接和长路径 fixture；Secret Store prototype 还必须覆盖 GUI 用户与 Task Scheduler/launchd/systemd timer/cron 的实际执行身份。
-- **故障注入测试**：写入中断、空间不足、损坏归档、进程退出、Current/History 移动失败。
+- **故障注入测试**：写入中断、空间不足、损坏归档、进程退出、External File→Link/Directory→Junction drift、staging copy/enumeration 不完整或 metadata mismatch、Current/History 移动失败。
 - **架构测试**：验证项目依赖方向、Core 不引用 Avalonia/SQLite、Application 不引用外层项目，以及 ViewModel 不直接引用 SQLite。
 
 初始完成标准是 `dotnet build` 和所有自动化测试通过；涉及布局或交互的变更还需 Avalonia UI 验证。
