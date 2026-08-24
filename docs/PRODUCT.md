@@ -151,6 +151,8 @@ Local Binding v1 可以使用 StowCrate 定义的 `${HOME}` 根变量，但不�
 
 文件集合、选择语义和归档规格分别具有确定性 fingerprint。调度、History retention、窗口状态等不改变归档字节的设置不得触发重压缩；输出根迁移也不得伪装成内容变化。
 
+Schedule Intent 属于完整 Plan desired configuration，因此改变调度会更新 Plan/schedule semantic identity 并要求独立协调本机 scheduler；但它不是本轮归档执行关键语义。备份运行期间仅修改 schedule 不得废弃已经验证的归档结果。
+
 - 未变化：保留 Current，不创建重复历史版本；
 - 已变化：验证新归档成功后，在旧 Current 仍位于原路径且有效的前提下，将其持久化为独立 History Version；历史版本验证完成后，再在 `CurrentRoot` 所在文件系统内原子替换 Current；
 - 失败：保留最后一个有效 Current，记录错误和遗漏。
@@ -196,6 +198,12 @@ External Source 在 portable configuration 中使用稳定 ExternalSourceId、�
 - GUI 手动运行、预览计划、查看警告和结果；
 - CLI/headless 按计划运行；
 - 操作系统原生调度器调用 CLI。
+
+`*.backupplan` 只保存跨平台 Schedule Intent，不保存 Task Scheduler XML/GUID、launchd plist/label、systemd unit、cron expression/line 或其他 native scheduler 配置。v1 默认 Manual-only；用户显式启用后可组合 Daily、Weekly 与 OnStartup triggers。Daily/Weekly 使用执行设备的 local wall-clock，MissedRunPolicy 支持 Skip 和默认的 RunOnceWhenAvailable，不累计补跑。
+
+Scheduler installation 是 `PlanId + DeviceId` 下的本机状态，与 Plan 配置分开。Schedule 已配置但未安装、安装失败或 out-of-sync 不使 Plan 文档无效，也不回滚已保存配置；UI 必须分别显示 desired schedule 与 installation 状态。系统 scheduler 只唤醒统一 CLI/Application Run Plan 用例，不承载扫描、规则、Secret、归档或 History 逻辑。
+
+同一设备上的同一 Plan 不允许手动与定时任务并行；v1 固定 SkipIfRunning，重复触发记录 AlreadyRunning/Skipped，不无限排队。定时运行始终非交互：PlanNotReady、SecretUnavailable 等状态必须记录并以失败退出，不能弹出 GUI 等待。
 
 ## 5. 用户体验
 

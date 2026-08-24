@@ -70,7 +70,15 @@ Archive Unit logical path 仍然进入 SelectionFingerprint：即使 identity �
 
 调度、History retention、UI 状态、日志级别、CurrentRoot 和 HistoryRoot 不进入 ArchiveSpecFingerprint。输出根变化产生 Storage Relocation，而不是 Archive Rebuild。应用版本本身不进入 fingerprint；只有行为 semantics/schema version 变化才使 baseline 失效。
 
-PlanAuthority、File-backed registration path 与 Managed/File-backed 转换也不进入 fingerprint。两种 authority 解析出的 Plan Snapshot 语义相同时不得 rebuild；File-backed 文档或已解析的外部规则源在运行中变化则触发 PlanChangedDuringRun。
+PlanAuthority、File-backed registration path 与 Managed/File-backed 转换也不进入 archive fingerprint。两种 authority 解析出的 Plan Snapshot 语义相同时不得 rebuild。
+
+### Plan 与执行语义 fingerprint
+
+`PlanSemanticFingerprint` 描述完整 portable desired configuration，因此包含 ScheduleIntent；它用于识别 Plan 语义版本和协调 scheduler 等配置状态，不等于“当前归档是否仍可发布”。
+
+`ExecutionSemanticFingerprint` 只描述会影响本轮扫描、选择、归档 bytes 或发布正确性的 Plan 语义，至少覆盖 Source logical configuration、Archive Units、Rules、Boundary、LinkPolicy、External Source mapping、ArchiveSpec、Protection intent、Change Detection mode 与相应 semantics versions。ScheduleIntent、UI metadata、authority 和 registration path 不进入。History/output 哪些字段属于执行关键语义由后续 History/Output P0 决定，本轮不提前排除。
+
+运行期间完整 PlanSemanticFingerprint 变化时必须重新解析配置并比较 ExecutionSemanticFingerprint；只有执行关键语义变化才触发 PlanChangedDuringRun。Schedule-only 变化不废弃已验证归档，也不推进或改写 scheduler installation；scheduler reconciliation 是独立配置管理流程。
 
 `InputFingerprint = SHA256(EntrySetFingerprint + SelectionFingerprint)`。如需要聚合 rebuild identity，则由 InputFingerprint 与 ArchiveSpecFingerprint 组合。领域 API 必须使用强类型 fingerprint，不能以可互换的裸 `string` 表达。
 
@@ -147,7 +155,9 @@ Scan / Candidate / Change Decision
 
 概念状态为 `Prepared → Verified → Published → Superseded`，失败可进入 `Failed`；只有 Published 可以作为 baseline。这些是领域/事务语义，不预先规定 SQLite schema。
 
-运行开始时捕获 `ExecutionSemanticSnapshot`，发布前再次检查。它至少包含 Managed Plan 的 PlanRevision（适用时）、PlanSemanticFingerprint、所有已解析外部规则源的 fingerprint，以及 Secure protection 实际解析的 `SecretSlotId + SecretRevision`。FILE_MANAGED 的 `.backupignore` 或 secret revision 从规则解析/规划到发布前只要发生变化，即按 PlanChangedDuringRun 处理，默认不发布、不提交 baseline。这里的 reason 覆盖整个已解析执行配置，不只覆盖 `*.backupplan`。
+运行开始时捕获 `ExecutionSemanticSnapshot`，发布前再次检查。它至少包含 Managed Plan 的 PlanRevision（适用时，用于发现配置可能变化）、PlanSemanticFingerprint、ExecutionSemanticFingerprint、所有已解析外部规则源 fingerprint，以及 Secure protection 实际解析的 `SecretSlotId + SecretRevision`。
+
+PlanRevision 或 PlanSemanticFingerprint 变化时必须重新解析并计算当前 ExecutionSemanticFingerprint；只有它不同才按 PlanChangedDuringRun 阻止发布。Schedule-only 等非执行关键变化不阻止本轮 Current Publish 或 baseline commit。FILE_MANAGED 的 `.backupignore` 或 SecretRevision 从规则解析/规划到发布前变化属于执行关键 drift，默认不发布、不提交 baseline。
 
 外部规则源 fingerprint 必须基于运行实际读取的文件 bytes 和版本化解析语义确定，不能只依赖 mtime。即使一次变化解析后得到相同规则，也不得让本轮以过期的规则源观察结果发布。执行层还必须按 `FILESYSTEM.md` 重新验证关键 path/kind/metadata，防止 TOCTOU 类型替换。
 
@@ -175,7 +185,7 @@ Change Detector 位于 Core 或 Application 的纯逻辑边界，只接收 Candi
 
 ## 10. 规范测试矩阵
 
-至少覆盖：无 baseline、完全一致、增删文件、size/mtime/link target、Rules/Boundary/LinkPolicy/External Source、格式/压缩/ProtectionMode/SecretSlotId/SecretRevision/Privacy semantics/manifest schema、secret reference/provider 变化不触发、Privacy 随机材料不触发、非归档设置不触发、输入顺序稳定、semantics version、invalid baseline、Standard/Strict、cache 丢失、partial unit success、失败/取消/发布前不提交、stale plan、运行中 `.backupignore` 或 SecretRevision 变化、identity-only 变化不改变 SelectionFingerprint、logical path 变化会改变 SelectionFingerprint、Incomplete Observation 阻止与 IntentionalSkip 允许。
+至少覆盖：无 baseline、完全一致、增删文件、size/mtime/link target、Rules/Boundary/LinkPolicy/External Source、格式/压缩/ProtectionMode/SecretSlotId/SecretRevision/Privacy semantics/manifest schema、secret reference/provider 变化不触发、Privacy 随机材料不触发、ScheduleIntent 不进入 archive fingerprints、schedule-only 运行中变化不阻止发布、执行关键 Plan 变化阻止发布、非归档设置不触发、输入顺序稳定、semantics version、invalid baseline、Standard/Strict、cache 丢失、partial unit success、失败/取消/发布前不提交、stale plan、运行中 `.backupignore` 或 SecretRevision 变化、identity-only 变化不改变 SelectionFingerprint、logical path 变化会改变 SelectionFingerprint、Incomplete Observation 阻止与 IntentionalSkip 允许。
 
 ## 11. 与现有仓库的差异和迁移约束
 

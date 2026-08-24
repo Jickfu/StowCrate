@@ -33,6 +33,7 @@ StowCrate.slnx
 - `RuleSet`、`BackupRule`、`RuleMode`、`RuleSource`；
 - `ArchivePlan`、`ArchiveEntry`、`ArchiveVersion`、`RetentionPolicy`；
 - `ProtectionConfiguration`、强类型 `SecretSlotId` 与 resolved `SecretRevision`，但不包含 OS SecretReference 或 SecretValue；
+- portable `ScheduleIntent`、Daily/Weekly/OnStartup trigger 与 MissedRunPolicy，但不包含任何 native scheduler identity/configuration；
 - 逻辑路径、归档内路径、结果与错误类型。
 
 不得依赖 Avalonia、SQLite、7-Zip、进程调用或 OS API。
@@ -47,6 +48,7 @@ StowCrate.slnx
 - 导入/导出 `.backupignore` 和 Backup Plan 文件（`*.backupplan`）；
 - Import Managed Plan、Register File-backed Plan，并把两种 authority 解析为统一的 immutable Plan Snapshot；
 - 管理 Secret Slot 的显式 Bind/Set/Replace/Unbind，用 local SecretRevision 维护变更语义并验证交互式/无头 readiness；
+- 保存 ScheduleIntent、协调本机 scheduler installation/status，并由所有触发方式调用同一 Run Plan 用例；
 - 智能项目识别与建议确认；
 - 恢复、验证、配置快照和任务结果查询。
 
@@ -61,7 +63,7 @@ StowCrate.slnx
 - no-follow `SourceScanner`、平台对象分类和文件系统边界探测；
 - `.backupignore`/`*.backupplan` 序列化；
 - Managed Plan repository、File-backed registration、Plan document loader 与本机 binding；
-- Windows Task Scheduler、launchd、systemd timer/cron 适配器；
+- Windows Task Scheduler、launchd、systemd timer/cron 的 `ISchedulerAdapter` 实现与本机 installation metadata；Linux 优先 systemd user timer，cron 只作能力回退；
 - Credential Manager/DPAPI、Keychain、Secret Service 适配器；
 - 可选 USN Journal、FSEvents、inotify 加速器。
 
@@ -97,6 +99,7 @@ Portable Configuration              Device Local State
 PlanId / SourceId                    DeviceId / Registration
 ArchiveUnitId / ExternalSourceId  +  Source/External physical bindings
 SecretSlotId / Protection intent     Secret binding / local SecretRevision
+ScheduleIntent                       Scheduler provider / native task identity / installed fingerprint
 Logical paths / policies             CurrentRoot / HistoryRoot
                                    → validated ResolvedPlanSnapshot
 ```
@@ -108,6 +111,21 @@ v1 path expression 只允许受控 `${HOME}` anchor，不把任意 process envir
 二者是组合根：注册依赖、解析用户输入并调用相同应用用例。GUI 负责 Avalonia Views、ViewModels、导航、进度和交互；CLI 负责非交互命令、退出码和调度器集成。两者不实现备份规则。
 
 模板阶段允许直接创建无依赖的 `MainViewModel`。一旦出现 Scanner、Repository、ArchiveWriter 等业务服务，App/CLI 使用 `Microsoft.Extensions.DependencyInjection` 作为轻量组合容器；ViewModel 不得直接构造 Infrastructure 或 Archiving 实现。只有在后台生命周期、配置和日志需求确实需要时才引入完整 Generic Host。
+
+### Schedule installation
+
+```text
+Portable ScheduleIntent
+  → Application reconcile use case
+  → ISchedulerAdapter Install / Update / Remove / GetStatus
+  → Device-local ScheduleInstallation
+  → native scheduler wakes StowCrate.Cli
+  → common Application Run Plan use case
+```
+
+ScheduleInstallation 按 `PlanId + DeviceId`/local registration 定位，不以 File-backed 文档路径作为长期 identity。native task 只携带解析当前 registration 所需的最小稳定本机 identity；不得复制 portable configuration 或业务参数。修改 ScheduleIntent 与安装/更新 native task 是不同事务：Plan 保存成功后 reconcile 失败只产生 ScheduleOutOfSync/installation error，不能回滚 Plan。
+
+File-backed 文档变化可在 GUI/configuration workflow 中提示 reconcile；普通 headless backup run 不得顺手修改系统 scheduler。Scheduler adapter 只负责尽量实现 portable wall-clock、DST 和 missed-run 语义，不参与扫描、规划、Secret 获取、Change Detection、归档或 History。
 
 ## 3. 依赖方向
 
@@ -179,7 +197,7 @@ Planned
 - 最终切换只在 Current 所在文件系统内执行 atomic replace。替换前崩溃时旧 Current 有效，替换后崩溃时新 Current 有效，不能出现先移走旧 Current 导致 Current 路径缺失的窗口；
 - 取消、断电或进程失败后，`.partial` 不得被识别为有效备份；
 - 启动时可识别并安全清理陈旧 staging/partial，但必须保留诊断信息；
-- 并发任务对同一 Backup Plan 或输出路径加锁；不同单元可在资源预算内并行；
+- 手动与 scheduled run 对同一 `PlanId + DeviceId` 使用同一运行锁；v1 固定 SkipIfRunning，竞争者记录 AlreadyRunning/Skipped，不排队。输出路径仍需冲突保护；不同 Plan 是否并发由后续资源策略决定；
 - 日志和结果必须记录被跳过、不可读、变化中或锁定的文件；Incomplete Observation 默认阻止发布。
 
 无历史或首次发布时，同样只允许把已验证的目标文件系统临时文件原子发布为 Current。元数据提交必须可从 Current 与 History 的实际文件状态重建，不能成为判断归档有效性的唯一依据。
@@ -201,7 +219,7 @@ cache.db   — 文件状态、哈希、扫描缓存和平台游标（可重建�
 
 Plan authority、`PlanId`、`ArchiveUnitId`、`ExternalSourceId`、`DeviceId`、Global Rule Library provenance 和 `*.backupplan` 的物理存放路径不属于 SelectionFingerprint 或 ArchiveSpecFingerprint；`SourceId`、Archive Unit logical path 与实际选择/映射语义仍属于 SelectionFingerprint。Managed 与 File-backed 解析出相同语义 Plan Snapshot 时，切换 authority 或移动注册文件不得触发 rebuild。
 
-每次运行捕获 `ExecutionSemanticSnapshot`：包含适用的 PlanRevision、PlanSemanticFingerprint、所有已解析外部规则源 fingerprint，以及 Secure protection 使用的 `SecretSlotId + SecretRevision`。Publish 前重新读取并比较；`*.backupplan`、任一 FILE_MANAGED `.backupignore` 或 SecretRevision 变化时均按 PlanChangedDuringRun 处理。
+PlanSemanticFingerprint 覆盖完整 desired configuration，包括 ScheduleIntent；ExecutionSemanticFingerprint 只覆盖影响本轮扫描、选择、归档或发布正确性的配置，不包含 ScheduleIntent。每次运行捕获两者、适用的 PlanRevision、外部规则源 fingerprint 和 Secure `SecretSlotId + SecretRevision`。Publish 前发现 Plan 变化时重新解析；仅 ExecutionSemanticFingerprint 或其他执行关键输入变化才按 PlanChangedDuringRun 阻止，schedule-only 变化继续发布。
 
 ## 7. SQLite 与配置恢复
 
@@ -249,8 +267,8 @@ manifest 不保存真实密码、密钥、token 或不必要的主机隐私信�
 ## 11. 测试策略
 
 - **Core 单元测试**：规则语义、层级边界、路径规范化、ArchivePlan 稳定性。
-- **Application 测试**：变化原因、独立 baseline commit、History 切换、取消、失败补偿、预览与结果，以及 MissingSecretBinding/SecretUnavailable/SecretStoreError、SecretRevision drift 与 headless 不降级。
-- **Infrastructure 集成测试**：SQLite migration/backup、文件锁、原子替换、调度适配。
+- **Application 测试**：变化原因、独立 baseline commit、History 切换、取消、失败补偿、预览与结果，MissingSecretBinding/SecretUnavailable/SecretStoreError、SecretRevision drift、headless 不降级，以及 schedule reconcile/out-of-sync、schedule-only stale change 不阻止发布和 SkipIfRunning。
+- **Infrastructure 集成测试**：SQLite migration/backup、文件锁、原子替换、scheduler install/update/remove/status、DST/missed-run 映射与 native identity lifecycle。
 - **Archiving 契约测试**：每种格式的创建、测试、恢复、加密、Unicode、大文件和分卷；验证 protection capabilities，且 SecretValue 不出现在参数、环境、日志或诊断输出。
 - **跨平台测试**：Windows/macOS/Linux CI，大小写、权限、链接和长路径 fixture；Secret Store prototype 还必须覆盖 GUI 用户与 Task Scheduler/launchd/systemd timer/cron 的实际执行身份。
 - **故障注入测试**：写入中断、空间不足、损坏归档、进程退出、Current/History 移动失败。

@@ -71,7 +71,7 @@ Authority 是 Application/Infrastructure 的配置管理概念，不是 Core Bac
 
 文档保存 portable desired configuration，例如：Plan name、logical sources、Archive Units、pinned Global Rules Snapshot、Plan/UI-managed rules、ArchiveSpec、Protection Configuration、portable Secret Slot declarations、LinkPolicy、Change Detection mode、History policy、schedule intent 与 External Source definitions。
 
-以下永不进入文档：Committed Baseline、ArchiveVersion records、CurrentVersionId、last run/success、cached hashes、scan/journal cursor、scheduler task ID、SecretRevision、OS SecretReference/locator、Secret Store provider、SecretValue、password hash/verifier、加密 secret blob、Privacy recovery material 和 Recovery Package。
+以下永不进入文档：Committed Baseline、ArchiveVersion records、CurrentVersionId、last run/success、cached hashes、scan/journal cursor、scheduler provider/native task ID/installed fingerprint/status、SecretRevision、OS SecretReference/locator、Secret Store provider、SecretValue、password hash/verifier、加密 secret blob、Privacy recovery material 和 Recovery Package。
 
 File-backed 不等于无状态执行。持续执行仍需要本机 registration、binding、secret reference、ArchiveVersion 与 baseline。v1 不要求未注册文件支持无状态 one-shot backup；未来 `--ephemeral` 必须单独定义，不能复用持续任务语义。
 
@@ -93,7 +93,9 @@ authoritative declaration ────────┘                    │
 
 Core `BackupPlan` 不包含 `IsFileBacked`、registration path、SQLite identity 或 Declared/Discovered origin。Planning Kernel、Change Detector 和 Archiving 不感知配置来源；Scanner 只报告物理事实，不决定 declaration authority。
 
-每次运行捕获 `ExecutionSemanticSnapshot`。它包含 Managed 的 Revision（适用时）、PlanSemanticFingerprint、所有本轮解析的外部规则源 fingerprint，以及 Secure protection 实际解析的 `SecretSlotId + SecretRevision`。Publish 前必须重新读取并验证；`*.backupplan`、任一 FILE_MANAGED `.backupignore` 或 SecretRevision 变化时返回 PlanChangedDuringRun，不发布 Current、不推进 baseline。外部规则源 fingerprint 基于实际读取的文件 bytes 与版本化解析语义，不能只比较 mtime。
+每次运行捕获 `ExecutionSemanticSnapshot`。它包含 Managed 的 Revision（适用时，用于发现配置可能变化）、PlanSemanticFingerprint、ExecutionSemanticFingerprint、所有本轮解析的外部规则源 fingerprint，以及 Secure protection 实际解析的 `SecretSlotId + SecretRevision`。
+
+Publish 前必须重新读取并验证。PlanRevision/PlanSemanticFingerprint 变化时重新解析当前 Plan；只有 ExecutionSemanticFingerprint 不同才返回 PlanChangedDuringRun。Schedule-only 变化不阻止本轮发布。任一 FILE_MANAGED `.backupignore` 或 SecretRevision 变化仍属于执行关键 drift，不发布 Current、不推进 baseline。外部规则源 fingerprint 基于实际读取的文件 bytes 与版本化解析语义，不能只比较 mtime。
 
 ## 7. Fingerprint 与文件移动
 
@@ -105,7 +107,9 @@ PlanAuthority、Import/Register 方式、registration path、authority conversio
 - `E:\configs\Code.backupplan` 移到其他位置但内容语义相同：不 rebuild；
 - 仅 JSON formatting/property order 变化：PlanSemanticFingerprint 不变；
 - 文档内规则、ArchiveSpec 等语义变化：对应 fingerprint 变化；
-- 运行期间 Plan 文档、已解析 `.backupignore` 或 Secure SecretRevision 变化：PlanChangedDuringRun。
+- ScheduleIntent 变化：PlanSemanticFingerprint 与 ScheduleSemanticFingerprint 变化，但三个 archive fingerprint 和 ExecutionSemanticFingerprint 不变；
+- 运行期间 Plan 文档变化时重新比较 ExecutionSemanticFingerprint；仅 schedule 等非执行关键语义变化不触发 PlanChangedDuringRun；
+- 运行期间已解析 `.backupignore` 或 Secure SecretRevision 变化：PlanChangedDuringRun。
 
 ## 8. 灾难恢复
 
@@ -169,7 +173,7 @@ Device Local Binding 描述本机如何解析这些逻辑对象，包括：
 - plan storage slots → physical CurrentRoot、HistoryRoot；
 - ExternalSourceId → physical file/directory；
 - SecretSlotId → 本机 Secret Store provider + opaque SecretReference + local SecretRevision；
-- scheduler intent → 本机 scheduler installation state。
+- ScheduleIntent → 本机 ScheduleInstallation state。
 
 SourceRoot、CurrentRoot、HistoryRoot 和 External Source physical path 不属于 portable document，不得写入 `*.backupplan v1`，也不随普通 Export 导出。未来若提供 Device Binding Export，必须使用独立格式和明确隐私提示。
 
@@ -179,7 +183,7 @@ ArchiveUnit path 永远是相对于 SourceId 对应 SourceRoot 的逻辑路径�
 
 每个本机安装生成并持久保存一个 UUID v4 `DeviceId`。DeviceId 是 local runtime identity，不进入 `*.backupplan`、PlanSemanticFingerprint、SelectionFingerprint 或 ArchiveSpecFingerprint。DeviceName/hostname 仅用于显示，修改设备名称不创建新 DeviceId。
 
-Local Binding 至少按 `PlanId + DeviceId` 命名空间，并引用 SourceId、ExternalSourceId、SecretSlotId 或 plan storage slot。Secret Binding 的完整逻辑 key 为 `PlanId + DeviceId + SecretSlotId`。多个设备 Register 同一 Plan 时 portable IDs 相同，但 bindings、SecretRevision、ArchiveVersion、Committed Baseline 与运行状态不得串用。
+Local Binding 至少按 `PlanId + DeviceId` 命名空间，并引用 SourceId、ExternalSourceId、SecretSlotId 或 plan storage slot。Secret Binding 的完整逻辑 key 为 `PlanId + DeviceId + SecretSlotId`；ScheduleInstallation 位于 `PlanId + DeviceId`/local registration 命名空间。多个设备 Register 同一 Plan 时 portable configuration 相同，但 bindings、SecretRevision、scheduler installation、ArchiveVersion、Committed Baseline 与运行状态不得串用。
 
 `CHANGE-DETECTION.md` 的 `PlanId + ArchiveUnitId` baseline identity 保持为 portable unit key；在持久化/运行时它位于当前 DeviceId/registration 的本机命名空间中。本文不提前定义 SQLite 复合键。
 
@@ -399,20 +403,115 @@ manifest and archive semantics versions
 
 本节只固定 protection/secret 的领域、portable/local 和安全边界，不定义 JSON Schema、SQLite tables、provider DTO、Recovery Package、Privacy carrier、具体算法或 CLI 参数。
 
-## 17. 与实现现状的差异和迁移约束
+## 17. Schedule Portability v1
+
+### 17.1 Portable ScheduleIntent
+
+`*.backupplan` 只保存跨平台调度意图，不保存 Windows Task Scheduler XML/GUID、launchd plist/label、systemd unit、cron expression/line number 或其他 native scheduler configuration/identity：
+
+```text
+Portable ScheduleIntent
+  → Device ScheduleInstallation
+  → Platform Scheduler
+  → StowCrate CLI / common Application Run Plan use case
+```
+
+v1 默认 Manual-only，不自动创建系统任务。Manual-only 表示 schedule disabled，不是一个 ManualTrigger；用户明确启用自动备份后才允许安装 native task。启用的 ScheduleIntent 至少包含一个 trigger，并可组合多个不同 trigger：
+
+```text
+ScheduleIntent
+  Enabled
+  Triggers[]
+    Daily(LocalTime)
+    Weekly(DaysOfWeek, LocalTime)
+    OnStartup
+  MissedRunPolicy
+```
+
+v1 不支持 Monthly、arbitrary cron、idle、AC/battery、network、wake-computer 或其他 OS-specific condition。OnStartup 的短暂延迟属于固定 product/platform implementation policy，不是 portable field。多个 trigger 在同一时刻到期或多个 missed trigger 同时恢复可用时合并为一次 Plan run，不产生重复或积压执行。
+
+同一 trigger 不得重复。Daily/Weekly 的 `LocalTime` 使用 locale-independent 24 小时 `HH:mm` 语义；Weekly days 是 Monday 到 Sunday 的语义集合，不使用平台相关数字。这里固定领域与 canonical fingerprint 语义，不提前固定 JSON 字段名或具体 serializer representation。
+
+### 17.2 Local wall-clock、DST 与 missed run
+
+Daily/Weekly 按 executing device 的 local wall-clock 解释，不绑定 portable IANA/Windows timezone ID。同一 Plan 在上海与东京设备上配置 `02:00`，分别表示各设备当地 02:00。
+
+- DST 前跳导致目标时间不存在：在下一次可用当地时间执行一次；
+- DST 回拨导致目标时间重复：该 trigger 只执行一次；
+- 设备关机、睡眠或 scheduler 暂不可用造成 missed run：按 MissedRunPolicy 处理，不为每个错过周期累计任务。
+
+v1 MissedRunPolicy 只有：
+
+- `Skip`：错过后等待下一次正常 trigger；
+- `RunOnceWhenAvailable`（默认）：恢复可执行状态后补执行一次，不论错过多少次都只补一次。
+
+Platform adapter 必须可靠映射该 portable 语义；无法表达时应报告 unsupported capability 或 installation error，不得静默换成会重复运行、累计补跑或改变 wall-clock 语义的 native 配置。
+
+### 17.3 Device-local ScheduleInstallation
+
+ScheduleIntent 是合法 portable configuration；ScheduleInstallation 是独立的本机状态。概念模型为：
+
+```text
+ScheduleInstallation
+  PlanId
+  DeviceId
+  SchedulerProvider
+  NativeTaskId
+  InstalledScheduleFingerprint
+  LastSyncState
+```
+
+具体 SQLite schema 尚未定义。SchedulerProvider、NativeTaskId、native file/path/label、installed fingerprint 和 status 都不得进入 `*.backupplan`。安装任务绑定稳定 local registration，再由 registration 解析 PlanId 与当前 File-backed path；不得把文档物理路径作为长期 scheduler identity。
+
+`ScheduleSemanticFingerprint` 对启用状态、验证后规范排序的 triggers、local-time/DST semantics version 和 MissedRunPolicy 做版本化 canonical encoding；重复 trigger 在 fingerprint 前就是 validation error，不能靠去重静默接受。InstalledScheduleFingerprint 与 desired fingerprint 相等才是 InSync；其他状态至少区分 ScheduleNotInstalled、ScheduleOutOfSync 与 ScheduleInstallationError。Manual-only 的 desired state 是“不存在 native automatic task”；残留 task 必须显示 out-of-sync 并由显式 reconcile 移除。
+
+Schedule intent 已配置但尚未安装不使 Plan invalid/PlanNotReady。用户必须显式授权安装自动任务。Plan configuration 保存与 scheduler reconcile 是两个事务边界：
+
+- Managed GUI 保存先提交 authoritative Plan，再尝试 reconcile；失败保留 Plan 并显示 out-of-sync/error；
+- File-backed 重新加载发现 fingerprint 不一致时提示 reconcile；
+- 普通 scheduled/headless backup run 不得顺手安装、更新或删除 scheduler task。
+
+Application 通过 scheduler port 执行 Install/Update/Remove/GetStatus；Infrastructure 负责 Windows Task Scheduler、launchd、systemd user timer 与 cron fallback。native scheduler 只负责唤醒 StowCrate CLI，不能承载规则、Secret、ArchiveSpec、History 或其他业务配置。
+
+### 17.4 Fingerprint 与运行中变更
+
+ScheduleIntent 是完整 desired configuration 的一部分，因此进入 PlanSemanticFingerprint 和独立 ScheduleSemanticFingerprint。它不进入 EntrySetFingerprint、SelectionFingerprint、ArchiveSpecFingerprint 或 ExecutionSemanticFingerprint，schedule 变化不触发 archive rebuild。
+
+发布 stale check 不得把整个 PlanSemanticFingerprint 直接当作执行关键 fingerprint。Plan 变化时重新解析并比较 ExecutionSemanticFingerprint：
+
+```text
+PlanSemanticFingerprint
+  includes ScheduleIntent
+  → configuration/reconcile identity
+
+ExecutionSemanticFingerprint
+  excludes ScheduleIntent
+  → Current publish safety
+```
+
+因此运行中 `02:00 → 03:00` 可以完成当前归档发布；scheduler installation 状态由独立 reconcile 决定，未同步时保持 OutOfSync，备份执行本身不得修改它。Rules、Source、ArchiveSpec、SecretRevision 等执行关键语义变化仍阻止发布。History/output 是否影响当前 publish 将由下一项 P0 决定，不在本节提前分类。
+
+### 17.5 Headless 与并发
+
+Task Scheduler/launchd/systemd/cron 必须调用与 GUI Run Now 相同的 Application Run Plan use case。scheduled run 全程非交互：PlanNotReady、MissingSecretBinding、SecretUnavailable 或其他 readiness failure 必须记录、返回明确非成功结果并退出，不能打开 GUI 或等待用户输入。
+
+v1 固定 `ConcurrentRunPolicy = SkipIfRunning`，不是 portable configurable field。手动与 scheduled trigger 对同一 `PlanId + DeviceId` 使用同一运行锁；已有任务运行时，新触发返回 AlreadyRunning/Skipped，不排队且不影响正在执行的任务。不同 Plan 是否并行由后续资源管理决定，但相互冲突的输出路径仍必须受保护。
+
+本节只固定 portable schedule、local installation、fingerprint、headless 与 concurrency 语义，不定义 JSON Schema、SQLite schema、native task 格式、CLI 参数形状或平台安装命令。
+
+## 18. 与实现现状的差异和迁移约束
 
 1. **`.backupignore v1` Directive 集合变化**：规范最初只允许 `@version/@mode/@case`；现在已正式加入可选 `@id`。当前 parser 尚未实现 `@id`，后续业务实现必须同步 parser、领域返回类型和兼容性测试。
 2. **Fingerprint 强类型与字段**：ArchiveUnitId/ExternalSourceId 已正式排除于 SelectionFingerprint，logical source/path/mapping 仍包含；当前 Core 尚未实现这些强类型 fingerprint，不得把旧聚合 string 当作 v1 durable baseline。
 3. **Baseline key 与 DeviceId**：Change Detection 的 `PlanId + ArchiveUnitId` 是 portable unit key；DeviceId 只作为本机 registration/binding/runtime namespace，不替换该 key。
-4. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无完整 declaration/discovery resolver、ExternalSource/SecretSlot identity、DeviceId、Local/Secret Binding、Global Rules Snapshot、ProtectionCapabilities 或 `ExecutionSemanticSnapshot`。本规范不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
+4. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无完整 declaration/discovery resolver、ExternalSource/SecretSlot identity、DeviceId、Local/Secret/Schedule Binding、Global Rules Snapshot、ProtectionCapabilities、ScheduleIntent/ScheduleSemanticFingerprint 或分离的 Plan/Execution semantic fingerprint。本文不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
 
-## 18. 当前未决顺序
+## 19. 当前未决顺序
 
-Identity、Portable Path/Local Binding、Global Rules、FILE_MANAGED declaration/discovery 与 Protection Configuration/Secret Binding P0 已确认。JSON Schema 前继续按以下顺序解决：
+Identity、Portable Path/Local Binding、Global Rules、FILE_MANAGED declaration/discovery、Protection Configuration/Secret Binding 与 Schedule Portability P0 已确认。JSON Schema 前继续按以下顺序解决：
 
-1. Schedule portability；
-2. History / output 配置的可移植边界；
-3. Schema compatibility 与 unknown fields；
-4. Import identity conflict / merge semantics。
+1. History / output 配置的可移植边界；
+2. Schema compatibility 与 unknown fields；
+3. Import identity conflict / merge semantics。
 
 ArchiveSpec override 与 External Source 的完整行为仍需设计，但不得提前固化 JSON 字段。本轮同样不定义 JSON Schema、SQLite schema、Entity、Repository 或 migration。
