@@ -75,12 +75,16 @@ Committed Baseline identity 需要稳定 `PlanId + ArchiveUnitId`。物理路径
 - clone/fork Plan 默认生成新 PlanId，并为克隆单元生成新 ArchiveUnitId，避免错误继承 baseline；
 - `Revision` 是单调递增的并发控制值，执行捕获 revision 与 semantic fingerprint，发布前重验；
 - 纯格式化、字段顺序和注释（如果格式未来支持）不应改变 semantic fingerprint。
+- 文档物理路径不是 PlanId；移动 File-backed 文档不改变 identity；
+- Managed 与 File-backed 必须解析成相同的 identity/value types，authority 不进入 Core；
+- File-backed 以 PlanSemanticFingerprint 处理运行中变化，不要求用户手工维护单调 revision。
 
 ### 未决
 
 - ID 的外部表示采用 UUID、ULID 还是带前缀的 opaque identifier；
 - 手工合并 Git 分支导致 revision 回退/分叉时的冲突策略；
 - 导入同 PlanId 时是 update、fork，还是要求用户明确选择。
+- 同一 portable Plan 在两台设备各自注册后，baseline 是按 PlanId + ArchiveUnitId + local registration 隔离，还是允许显式接续 Current manifest 中的 identity。
 
 ## 5. Source 与路径绑定
 
@@ -100,6 +104,8 @@ DeviceBinding
   HistoryRootExpression
 ```
 
+File-backed 文档只保存 portable logical configuration；registration 在每台设备保存 local binding。Managed Plan 也使用相同 binding 模型，不能因为配置存在 SQLite 就把盘符混进 Core identity。
+
 路径表达式是 untrusted input，解析后必须执行平台绝对化、变量白名单、case 规则、Link/Junction physical canonicalization 和三根两两不重叠验证。
 
 未决：
@@ -109,6 +115,8 @@ DeviceBinding
 - v1 允许的变量白名单（例如 `${HOME}`）与转义语法；
 - 未匹配当前设备时 CLI 是安全失败，还是允许交互式重新绑定；
 - 路径表达式是否允许相对路径（建议 v1 不允许）。
+- 多台设备同时运行同一 portable Plan 时，Current/History 是否必须使用独立 device namespace；
+- binding 缺失、目标介质离线或多个 selector 同时匹配时的确定性选择和错误状态。
 
 ## 6. Archive Unit 与规则表示
 
@@ -165,28 +173,63 @@ External Source 必须通过稳定 ID、实际路径 binding、目标 ArchiveUni
 
 ## 10. 文件角色与真相源关系
 
-当前 PRODUCT 同时要求 SQLite 默认管理和 `*.backupplan` 可导出/Git 管理，但尚未明确文件是：
+此 P0 已确认，正式行为见 [`docs/BACKUPPLAN.md`](../BACKUPPLAN.md)：`*.backupplan` 只有 Portable Declarative Document 一种语义，StowCrate 提供 Managed 与 File-backed 两种互斥 authority。
 
-1. **导入/导出快照**：运行时真相在 `config.db`，文件变更需显式 import；
-2. **可直接执行的声明文件**：CLI 可把文件作为本次运行真相；
-3. **持续同步的外部真相源**：应用监视文件并同步数据库。
-
-三种模型的冲突、revision、secret binding 与用户体验差异很大，不能同时含糊支持。建议 v1 支持前两种、暂不做自动双向同步，但需要维护者明确决定。
+- Import 复制成 Managed Plan，与原文件脱离；
+- Register 保持文件为 File-backed authoritative source；
+- 禁止文件与 SQLite 隐式双向同步；
+- authority、registration path 和 authority conversion 不进入备份 fingerprint；
+- Core 与执行管线只接收统一 ResolvedPlanSnapshot，不感知配置来源；
+- v1 不要求未注册文档支持无状态 one-shot execution。
 
 ## 11. Schema v1 之前必须确认的 P0
 
-1. `*.backupplan` 的运行角色：快照、直接执行源，或两者；
-2. Plan/Source/ArchiveUnit ID 格式及 clone/import identity 规则；
-3. DeviceBinding 与 Source/Current/History 的所有权模型；
-4. 允许的 portable path expression 与变量白名单；
-5. Global Rules 的 snapshot/reference 语义；
-6. ArchiveSpec 默认值与 unit override 合成方式；
-7. secret slot 的跨设备表示与重新绑定；
-8. schedule 是否进入 portable core schema；
-9. External Source v1 是否首批进入 schema；
-10. 未知字段、未知 enum、未来 schemaVersion 的 forward-compatibility 策略。
+1. ~~Backup Plan Document Authority~~：已确定，见 `BACKUPPLAN.md`；
+2. Plan / Source / ArchiveUnit identity 与 clone/import identity；
+3. Portable Path、Local Binding 与 Source/Current/History 所有权；
+4. Global Rules 的 snapshot/reference 语义；
+5. FILE_MANAGED `.backupignore` 的引用与发现语义；
+6. Secret Reference / Encryption configuration；
+7. Schedule portability；
+8. History / output 配置的可移植边界；
+9. Schema compatibility、unknown fields 与新版本读取策略；
+10. Import identity conflict / merge semantics。
 
-## 12. 后续产物
+ArchiveSpec override 与 External Source 字段形状仍需设计，但不能越过上述身份、路径和兼容性基础提前固化 Schema。
+
+## 12. 当前设计焦点：Identity + Portable Binding
+
+下一轮必须作为同一个设计包回答：
+
+```text
+Portable identity
+  PlanId
+  SourceId
+  ArchiveUnitId
+        ↓
+Local registration identity
+        ↓
+Device/path bindings
+  SourceRoot
+  CurrentRoot
+  HistoryRoot
+        ↓
+ResolvedPlanSnapshot
+```
+
+需要验证的关键场景：
+
+1. 同一 Git 管理文档分别注册到 Windows `E:\code` 与 macOS `/Users/foo/code`，portable IDs 相同但 runtime/baseline 不串用；
+2. File-backed 文档移动位置，registration 更新而 semantic identity 不变；
+3. Source 或 Archive Unit rename/move 时，明确是保留 identity 还是创建新对象；
+4. Import 同 PlanId、Register 同 PlanId、Clone 与 Fork 不会误继承 Current/baseline；
+5. Source/Current/History binding 在 lexical 与 physical canonicalization 后仍两两不重叠；
+6. 未绑定设备、离线输出盘和 selector 冲突都安全失败；
+7. portable document 不包含本机盘符、secret value、baseline 或 scheduler task ID。
+
+在这组语义确认前不生成 canonical JSON 示例。
+
+## 13. 后续产物
 
 P0 决策完成后依次产出：
 

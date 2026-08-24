@@ -23,6 +23,7 @@ StowCrate 将目录整理成一组可理解、可独立恢复的标准归档文�
 - [Milestone 1 — Planning Kernel](docs/milestones/MILESTONE-1-PLANNING-KERNEL.md)
 - [Filesystem Semantics v1](docs/FILESYSTEM.md)
 - [Change Detection & Baseline Commit v1](docs/CHANGE-DETECTION.md)
+- [Backup Plan Document v1](docs/BACKUPPLAN.md)
 - [Milestone 2 — Source Scanner & Filesystem Semantics](docs/milestones/MILESTONE-2-SOURCE-SCANNER.md)
 - [仓库开发约束](AGENTS.md)
 

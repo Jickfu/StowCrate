@@ -63,6 +63,8 @@ Committed Baseline 是最近一个已验证、成功发布为 Current，并完�
 
 调度、History retention、UI 状态、日志级别、CurrentRoot 和 HistoryRoot 不进入 ArchiveSpecFingerprint。输出根变化产生 Storage Relocation，而不是 Archive Rebuild。应用版本本身不进入 fingerprint；只有行为 semantics/schema version 变化才使 baseline 失效。
 
+PlanAuthority、File-backed registration path 与 Managed/File-backed 转换也不进入 fingerprint。两种 authority 解析出的 Plan Snapshot 语义相同时不得 rebuild；File-backed 文档在运行中变化则触发 PlanChangedDuringRun。
+
 `InputFingerprint = SHA256(EntrySetFingerprint + SelectionFingerprint)`。如需要聚合 rebuild identity，则由 InputFingerprint 与 ArchiveSpecFingerprint 组合。领域 API 必须使用强类型 fingerprint，不能以可互换的裸 `string` 表达。
 
 所有 fingerprint 使用 SHA-256 和显式版本化的 Canonical Fingerprint Encoding。encoding 固定字段 ID、顺序、长度和 UTF-8 值；不得使用 `GetHashCode()`，也不得直接依赖 JSON serializer 输出。未知 fingerprint/semantics version 视为 BaselineInvalid，并保守 rebuild。

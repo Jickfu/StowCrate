@@ -44,6 +44,7 @@ StowCrate.slnx
 - 合并规则、构建并预览 `ArchivePlan`；
 - 检测变化、执行备份、发布 Current、管理 History；
 - 导入/导出 `.backupignore` 和 Backup Plan 文件（`*.backupplan`）；
+- Import Managed Plan、Register File-backed Plan，并把两种 authority 解析为统一的 immutable Plan Snapshot；
 - 智能项目识别与建议确认；
 - 恢复、验证、配置快照和任务结果查询。
 
@@ -57,6 +58,7 @@ StowCrate.slnx
 - 物理文件系统、路径映射、staging 与原子替换；
 - no-follow `SourceScanner`、平台对象分类和文件系统边界探测；
 - `.backupignore`/`*.backupplan` 序列化；
+- Managed Plan repository、File-backed registration、Plan document loader 与本机 binding；
 - Windows Task Scheduler、launchd、systemd timer/cron 适配器；
 - Credential Manager/DPAPI、Keychain、Secret Service 适配器；
 - 可选 USN Journal、FSEvents、inotify 加速器。
@@ -73,6 +75,16 @@ StowCrate.slnx
 外部可执行文件的许可、版本、路径和能力必须显式管理。应用层不得拼接命令行。
 
 首版发行包随平台携带固定兼容版本的 7-Zip/7zz；Archiving 通过能力探测验证随包二进制，打包流程必须附带对应许可证和第三方归属信息。
+
+### Backup Plan resolution
+
+```text
+Managed configuration in config.db ──┐
+                                     ├─→ Resolved immutable Plan Snapshot → Core/Application use cases
+Registered *.backupplan ─────────────┘
+```
+
+Plan authority、registration path、local binding 与 scheduler installation state 是 Application/Infrastructure 管理信息，不进入 Core `BackupPlan`。同一 Plan 只能有一个 authoritative configuration source。不存在自动双向同步；Import 是复制为 Managed，Register 是链接到 File-backed document。
 
 ### StowCrate.App / StowCrate.Cli
 
@@ -168,6 +180,8 @@ cache.db   — 文件状态、哈希、扫描缓存和平台游标（可重建�
 ```
 
 只有成功发布 Current 后，才能在 `config.db` 事务中把对应 ArchiveVersion 标记为 Published 并更新该单元的 CurrentVersion 引用。随后才能刷新 `cache.db`；cache 永远不能领先 durable state。失败、取消、stale Plan revision、发布前状态或 Incomplete Observation 均不得推进 baseline。USN/FSEvents/inotify 只减少扫描与 hash 范围，检测结果仍能回退到便携算法。
+
+Plan authority 和 `*.backupplan` 的物理存放路径不属于 SelectionFingerprint 或 ArchiveSpecFingerprint。Managed 与 File-backed 解析出相同语义 Plan Snapshot 时，切换 authority 或移动注册文件不得触发 rebuild。File-backed 运行捕获 PlanSemanticFingerprint，Publish 前重新加载并比较；变化时按 PlanChangedDuringRun 处理。
 
 ## 7. SQLite 与配置恢复
 

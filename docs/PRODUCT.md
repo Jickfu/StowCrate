@@ -112,7 +112,14 @@ Current/A
 
 ### 4.4 Backup Plan 文件（`*.backupplan`）
 
-`*.backupplan` 是文件扩展名约定而不是固定文件名，例如 `MyCode.backupplan`、`Documents.backupplan`。它是版本化、可导出、可审阅的完整方案文件，用于迁移、灾难恢复和 Git 管理，不保存密码、令牌等秘密。
+`*.backupplan` 是文件扩展名约定而不是固定文件名，例如 `MyCode.backupplan`、`Documents.backupplan`。它是稳定、可移植、声明式的 Backup Plan Document，描述用户希望 StowCrate 如何备份数据；不是 `config.db` 的序列化、EF Entity、运行状态、baseline、cache 或 History 快照。完整规范见 [`BACKUPPLAN.md`](BACKUPPLAN.md)。
+
+StowCrate 支持两种互斥的 Plan authority：
+
+- `MANAGED`：`config.db` 是计划配置唯一真相源；Import 将文档复制成与原文件脱离的 Managed Plan，Export 产生当时的可移植声明快照；
+- `FILE_BACKED`：已注册的 `*.backupplan` 是计划配置唯一真相源；`config.db` 只保存 registration、本机路径绑定、secret binding、ArchiveVersion、Committed Baseline 和运行状态。
+
+Import 与 Register 是不同操作。Register 保持文件 authoritative，后续运行重新解析文件；不得在 SQLite 与文件之间进行隐式双向同步。Managed 与 File-backed 可以显式转换，但 authority 或文档物理位置变化本身不得触发重新归档。
 
 路径采用逻辑源和分平台映射，允许 `${HOME}` 等可移植表达，不把 Windows 盘符写成唯一身份。同一个计划可在不同设备重新绑定实际路径。
 

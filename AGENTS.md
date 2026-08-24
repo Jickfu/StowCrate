@@ -11,6 +11,7 @@
 - `docs/BACKUPIGNORE.md`：`.backupignore v1` 的正式语法与规则语义。
 - `docs/FILESYSTEM.md`：真实文件系统扫描、链接、特殊对象和扫描问题的 v1 语义。
 - `docs/CHANGE-DETECTION.md`：候选状态、变更判定、Committed Baseline 与提交时序。
+- `docs/BACKUPPLAN.md`：`*.backupplan` 声明文档、Plan Authority、Import/Register 与配置真相源。
 
 仓库文档是项目设计的唯一真相源：`PRODUCT.md` 负责产品行为，`ARCHITECTURE.md` 负责技术架构，`AGENTS.md` 负责开发约束。新的产品或架构决定必须同步更新相应文档，不能仅存在于聊天、Issue 或 Pull Request 讨论中。
 
@@ -43,6 +44,7 @@
 - USN Journal、FSEvents、inotify 等平台加速器必须具备便携回退方案。
 - 当前设计阶段按 `CHANGE-DETECTION.md` → Backup Plan v1 → Persistence 的顺序收敛契约；Persistence 规范完成前不得实现 SQLite schema、Entity、Repository 或 migration。
 - Change Detection 以 Archive Unit 为提交粒度；Observed、Candidate、Committed Baseline 不得混用，失败、取消或发布前状态不得推进 baseline。
+- `*.backupplan` 是可移植声明文档，不是数据库或运行状态备份。Managed 与 File-backed 只能选择一个配置真相源，禁止与 SQLite 隐式双向同步；Core 不得感知 authority 或文档物理路径。
 - 归档先写入 `.partial` 临时文件，完成测试和完整性计算后再原子发布。不得用未验证结果覆盖有效 Current。
 - 一致的 SQLite 配置快照必须通过 SQLite Online Backup API 创建，不得直接复制正在使用的数据库文件。
 
