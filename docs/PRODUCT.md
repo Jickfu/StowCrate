@@ -52,9 +52,13 @@ StowCrate 是面向开发者和个人重要资料的**结构化归档备份工�
 - 压缩、归档保护、卷大小、历史保留和调度设置；
 - 可选外部源映射。
 
+每个 Source 除稳定 SourceId 和 display Name 外，还必须有独立的 portable `SourceOutputPath`，决定其归档在 CurrentRoot 下的逻辑位置。修改显示名称不移动输出；修改 SourceOutputPath 是 Output Reorganization，不要求重新压缩。
+
 Plan、Source、Archive Unit、External Source 与 Secret Slot 都具有与名称和路径分离的稳定 UUID v4 identity。rename、move、Export、Import、Save As 和 Managed/File-backed 转换保持 identity；只有明确 Clone 为新 Plan 时递归生成全部新 identity，且不复制本机 Secret Binding。
 
 `SourceRoot`、`CurrentRoot` 和 `HistoryRoot` 经过绝对化、分隔符与大小写等平台规则规范化后必须两两不重叠：任意两个路径不得相等，任意一个也不得是另一个的祖先或子孙目录。该规则同时禁止 Source/输出递归、History 位于 Current 内，以及 Current 或 History 位于 Source 内。检测到冲突时必须阻止保存或执行方案并明确指出冲突路径，不能只跳过部分目录后继续。
+
+已有 Current/History 后改变 CurrentRoot 或 HistoryRoot 必须走受控 relocation：复制或 staging 到新 root、验证 SHA-256、发布完整目标后才提交 binding；失败继续以旧 root 为事实源。relocation 不重压缩、不创建新 ArchiveVersion、不推进 baseline。同一设备跨 Plan 还必须禁止任何 writable Current/History root 与其他 Plan 的 Source/Current/History root 重叠。
 
 ### 4.2 归档箱与层级边界
 
@@ -81,6 +85,8 @@ Current/A
 ```
 
 构建 `D.7z` 时扫描到子单元 `F` 必须停止，`F` 只进入 `F.7z`。父级规则不穿透子 Archive Unit；子单元按自己的有效规则独立规划。
+
+Current output 固定镜像 `SourceOutputPath + ArchiveUnit logical path`，只把 unit 最后一个 segment 替换为带归档扩展名的文件；v1 不支持 filename/path template。所有输出在写 `.partial` 前按目标文件系统真实 case/path semantics 检测碰撞，冲突必须 Fatal，不能覆盖已有或其他单元输出。
 
 在文件管理模式中，目录内存在 `.backupignore` 即表示该目录是 Archive Unit；文件同时定义本单元的局部过滤规则。空 `.backupignore` 表示“独立打包但无局部排除”。
 
@@ -160,6 +166,12 @@ Schedule Intent 属于完整 Plan desired configuration，因此改变调度会�
 只有成功验证、原子发布并持久提交为 Current 的 ArchiveVersion 才能成为 baseline。单元部分成功时只推进成功单元；Incomplete Observation 默认阻止覆盖 Current。
 
 历史用于恢复误删和误改，不默认混入第三方同步的 Current 目录。用户可以按 Archive Unit 配置是否保留历史。
+
+Current 是每个 Archive Unit 最多一个、位于稳定确定性路径的最新有效标准归档；History 只保存被新 Current 替代的旧 Current，不是第二套 Current 或同步镜像。CurrentRoot 必须保持干净，不混入旧版本、数据库或日志。
+
+History 默认 Disabled。Portable Plan 保存 Plan default 和 declared Archive Unit override；未声明的 FILE_MANAGED unit 使用 Plan default。启用 History 时必须显式选择 `KeepAll` 或 `KeepLastVersions(N)`（`N >= 1`），并在当前设备绑定 HistoryRoot。Disabled 只停止生成新历史，绝不删除已有版本；Purge History 是独立的破坏性操作，必须明确确认。
+
+只有 Archive Unit Changed、存在 old Current 且 effective History Enabled 时才捕获 History。捕获并验证 old Current 失败必须保留旧 Current、阻止发布；Retention cleanup 只在新 Current 和 baseline durable commit 后运行，失败产生 SuccessWithWarnings/HistoryMaintenanceOutOfSync，不回滚有效 Current。
 
 ### 4.7 归档格式与保护
 

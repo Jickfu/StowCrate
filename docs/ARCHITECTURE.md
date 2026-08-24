@@ -34,6 +34,7 @@ StowCrate.slnx
 - `ArchivePlan`、`ArchiveEntry`、`ArchiveVersion`、`RetentionPolicy`；
 - `ProtectionConfiguration`、强类型 `SecretSlotId` 与 resolved `SecretRevision`，但不包含 OS SecretReference 或 SecretValue；
 - portable `ScheduleIntent`、Daily/Weekly/OnStartup trigger 与 MissedRunPolicy，但不包含任何 native scheduler identity/configuration；
+- portable `SourceOutputPath`、History default/unit override、`KeepAll` / `KeepLastVersions` 与 output/history result state；
 - 逻辑路径、归档内路径、结果与错误类型。
 
 不得依赖 Avalonia、SQLite、7-Zip、进程调用或 OS API。
@@ -49,6 +50,7 @@ StowCrate.slnx
 - Import Managed Plan、Register File-backed Plan，并把两种 authority 解析为统一的 immutable Plan Snapshot；
 - 管理 Secret Slot 的显式 Bind/Set/Replace/Unbind，用 local SecretRevision 维护变更语义并验证交互式/无头 readiness；
 - 保存 ScheduleIntent、协调本机 scheduler installation/status，并由所有触发方式调用同一 Run Plan 用例；
+- 验证 OutputLayout、协调 Current/History publish、retention maintenance 与 CurrentRoot/HistoryRoot 的受控 relocation；
 - 智能项目识别与建议确认；
 - 恢复、验证、配置快照和任务结果查询。
 
@@ -63,6 +65,7 @@ StowCrate.slnx
 - no-follow `SourceScanner`、平台对象分类和文件系统边界探测；
 - `.backupignore`/`*.backupplan` 序列化；
 - Managed Plan repository、File-backed registration、Plan document loader 与本机 binding；
+- destination-safe output path encoding、storage slot resolution、Current/History staging/publish/relocation 与跨 Plan root overlap 检查；
 - Windows Task Scheduler、launchd、systemd timer/cron 的 `ISchedulerAdapter` 实现与本机 installation metadata；Linux 优先 systemd user timer，cron 只作能力回退；
 - Credential Manager/DPAPI、Keychain、Secret Service 适配器；
 - 可选 USN Journal、FSEvents、inotify 加速器。
@@ -100,7 +103,8 @@ PlanId / SourceId                    DeviceId / Registration
 ArchiveUnitId / ExternalSourceId  +  Source/External physical bindings
 SecretSlotId / Protection intent     Secret binding / local SecretRevision
 ScheduleIntent                       Scheduler provider / native task identity / installed fingerprint
-Logical paths / policies             CurrentRoot / HistoryRoot
+SourceOutputPath / HistoryPolicy     CurrentRoot / conditional HistoryRoot / relocation state
+Other logical paths / policies       Other local runtime state
                                    → validated ResolvedPlanSnapshot
 ```
 
@@ -166,8 +170,9 @@ Milestone 2 的 Scanner 按 [`FILESYSTEM.md`](FILESYSTEM.md) 将物理对象转�
 5. 分别合成每个单元的 pinned global、方案和局部规则。
 6. 遍历单元内容；先检查边界，再匹配规则。边界优先于普通 include/exclude。
 7. 解析外部源映射和归档内逻辑路径，检测路径冲突。
-8. 生成规范排序的 entries、警告、预估与变更指纹。
-9. 只有经过用户确认或无头策略允许的计划才进入执行阶段。
+8. 由 SourceOutputPath、Archive Unit logical path、format extension 与版本化 OutputPathEncoding 生成 destination-safe Current relative path；按目标文件系统真实 case semantics 检测所有 output collision。
+9. 生成规范排序的 entries、警告、预估与变更/输出布局指纹。
+10. 只有经过用户确认或无头策略允许的计划才进入执行阶段。
 
 路径匹配器必须独立测试以下情况：不同分隔符、根路径、`!`、`*`、`**`、尾随斜杠、Unicode、大小写敏感文件系统和嵌套边界。Scanner 实现时还必须独立测试符号链接循环及逃逸 Source 的链接。
 
@@ -185,6 +190,7 @@ Planned
   → Verify durable History Version
   → Atomic replace Current on Current filesystem
   → Durable ArchiveVersion / Baseline commit in config.db
+  → Retention maintenance（失败只产生 warning/out-of-sync）
   → Refresh disposable cache
   → Cleanup
 ```
@@ -199,6 +205,7 @@ Planned
 - 启动时可识别并安全清理陈旧 staging/partial，但必须保留诊断信息；
 - 手动与 scheduled run 对同一 `PlanId + DeviceId` 使用同一运行锁；v1 固定 SkipIfRunning，竞争者记录 AlreadyRunning/Skipped，不排队。输出路径仍需冲突保护；不同 Plan 是否并发由后续资源策略决定；
 - 日志和结果必须记录被跳过、不可读、变化中或锁定的文件；Incomplete Observation 默认阻止发布。
+- 只有 Changed + old Current exists + effective History Enabled 才捕获 History。History capture/verification 是替换 Current 的前置条件，失败必须保留 old Current 并终止；Retention cleanup 必须在 Current/baseline durable commit 后执行，失败不得回滚新 Current；
 
 无历史或首次发布时，同样只允许把已验证的目标文件系统临时文件原子发布为 Current。元数据提交必须可从 Current 与 History 的实际文件状态重建，不能成为判断归档有效性的唯一依据。
 
@@ -219,7 +226,11 @@ cache.db   — 文件状态、哈希、扫描缓存和平台游标（可重建�
 
 Plan authority、`PlanId`、`ArchiveUnitId`、`ExternalSourceId`、`DeviceId`、Global Rule Library provenance 和 `*.backupplan` 的物理存放路径不属于 SelectionFingerprint 或 ArchiveSpecFingerprint；`SourceId`、Archive Unit logical path 与实际选择/映射语义仍属于 SelectionFingerprint。Managed 与 File-backed 解析出相同语义 Plan Snapshot 时，切换 authority 或移动注册文件不得触发 rebuild。
 
-PlanSemanticFingerprint 覆盖完整 desired configuration，包括 ScheduleIntent；ExecutionSemanticFingerprint 只覆盖影响本轮扫描、选择、归档或发布正确性的配置，不包含 ScheduleIntent。每次运行捕获两者、适用的 PlanRevision、外部规则源 fingerprint 和 Secure `SecretSlotId + SecretRevision`。Publish 前发现 Plan 变化时重新解析；仅 ExecutionSemanticFingerprint 或其他执行关键输入变化才按 PlanChangedDuringRun 阻止，schedule-only 变化继续发布。
+PlanSemanticFingerprint 覆盖完整 desired configuration，包括 ScheduleIntent、SourceOutputPath、History Enabled 与 RetentionPolicy。ExecutionSemanticFingerprint 只覆盖影响本轮扫描、选择、归档或发布正确性的 portable 配置：包含 OutputLayoutFingerprint 与 effective History Enabled，不包含 ScheduleIntent 或 RetentionPolicy。
+
+每次运行还捕获 ExecutionBindingFingerprint，使用 physical-canonical SourceRoot、CurrentRoot、effective HistoryRoot、required External Source bindings、目标 case/capability identity 和 storage semantics version。Publish 前发现 Plan 或 binding 变化时重新解析；ExecutionSemanticFingerprint、ExecutionBindingFingerprint 或其他执行关键输入变化才按 PlanChangedDuringRun 阻止。schedule-only 变化继续发布；retention-only 变化继续发布但跳过旧策略 cleanup 并标记 maintenance out-of-sync。
+
+OutputLayoutFingerprint 与 ExecutionBindingFingerprint 都不进入 EntrySet/Selection/ArchiveSpec fingerprint 或 Committed Baseline。SourceOutputPath 变化产生 OutputReorganization，CurrentRoot/HistoryRoot 变化产生 StorageRelocation；已验证 artifact 保持原 ArchiveVersion identity 和 baseline，不重新压缩。
 
 ## 7. SQLite 与配置恢复
 
@@ -241,6 +252,8 @@ PlanSemanticFingerprint 覆盖完整 desired configuration，包括 ScheduleInte
 - 跨平台元数据能力与未保留项警告。
 
 manifest 不保存真实密码、密钥、token 或不必要的主机隐私信息。
+
+ArchiveVersion 的 durable identity 与物理绝对路径分离：概念上记录 VersionId、ArchiveUnitId、StorageSlot（Current/History）、RelativeStoragePath、SHA-256、Size、PublishedAt 等；实际位置由当前 StorageRoot binding + relative path 解析。relocation 只改变 binding/location，不生成新 version 或推进 baseline。本段不预先规定 SQLite schema。
 
 ## 9. 平台抽象
 
@@ -267,8 +280,8 @@ manifest 不保存真实密码、密钥、token 或不必要的主机隐私信�
 ## 11. 测试策略
 
 - **Core 单元测试**：规则语义、层级边界、路径规范化、ArchivePlan 稳定性。
-- **Application 测试**：变化原因、独立 baseline commit、History 切换、取消、失败补偿、预览与结果，MissingSecretBinding/SecretUnavailable/SecretStoreError、SecretRevision drift、headless 不降级，以及 schedule reconcile/out-of-sync、schedule-only stale change 不阻止发布和 SkipIfRunning。
-- **Infrastructure 集成测试**：SQLite migration/backup、文件锁、原子替换、scheduler install/update/remove/status、DST/missed-run 映射与 native identity lifecycle。
+- **Application 测试**：变化原因、独立 baseline commit、History capture/retention 顺序、取消、失败补偿、预览与结果，MissingSecretBinding/SecretUnavailable/SecretStoreError、SecretRevision drift、headless 不降级，schedule reconcile/out-of-sync、schedule-only stale change 不阻止发布、SkipIfRunning，以及 History Enabled/Retention/OutputLayout/ExecutionBinding drift 的不同发布结果。
+- **Infrastructure 集成测试**：SQLite migration/backup、文件锁、原子替换、Current/History relocation、跨文件系统 copy/verify、output collision/case semantics、跨 Plan root overlap、scheduler install/update/remove/status、DST/missed-run 映射与 native identity lifecycle。
 - **Archiving 契约测试**：每种格式的创建、测试、恢复、加密、Unicode、大文件和分卷；验证 protection capabilities，且 SecretValue 不出现在参数、环境、日志或诊断输出。
 - **跨平台测试**：Windows/macOS/Linux CI，大小写、权限、链接和长路径 fixture；Secret Store prototype 还必须覆盖 GUI 用户与 Task Scheduler/launchd/systemd timer/cron 的实际执行身份。
 - **故障注入测试**：写入中断、空间不足、损坏归档、进程退出、Current/History 移动失败。

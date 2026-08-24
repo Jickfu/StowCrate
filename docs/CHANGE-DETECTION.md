@@ -76,7 +76,11 @@ PlanAuthority、File-backed registration path 与 Managed/File-backed 转换也�
 
 `PlanSemanticFingerprint` 描述完整 portable desired configuration，因此包含 ScheduleIntent；它用于识别 Plan 语义版本和协调 scheduler 等配置状态，不等于“当前归档是否仍可发布”。
 
-`ExecutionSemanticFingerprint` 只描述会影响本轮扫描、选择、归档 bytes 或发布正确性的 Plan 语义，至少覆盖 Source logical configuration、Archive Units、Rules、Boundary、LinkPolicy、External Source mapping、ArchiveSpec、Protection intent、Change Detection mode 与相应 semantics versions。ScheduleIntent、UI metadata、authority 和 registration path 不进入。History/output 哪些字段属于执行关键语义由后续 History/Output P0 决定，本轮不提前排除。
+`ExecutionSemanticFingerprint` 只描述会影响本轮扫描、选择、归档 bytes 或发布正确性的 portable Plan 语义，至少覆盖 Source logical configuration、Archive Units、Rules、Boundary、LinkPolicy、External Source mapping、ArchiveSpec、Protection intent、Change Detection mode、OutputLayoutFingerprint、每个单元 effective History Enabled 状态与相应 semantics versions。ScheduleIntent、History RetentionPolicy、UI metadata、authority 和 registration path 不进入。
+
+`OutputLayoutFingerprint` 描述 SourceOutputPath、确定性 Archive Unit-to-output mapping 与 OutputPathEncodingVersion；它进入 ExecutionSemanticFingerprint，但不进入 EntrySet/Selection/ArchiveSpec fingerprint。layout 变化需要安全 Output Reorganization，而不是 archive rebuild。
+
+设备本地路径不属于 PlanSemanticFingerprint。一次运行另行捕获 `ExecutionBindingFingerprint`，至少包含 physical-canonical resolved SourceRoot、CurrentRoot、effective HistoryRoot（有单元启用 History 时）、required External Source physical bindings、目标文件系统 case/capability identity 与 storage binding semantics version。它只用于本轮 stale check，不进入三类 archive fingerprint、InputFingerprint 或 Committed Baseline。
 
 运行期间完整 PlanSemanticFingerprint 变化时必须重新解析配置并比较 ExecutionSemanticFingerprint；只有执行关键语义变化才触发 PlanChangedDuringRun。Schedule-only 变化不废弃已验证归档，也不推进或改写 scheduler installation；scheduler reconciliation 是独立配置管理流程。
 
@@ -150,14 +154,17 @@ Scan / Candidate / Change Decision
   → Atomic Publish Current
   → Durable ArchiveVersion / CurrentVersion commit in config.db
   → Baseline committed
+  → Retention maintenance（History 启用时）
   → Refresh disposable cache.db
 ```
 
 概念状态为 `Prepared → Verified → Published → Superseded`，失败可进入 `Failed`；只有 Published 可以作为 baseline。这些是领域/事务语义，不预先规定 SQLite schema。
 
-运行开始时捕获 `ExecutionSemanticSnapshot`，发布前再次检查。它至少包含 Managed Plan 的 PlanRevision（适用时，用于发现配置可能变化）、PlanSemanticFingerprint、ExecutionSemanticFingerprint、所有已解析外部规则源 fingerprint，以及 Secure protection 实际解析的 `SecretSlotId + SecretRevision`。
+运行开始时捕获 `ExecutionSemanticSnapshot`，发布前再次检查。它至少包含 Managed Plan 的 PlanRevision（适用时，用于发现配置可能变化）、PlanSemanticFingerprint、ExecutionSemanticFingerprint、ExecutionBindingFingerprint、所有已解析外部规则源 fingerprint，以及 Secure protection 实际解析的 `SecretSlotId + SecretRevision`。
 
-PlanRevision 或 PlanSemanticFingerprint 变化时必须重新解析并计算当前 ExecutionSemanticFingerprint；只有它不同才按 PlanChangedDuringRun 阻止发布。Schedule-only 等非执行关键变化不阻止本轮 Current Publish 或 baseline commit。FILE_MANAGED 的 `.backupignore` 或 SecretRevision 从规则解析/规划到发布前变化属于执行关键 drift，默认不发布、不提交 baseline。
+PlanRevision 或 PlanSemanticFingerprint 变化时必须重新解析并计算当前 ExecutionSemanticFingerprint；只有它不同才按 PlanChangedDuringRun 阻止发布。Schedule-only 或 retention-only 变化不阻止本轮 Current Publish 或 baseline commit。ExecutionBindingFingerprint、FILE_MANAGED `.backupignore` 或 SecretRevision 从规则解析/规划到发布前变化属于执行关键 drift，默认不发布、不提交 baseline。
+
+如果仅 RetentionPolicy 在运行中变化，本轮使用旧策略的 cleanup 必须跳过，并标记 HistoryMaintenanceOutOfSync；随后按最新 authoritative policy 独立维护。effective History Enabled 或 OutputLayout 变化会改变 ExecutionSemanticFingerprint，必须阻止发布，因为它们分别决定是否先捕获 old Current、以及 Current 发布目标。
 
 外部规则源 fingerprint 必须基于运行实际读取的文件 bytes 和版本化解析语义确定，不能只依赖 mtime。即使一次变化解析后得到相同规则，也不得让本轮以过期的规则源观察结果发布。执行层还必须按 `FILESYSTEM.md` 重新验证关键 path/kind/metadata，防止 TOCTOU 类型替换。
 
@@ -185,7 +192,7 @@ Change Detector 位于 Core 或 Application 的纯逻辑边界，只接收 Candi
 
 ## 10. 规范测试矩阵
 
-至少覆盖：无 baseline、完全一致、增删文件、size/mtime/link target、Rules/Boundary/LinkPolicy/External Source、格式/压缩/ProtectionMode/SecretSlotId/SecretRevision/Privacy semantics/manifest schema、secret reference/provider 变化不触发、Privacy 随机材料不触发、ScheduleIntent 不进入 archive fingerprints、schedule-only 运行中变化不阻止发布、执行关键 Plan 变化阻止发布、非归档设置不触发、输入顺序稳定、semantics version、invalid baseline、Standard/Strict、cache 丢失、partial unit success、失败/取消/发布前不提交、stale plan、运行中 `.backupignore` 或 SecretRevision 变化、identity-only 变化不改变 SelectionFingerprint、logical path 变化会改变 SelectionFingerprint、Incomplete Observation 阻止与 IntentionalSkip 允许。
+至少覆盖：无 baseline、完全一致、增删文件、size/mtime/link target、Rules/Boundary/LinkPolicy/External Source、格式/压缩/ProtectionMode/SecretSlotId/SecretRevision/Privacy semantics/manifest schema、secret reference/provider 变化不触发、Privacy 随机材料不触发、ScheduleIntent/Retention 不进入 archive fingerprints、schedule-only 与 retention-only 运行中变化不阻止发布、retention-only 跳过 cleanup、History Enabled/OutputLayout/ExecutionBinding 变化阻止发布、SourceOutputPath/CurrentRoot relocation 不 rebuild、执行关键 Plan 变化阻止发布、非归档设置不触发、输入顺序稳定、semantics version、invalid baseline、Standard/Strict、cache 丢失、partial unit success、History capture 失败阻止与 retention cleanup 失败只警告、失败/取消/发布前不提交、stale plan、运行中 `.backupignore` 或 SecretRevision 变化、identity-only 变化不改变 SelectionFingerprint、logical path 变化会改变 SelectionFingerprint、Incomplete Observation 阻止与 IntentionalSkip 允许。
 
 ## 11. 与现有仓库的差异和迁移约束
 
@@ -195,4 +202,4 @@ Change Detector 位于 Core 或 Application 的纯逻辑边界，只接收 Candi
 2. 当前 Core 的 Archive Unit 主要以逻辑 root 表达，尚未实现正式、稳定、可持久化的 `ArchiveUnitId`。Backup Plan v1 已确定该 identity；实现时不能临时用数据库行号或物理绝对路径代替。
 3. 当前 `ArchivePlan.Fingerprint` 是一个聚合字符串，尚未拆成强类型 EntrySet/Selection/ArchiveSpec/Input fingerprint。未来实现需提供显式迁移与 fingerprint format version，不能把现有值误当 v1 durable baseline。
 4. `FILESYSTEM.md` 已允许 Warning 后继续规划；本文进一步区分 IntentionalSkip 与 IncompleteObservation，用于决定能否发布。这是发布层收紧，不改变 Scanner 的 no-follow 或 issue severity 事实。
-5. 当前仓库尚未实现 External Source、ArchiveSpec、Secret revision、ArchiveVersion、Current 发布或 Reconciliation。本文只定义这些边界，不得为满足文档而引入临时 SQLite schema。
+5. 当前仓库尚未实现 External Source、ArchiveSpec、Secret revision、OutputLayout/ExecutionBinding fingerprint、ArchiveVersion、Current/History 发布、relocation 或 Reconciliation。本文只定义这些边界，不得为满足文档而引入临时 SQLite schema。

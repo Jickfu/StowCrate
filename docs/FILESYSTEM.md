@@ -59,6 +59,8 @@ Windows 不能把全部 `ReparsePoint` 猜成 Symbolic Link。已识别 symlink�
 
 `SourceRoot`、`CurrentRoot`、`HistoryRoot` 的两两不重叠验证必须同时考虑 lexical path 与解析 Link/Junction 后的 physical canonical path；仅用 `Path.GetFullPath` 不足以完成安全验证。
 
+同一 DeviceId 下还必须执行跨 active Plan 的全局 overlap 检查：任一 writable CurrentRoot/HistoryRoot 都不得等于、包含或位于任何其他 active SourceRoot、CurrentRoot 或 HistoryRoot 之下。不同 Plan 的 SourceRoot 之间可以重叠，因为两者均为只读输入；但任何输出/历史根与另一个 Plan 的输入或 writable root 重叠都必须阻止配置或执行。共享父目录下互不包含的 sibling plan roots 合法。
+
 ## 6. 扫描问题与一致性
 
 `SourceScanResult` 包含 `SourceSnapshot?` 与规范排序的 `ScanIssue[]`。Issue severity 为 `Info`、`Warning`、`Fatal`。

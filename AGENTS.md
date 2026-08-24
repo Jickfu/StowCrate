@@ -25,7 +25,7 @@
 - 在文件管理模式中，`.backupignore` 的存在既表示该目录是 Archive Unit，也提供该单元的局部过滤规则；空文件有效。
 - 规则分为全局规则、Backup Plan 规则和局部规则（`.backupignore` 或等价的 UI 配置）三层；子 Archive Unit 独立规划。
 - UI 配置并保存到 SQLite 是默认方式；`.backupignore` 是高级用户的“配置即代码”方式。同一个 Archive Unit 不得同时由两种规则来源控制。
-- `SourceRoot`、`CurrentRoot`、`HistoryRoot` 规范化后必须两两不重叠：任意一个都不能等于、包含或位于另一个之下。严禁把归档输出写回源目录，也不得把 History 放进 Current。
+- `SourceRoot`、`CurrentRoot`、`HistoryRoot` 规范化后必须两两不重叠：任意一个都不能等于、包含或位于另一个之下。严禁把归档输出写回源目录，也不得把 History 放进 Current。同一设备跨 active Plan 的任一 writable CurrentRoot/HistoryRoot 也不得与其他 Plan 的 SourceRoot、CurrentRoot 或 HistoryRoot 重叠；不同 Plan 的只读 SourceRoot 可以重叠。
 - 只有 Archive Unit 发生变化时才生成历史版本。Current 输出保持干净，可直接交给第三方工具同步。
 - 首版不负责上传云端。StowCrate 只生成本地归档，用户自行选择同步方式。
 - 同时支持手动与定时执行。定时任务必须通过 CLI/无头入口调用应用用例，不得自动操作 GUI。
@@ -46,6 +46,8 @@
 - Change Detection 以 Archive Unit 为提交粒度；Observed、Candidate、Committed Baseline 不得混用，失败、取消或发布前状态不得推进 baseline。
 - `*.backupplan` 是可移植声明文档，不是数据库或运行状态备份。Managed 与 File-backed 只能选择一个配置真相源，禁止与 SQLite 隐式双向同步；Core 不得感知 authority 或文档物理路径。
 - Plan、Source、Archive Unit、External Source 使用稳定 UUID v4 identity；名称、逻辑/物理路径、文件位置、数组下标和数据库键都不是 identity。Portable Configuration 不保存设备绝对路径，物理 Source/Current/History/External 路径属于 Device Local Binding。
+- `SourceOutputPath`、History Enabled/Retention 属于 Portable Configuration；CurrentRoot 永远是 required local binding，HistoryRoot 仅在至少一个单元 effective History Enabled 时 required。Retention cleanup 必须在 Current/baseline durable commit 后执行，失败不得回滚有效 Current。
+- OutputLayout 与 effective History Enabled 属于 ExecutionSemanticFingerprint；RetentionPolicy 不属于。物理 Source/Current/effective History/External binding 进入仅用于单次运行 stale check 的 ExecutionBindingFingerprint，不进入 archive fingerprint 或 Committed Baseline。
 - `.backupignore @id <uuid-v4>` 是 FILE_MANAGED Archive Unit 的可选稳定 identity；空文件仍合法，任何流程都不得未经用户明确确认自动写入 `@id`。
 - 归档先写入 `.partial` 临时文件，完成测试和完整性计算后再原子发布。不得用未验证结果覆盖有效 Current。
 - 一致的 SQLite 配置快照必须通过 SQLite Online Backup API 创建，不得直接复制正在使用的数据库文件。

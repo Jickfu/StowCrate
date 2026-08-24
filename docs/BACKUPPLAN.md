@@ -69,7 +69,7 @@ Authority 是 Application/Infrastructure 的配置管理概念，不是 Core Bac
 
 ## 5. Portable Configuration 与 Local Runtime State
 
-文档保存 portable desired configuration，例如：Plan name、logical sources、Archive Units、pinned Global Rules Snapshot、Plan/UI-managed rules、ArchiveSpec、Protection Configuration、portable Secret Slot declarations、LinkPolicy、Change Detection mode、History policy、schedule intent 与 External Source definitions。
+文档保存 portable desired configuration，例如：Plan name、logical sources、portable SourceOutputPath、Archive Units、pinned Global Rules Snapshot、Plan/UI-managed rules、ArchiveSpec、Protection Configuration、portable Secret Slot declarations、LinkPolicy、Change Detection mode、History default/unit overrides、schedule intent 与 External Source definitions。
 
 以下永不进入文档：Committed Baseline、ArchiveVersion records、CurrentVersionId、last run/success、cached hashes、scan/journal cursor、scheduler provider/native task ID/installed fingerprint/status、SecretRevision、OS SecretReference/locator、Secret Store provider、SecretValue、password hash/verifier、加密 secret blob、Privacy recovery material 和 Recovery Package。
 
@@ -93,9 +93,9 @@ authoritative declaration ────────┘                    │
 
 Core `BackupPlan` 不包含 `IsFileBacked`、registration path、SQLite identity 或 Declared/Discovered origin。Planning Kernel、Change Detector 和 Archiving 不感知配置来源；Scanner 只报告物理事实，不决定 declaration authority。
 
-每次运行捕获 `ExecutionSemanticSnapshot`。它包含 Managed 的 Revision（适用时，用于发现配置可能变化）、PlanSemanticFingerprint、ExecutionSemanticFingerprint、所有本轮解析的外部规则源 fingerprint，以及 Secure protection 实际解析的 `SecretSlotId + SecretRevision`。
+每次运行捕获 `ExecutionSemanticSnapshot`。它包含 Managed 的 Revision（适用时，用于发现配置可能变化）、PlanSemanticFingerprint、ExecutionSemanticFingerprint、ExecutionBindingFingerprint、所有本轮解析的外部规则源 fingerprint，以及 Secure protection 实际解析的 `SecretSlotId + SecretRevision`。
 
-Publish 前必须重新读取并验证。PlanRevision/PlanSemanticFingerprint 变化时重新解析当前 Plan；只有 ExecutionSemanticFingerprint 不同才返回 PlanChangedDuringRun。Schedule-only 变化不阻止本轮发布。任一 FILE_MANAGED `.backupignore` 或 SecretRevision 变化仍属于执行关键 drift，不发布 Current、不推进 baseline。外部规则源 fingerprint 基于实际读取的文件 bytes 与版本化解析语义，不能只比较 mtime。
+Publish 前必须重新读取并验证。PlanRevision/PlanSemanticFingerprint 变化时重新解析当前 Plan；只有 ExecutionSemanticFingerprint 不同才返回 PlanChangedDuringRun。Schedule-only 或 retention-only 变化不阻止本轮发布；retention-only 变化必须跳过本轮旧策略 cleanup 并标记 HistoryMaintenanceOutOfSync。ExecutionBindingFingerprint、任一 FILE_MANAGED `.backupignore` 或 SecretRevision 变化仍属于执行关键 drift，不发布 Current、不推进 baseline。外部规则源 fingerprint 基于实际读取的文件 bytes 与版本化解析语义，不能只比较 mtime。
 
 ## 7. Fingerprint 与文件移动
 
@@ -108,6 +108,10 @@ PlanAuthority、Import/Register 方式、registration path、authority conversio
 - 仅 JSON formatting/property order 变化：PlanSemanticFingerprint 不变；
 - 文档内规则、ArchiveSpec 等语义变化：对应 fingerprint 变化；
 - ScheduleIntent 变化：PlanSemanticFingerprint 与 ScheduleSemanticFingerprint 变化，但三个 archive fingerprint 和 ExecutionSemanticFingerprint 不变；
+- SourceOutputPath/OutputPathEncodingVersion 变化：PlanSemanticFingerprint、OutputLayoutFingerprint 与 ExecutionSemanticFingerprint 变化，三个 archive fingerprint 不变；
+- effective History Enabled 变化：PlanSemanticFingerprint 与 ExecutionSemanticFingerprint 变化，三个 archive fingerprint 不变；
+- RetentionPolicy 变化：PlanSemanticFingerprint 变化，但 ExecutionSemanticFingerprint 与三个 archive fingerprint 不变；
+- local Source/Current/effective History/External binding 变化：ExecutionBindingFingerprint 变化，不属于 Plan 或 archive fingerprint；
 - 运行期间 Plan 文档变化时重新比较 ExecutionSemanticFingerprint；仅 schedule 等非执行关键语义变化不触发 PlanChangedDuringRun；
 - 运行期间已解析 `.backupignore` 或 Secure SecretRevision 变化：PlanChangedDuringRun。
 
@@ -165,12 +169,12 @@ Save As 只是同一 Plan Document 的物理副本，不能把两个相同 PlanI
 
 ## 11. Portable Configuration 与 Device Local Binding
 
-Portable Configuration 描述可 Git 管理、Import/Export 和跨设备复用的 desired configuration，包括 portable IDs、显示名、逻辑路径、Archive Units、pinned Global Rules Snapshot、其他规则、ArchiveSpec、Protection Configuration、Secret Slot declarations、LinkPolicy、Change Detection mode、History policy、schedule intent 与 External Source declaration。
+Portable Configuration 描述可 Git 管理、Import/Export 和跨设备复用的 desired configuration，包括 portable IDs、显示名、逻辑路径、SourceOutputPath、Archive Units、pinned Global Rules Snapshot、其他规则、ArchiveSpec、Protection Configuration、Secret Slot declarations、LinkPolicy、Change Detection mode、History default/unit overrides、schedule intent 与 External Source declaration。
 
 Device Local Binding 描述本机如何解析这些逻辑对象，包括：
 
 - SourceId → physical SourceRoot；
-- plan storage slots → physical CurrentRoot、HistoryRoot；
+- Current/History logical storage slots → physical CurrentRoot、conditional HistoryRoot；
 - ExternalSourceId → physical file/directory；
 - SecretSlotId → 本机 Secret Store provider + opaque SecretReference + local SecretRevision；
 - ScheduleIntent → 本机 ScheduleInstallation state。
@@ -187,7 +191,7 @@ Local Binding 至少按 `PlanId + DeviceId` 命名空间，并引用 SourceId、
 
 `CHANGE-DETECTION.md` 的 `PlanId + ArchiveUnitId` baseline identity 保持为 portable unit key；在持久化/运行时它位于当前 DeviceId/registration 的本机命名空间中。本文不提前定义 SQLite 复合键。
 
-缺少任何 required Source、Current、History（启用时）、External Source 或 Secure Secret binding 时，Plan 状态为 `PlanNotReady` 并安全失败，不能静默跳过。External Source v1 默认 required；optional 语义尚未设计。binding 存在但当前执行上下文无法读取 secret 时，运行以 SecretUnavailable/SecretStoreError 阻止，不能降级或在 headless 中等待交互。
+CurrentRoot 对所有可执行 Plan 都是 required binding；至少一个 Archive Unit effective History Enabled 时 HistoryRoot 才是运行所需 binding。缺少 required Source、Current、conditional History、External Source 或 Secure Secret binding 时，Plan 状态为 `PlanNotReady` 并安全失败，不能静默跳过。External Source v1 默认 required；optional 语义尚未设计。binding 存在但当前执行上下文无法读取 secret 时，运行以 SecretUnavailable/SecretStoreError 阻止，不能降级或在 headless 中等待交互。
 
 ## 13. Local Path Expression v1
 
@@ -205,7 +209,7 @@ v1 不支持 `${MY_CODE}`、`%APPDATA%`、shell expansion、命令替换、任�
 
 所有 binding 解析后必须执行 lexical normalization、平台 case 规则、Link/Junction physical canonicalization，以及 SourceRoot/CurrentRoot/HistoryRoot 两两不重叠验证。SourceRoot 仍必须遵守 `FILESYSTEM.md` 的真实目录约束。
 
-Binding 或文档物理位置不进入 archive semantic fingerprint。SourceRoot 改变后必须重新扫描，真实数据差异通过 EntrySetFingerprint 体现；CurrentRoot/HistoryRoot 改变产生 Storage Relocation，不伪装为 rebuild。
+Binding 或文档物理位置不进入 archive semantic fingerprint。SourceRoot 改变后必须重新扫描，真实数据差异通过 EntrySetFingerprint 体现；CurrentRoot/HistoryRoot 改变产生 Storage Relocation，不伪装为 rebuild。已有 Current/History 时不得先直接修改 binding pointer；必须完成第 18 节的 copy/stage、SHA-256 verify、destination publish 后，才能 durable commit 新 binding。
 
 ## 14. Global Rules v1：Pinned Snapshot
 
@@ -489,7 +493,7 @@ ExecutionSemanticFingerprint
   → Current publish safety
 ```
 
-因此运行中 `02:00 → 03:00` 可以完成当前归档发布；scheduler installation 状态由独立 reconcile 决定，未同步时保持 OutOfSync，备份执行本身不得修改它。Rules、Source、ArchiveSpec、SecretRevision 等执行关键语义变化仍阻止发布。History/output 是否影响当前 publish 将由下一项 P0 决定，不在本节提前分类。
+因此运行中 `02:00 → 03:00` 可以完成当前归档发布；scheduler installation 状态由独立 reconcile 决定，未同步时保持 OutOfSync，备份执行本身不得修改它。Rules、Source、ArchiveSpec、SecretRevision、OutputLayout、effective History Enabled 或 ExecutionBinding 等执行关键语义变化仍阻止发布；RetentionPolicy-only 变化不阻止发布，但跳过本轮 cleanup。
 
 ### 17.5 Headless 与并发
 
@@ -499,19 +503,139 @@ v1 固定 `ConcurrentRunPolicy = SkipIfRunning`，不是 portable configurable f
 
 本节只固定 portable schedule、local installation、fingerprint、headless 与 concurrency 语义，不定义 JSON Schema、SQLite schema、native task 格式、CLI 参数形状或平台安装命令。
 
-## 18. 与实现现状的差异和迁移约束
+## 18. History / Output Portability v1
+
+### 18.1 Current、History 与 storage binding
+
+Current 是每个 Archive Unit 最多一个、位于稳定确定性路径的最新有效标准归档，也是 Committed Baseline 对应的 Current ArchiveVersion。CurrentRoot 保持干净，可直接交给第三方同步；不得混入旧版本、config/cache 数据库、日志或把 `.partial` 当作有效 Current。
+
+History 只保存被新 Current 替代的旧 Current，不是第二套 Current 或同步镜像。每个 HistoryVersion 仍是可以由标准工具独立打开的标准归档；History 内部 collision-free version naming/layout 由 StowCrate 管理，不属于 portable configuration，v1 不支持 history filename/directory template。
+
+Portable Plan 只引用 Current/History logical storage slot，不保存 CurrentRoot、HistoryRoot 或任何绝对物理路径。设备本地 binding 位于 `PlanId + DeviceId` 命名空间：CurrentRoot 永远 required；只有至少一个 Archive Unit effective History Enabled 时 HistoryRoot 才是 backup run readiness 的 required binding。History Disabled 时既有 History binding/version 可以保留用于恢复或未来 purge，不因“不再 required”而被删除。
+
+Clone 复制 portable output/history policy，但不复制 CurrentRoot/HistoryRoot binding、relocation/maintenance state、ArchiveVersion、CurrentVersion、HistoryVersion 或 baseline。Import/Register 到新设备后必须按 effective policy 重新绑定，缺少 required root 时为 PlanNotReady/MissingCurrentRootBinding 或 MissingHistoryRootBinding。
+
+### 18.2 Portable deterministic OutputLayout
+
+每个 BackupSource 必须把稳定 SourceId、display Name 与 portable SourceOutputPath 分开：Name 只用于显示；SourceOutputPath 是独立于 display/physical source path 的 non-empty portable LogicalPath，使用 `/`，不得是绝对路径、包含 `..`、空 segment、反斜杠、盘符或 NUL。
+
+Current relative layout 固定为：
+
+```text
+SourceOutputPath
+  + ArchiveUnit logical parent path
+  + <ArchiveUnit final segment>.<archive format extension>
+```
+
+例如 SourceOutputPath `A` 下的 units `B`、`C/D`、`C/D/F` 映射为 `A/B.7z`、`A/C/D.7z`、`A/C/D/F.7z`。v1 不支持任意 output filename/path template、日期变量或 display name 推导。
+
+Logical Output Path 到目标文件系统 physical path 必须经过 deterministic、reversible/diagnosable、collision-free、locale-independent 且 versioned 的 OutputPathEncoding。具体编码算法仍待实现设计；`OutputPathEncodingVersion` 与 output mapping semantics version 必须进入 OutputLayoutFingerprint。
+
+在写任何 `.partial` 前，必须以目标 Current filesystem 的真实 case/path semantics 验证所有 SourceOutputPath、Archive Unit mapping、format extension 与编码结果。相同路径、case-fold collision、file/directory collision 或编码 collision 都是 `OutputPathConflict` / Fatal，绝不能 later writer wins。
+
+### 18.3 OutputLayoutFingerprint 与 reorganization
+
+OutputLayoutFingerprint 至少包含 SourceOutputPath、resolved Archive Unit-to-output relative mappings、format extension、OutputPathEncodingVersion 和 output mapping semantics version。它属于 PlanSemanticFingerprint 与 ExecutionSemanticFingerprint，但不进入 EntrySetFingerprint、SelectionFingerprint 或 ArchiveSpecFingerprint。
+
+仅 SourceOutputPath 或 encoding/mapping version 变化时，archive bytes 和 ArchiveVersion identity 不变，状态为 OutputReorganizationRequired。reorganization 必须在 CurrentRoot 内/目标 root staging 新 relative layout，验证每个 artifact SHA-256 与冲突，发布全部目标后再 durable commit location/layout state；旧位置只在 commit 后允许清理。失败保留旧 authoritative layout，不推进 baseline，也不重新压缩。
+
+ArchiveUnit logical path 或 archive format 的变化还可能分别触发 Selection/ArchiveSpec rebuild；OutputLayoutFingerprint 不替代三类 archive fingerprint 的既有职责。
+
+### 18.4 Portable History policy
+
+History 默认 Disabled。Plan 定义 default；只有 declared Archive Unit 可以携带 override，未声明 FILE_MANAGED unit 使用 Plan default：
+
+```text
+HistoryPolicy
+  Disabled
+  Enabled(RetentionPolicy)
+
+HistoryOverride
+  Inherit
+  Disabled
+  Enabled(RetentionPolicy)
+
+RetentionPolicy
+  KeepAll
+  KeepLastVersions(N), N >= 1
+```
+
+`KeepLastVersions(N)` 只计 History versions，不计 Current；`N = 1` 表示只保留刚被替换的上一个 Current。启用 History 必须显式给出 RetentionPolicy，不猜默认 N；v1 不支持 daily/weekly/monthly/yearly tiering、age/size quota 或 GFS policy。
+
+History Enabled 改为 Disabled 只停止捕获新 History，绝不删除已有版本。Purge History/单版本删除是独立 destructive operation，必须显式预览确认并与普通 policy save 分开。
+
+### 18.5 Capture、publish 与 retention
+
+只有 Archive Unit 为 Changed、存在 old Current 且 effective History Enabled 时才创建一个 HistoryVersion。首次备份和 Unchanged 都不创建 History。
+
+```text
+Write/test/verify new .partial
+  → if History Enabled and old Current exists:
+       persist old Current to History temp
+       verify SHA-256
+       atomically publish HistoryVersion
+  → Revalidate ExecutionSemanticSnapshot
+  → Atomic replace Current
+  → Durable ArchiveVersion / CurrentVersion / baseline commit
+  → Retention maintenance
+```
+
+History capture 是 Current replace 的前置安全事务：HistoryRoot 不可用、空间不足、copy/test/hash/publish 失败时必须失败并保留 old Current。Retention maintenance 是 durable commit 后的独立维护：cleanup 失败不得回滚新 Current，结果为 SuccessWithWarnings + HistoryMaintenanceOutOfSync。正常流程不得先删除旧 History 为本轮腾空间；需要空间回收时由用户显式执行维护操作。
+
+RetentionPolicy 进入 PlanSemanticFingerprint，但不进入 ExecutionSemanticFingerprint 或 archive fingerprints；改变它产生 HistoryMaintenanceRequired。运行期间 retention-only 变化不废弃已生成归档，但本轮必须跳过基于旧 policy 的 cleanup 并标记 out-of-sync。effective History Enabled 进入 ExecutionSemanticFingerprint；运行中变化必须 PlanChangedDuringRun，因为它改变 old Current 是否必须先捕获。
+
+### 18.6 ExecutionBindingFingerprint
+
+ExecutionBindingFingerprint 是一次运行的一致性输入，至少包含：
+
+- physical-canonical resolved SourceRoot；
+- physical-canonical CurrentRoot；
+- 任一 unit effective History Enabled 时的 physical-canonical HistoryRoot；
+- required External Source physical bindings；
+- 目标 filesystem case/capability identity；
+- storage binding semantics version。
+
+它使用解析后的 physical identity，而不是 `${HOME}` 等原始 expression；两个表达式解析到同一 canonical path 时 fingerprint 相同。它不进入 PlanSemanticFingerprint、三类 archive fingerprint、InputFingerprint 或 durable baseline。Publish 前变化必须阻止本轮发布；换盘/重新绑定后数据与 archive semantics 未变时不要求 rebuild。
+
+### 18.7 Current/History relocation
+
+已有 Current/History 时，修改 root 必须进入 StorageRelocationRequired，不能先更新 binding pointer。Current relocation 对全部 Current artifacts 执行“copy/stage 到新 root → SHA-256 verify → destination 内 publish → durable commit new binding/location”；History relocation 对全部 History versions 执行同样流程。整个流程中旧 binding 保持 authoritative，旧文件只在新 binding commit 后允许显式/安全清理。
+
+v1 只支持完整 History relocation，不支持 old/new multi-store History。relocation 不生成新 ArchiveVersion、不改变 VersionId/PublishedAt、不推进 baseline。ArchiveVersion durable identity 与绝对路径分离，概念上使用 VersionId、ArchiveUnitId、StorageSlot（Current/History）、RelativeStoragePath、SHA-256、Size、PublishedAt 等；实际路径由 current binding root + RelativeStoragePath 解析。本节不固定数据库表或字段。
+
+### 18.8 Root overlap safety
+
+单 Plan 的 SourceRoot、CurrentRoot、HistoryRoot 继续两两不重叠。同一 DeviceId 上，任一 active writable CurrentRoot/HistoryRoot 还不得等于、包含或位于任何其他 active Plan 的 SourceRoot、CurrentRoot 或 HistoryRoot 之下；验证同时使用 lexical 与 physical-canonical path。不同 Plan 的 SourceRoot 可重叠，因为均为只读输入；共享父目录下互不包含的 sibling plan storage roots 合法。
+
+root overlap、output path collision、destination capability 与可用空间等验证必须在 destructive move、History capture 或写 `.partial` 前完成。平台专用优化不能削弱这些 portable safety rules。
+
+### 18.9 Fingerprint summary
+
+| 配置 | PlanSemantic | ExecutionSemantic / Binding | Archive fingerprints |
+|---|---|---|---|
+| SourceOutputPath / output encoding semantics | 是 | ExecutionSemantic | 否 |
+| effective History Enabled | 是 | ExecutionSemantic | 否 |
+| RetentionPolicy | 是 | 否 | 否 |
+| CurrentRoot binding | 不属于 Plan | ExecutionBinding | 否 |
+| effective HistoryRoot binding | 不属于 Plan | ExecutionBinding | 否 |
+| SourceRoot / required External physical binding | 不属于 Plan | ExecutionBinding | 数据变化另由 EntrySet 观察 |
+| History physical layout | 否 | 否 | 否 |
+| Archive format / compression | 是 | ExecutionSemantic | ArchiveSpec |
+
+本节只固定 portable output/history policy、local binding、publish/maintenance、relocation 和 fingerprint 边界，不定义 JSON Schema、SQLite schema/Entity、具体 OutputPathEncoding、History physical naming 或跨文件系统复制实现。
+
+## 19. 与实现现状的差异和迁移约束
 
 1. **`.backupignore v1` Directive 集合变化**：规范最初只允许 `@version/@mode/@case`；现在已正式加入可选 `@id`。当前 parser 尚未实现 `@id`，后续业务实现必须同步 parser、领域返回类型和兼容性测试。
 2. **Fingerprint 强类型与字段**：ArchiveUnitId/ExternalSourceId 已正式排除于 SelectionFingerprint，logical source/path/mapping 仍包含；当前 Core 尚未实现这些强类型 fingerprint，不得把旧聚合 string 当作 v1 durable baseline。
 3. **Baseline key 与 DeviceId**：Change Detection 的 `PlanId + ArchiveUnitId` 是 portable unit key；DeviceId 只作为本机 registration/binding/runtime namespace，不替换该 key。
-4. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无完整 declaration/discovery resolver、ExternalSource/SecretSlot identity、DeviceId、Local/Secret/Schedule Binding、Global Rules Snapshot、ProtectionCapabilities、ScheduleIntent/ScheduleSemanticFingerprint 或分离的 Plan/Execution semantic fingerprint。本文不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
+4. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无完整 declaration/discovery resolver、ExternalSource/SecretSlot identity、DeviceId、Local/Secret/Schedule/Storage Binding、Global Rules Snapshot、ProtectionCapabilities、ScheduleIntent、History policy、OutputLayout/ExecutionBinding fingerprint、relocation 或完整的 Current/History publish。本文不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
 
-## 19. 当前未决顺序
+## 20. 当前未决顺序
 
-Identity、Portable Path/Local Binding、Global Rules、FILE_MANAGED declaration/discovery、Protection Configuration/Secret Binding 与 Schedule Portability P0 已确认。JSON Schema 前继续按以下顺序解决：
+Identity、Portable Path/Local Binding、Global Rules、FILE_MANAGED declaration/discovery、Protection Configuration/Secret Binding、Schedule Portability 与 History/Output Portability P0 已确认。JSON Schema 前继续按以下顺序解决：
 
-1. History / output 配置的可移植边界；
-2. Schema compatibility 与 unknown fields；
-3. Import identity conflict / merge semantics。
+1. Schema compatibility 与 unknown fields；
+2. Import identity conflict / merge semantics。
 
 ArchiveSpec override 与 External Source 的完整行为仍需设计，但不得提前固化 JSON 字段。本轮同样不定义 JSON Schema、SQLite schema、Entity、Repository 或 migration。
