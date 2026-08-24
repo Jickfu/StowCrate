@@ -93,6 +93,16 @@ Registered *.backupplan ─────────────┘
 
 Plan authority、registration path、local binding 与 scheduler installation state 是 Application/Infrastructure 管理信息，不进入 Core `BackupPlan`。同一 Plan 只能有一个 authoritative configuration source。不存在自动双向同步；Import 是复制为 Managed，Register 是链接到 File-backed document。
 
+File-backed loader 必须先按 UTF-8 与严格 JSON 读取并检测 duplicate property，再以必填正整数 `schemaVersion` 分派到 version-specific closed-schema reader、semantic validator 和 in-memory migrator。未知 property/enum/variant 或未来 schemaVersion 安全失败；Infrastructure 不得用 case-insensitive property binding、extension bag 或最新 DTO 猜测旧/新文档。Application 只接收迁移后的 current semantic model，并继续执行 authority、local binding、capability 与 readiness resolution。
+
+```text
+Raw bytes → strict parse → versioned schema/semantic validation → in-memory migration
+          → authority resolution → local binding → ResolvedPlanSnapshot
+          → capability/readiness → execution
+```
+
+读取、预览、Register 或运行不得自动升级 File-backed 文件。显式 upgrade/save 通过 Application 用例协调 preview；writer 投影合法 document 后执行 schema validation、临时写入、round-trip read/validate 和原子替换。Managed Import 可在不修改来源文件的前提下迁移到当前内部模型。
+
 Portable identity 使用强类型 UUID v4 `PlanId`、`SourceId`、`ArchiveUnitId`、`ExternalSourceId`、`SecretSlotId`。Application 将 portable declaration 与当前 DeviceId 下的 Local Binding 合成为 `ResolvedPlanSnapshot`；Core 不读取 DeviceId、hostname、环境变量、registration path、OS SecretReference 或数据库键。
 
 `ResolvedPlanSnapshot` 携带 authoritative 的 pinned Global Rules Snapshot，并为 Scanner 提供已验证的 local binding。Global Rule Library 属于 Application/Infrastructure 的 authoring facility，运行时不得 live-reference 本机 library。扫描后，Application 再把 Archive Unit declarations、物理 discovery、`.backupignore` metadata/rules 与本机 registration 合成为 resolved units。Declared/Discovered origin、Plan authority 和规则文件物理路径不进入 Planning Kernel。
@@ -280,8 +290,8 @@ ArchiveVersion 的 durable identity 与物理绝对路径分离：概念上记�
 ## 11. 测试策略
 
 - **Core 单元测试**：规则语义、层级边界、路径规范化、ArchivePlan 稳定性。
-- **Application 测试**：变化原因、独立 baseline commit、History capture/retention 顺序、取消、失败补偿、预览与结果，MissingSecretBinding/SecretUnavailable/SecretStoreError、SecretRevision drift、headless 不降级，schedule reconcile/out-of-sync、schedule-only stale change 不阻止发布、SkipIfRunning，以及 History Enabled/Retention/OutputLayout/ExecutionBinding drift 的不同发布结果。
-- **Infrastructure 集成测试**：SQLite migration/backup、文件锁、原子替换、Current/History relocation、跨文件系统 copy/verify、output collision/case semantics、跨 Plan root overlap、scheduler install/update/remove/status、DST/missed-run 映射与 native identity lifecycle。
+- **Application 测试**：变化原因、独立 baseline commit、History capture/retention 顺序、取消、失败补偿、预览与结果，schema validity/semantic validity/local readiness/capability 的错误分层，旧文档内存迁移与显式 upgrade，MissingSecretBinding/SecretUnavailable/SecretStoreError、SecretRevision drift、headless 不降级，schedule reconcile/out-of-sync、schedule-only stale change 不阻止发布、SkipIfRunning，以及 History Enabled/Retention/OutputLayout/ExecutionBinding drift 的不同发布结果。
+- **Infrastructure 集成测试**：UTF-8/BOM、严格 JSON、property 大小写/重复检测、各层 unknown property/enum/variant、schemaVersion dispatch、writer round-trip/原子替换，SQLite migration/backup、文件锁、Current/History relocation、跨文件系统 copy/verify、output collision/case semantics、跨 Plan root overlap、scheduler install/update/remove/status、DST/missed-run 映射与 native identity lifecycle。
 - **Archiving 契约测试**：每种格式的创建、测试、恢复、加密、Unicode、大文件和分卷；验证 protection capabilities，且 SecretValue 不出现在参数、环境、日志或诊断输出。
 - **跨平台测试**：Windows/macOS/Linux CI，大小写、权限、链接和长路径 fixture；Secret Store prototype 还必须覆盖 GUI 用户与 Task Scheduler/launchd/systemd timer/cron 的实际执行身份。
 - **故障注入测试**：写入中断、空间不足、损坏归档、进程退出、Current/History 移动失败。

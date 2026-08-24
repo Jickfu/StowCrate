@@ -135,6 +135,8 @@ StowCrate 支持两种互斥的 Plan authority：
 
 Import 与 Register 是不同操作。Register 保持文件 authoritative，后续运行重新解析文件；不得在 SQLite 与文件之间进行隐式双向同步。Managed 与 File-backed 可以显式转换，但 authority 或文档物理位置变化本身不得触发重新归档。
 
+`*.backupplan` 必须带正整数 `schemaVersion` 并使用严格 UTF-8 JSON。已知版本采用 closed-world contract：任何层级的未知字段、未知枚举值、未知联合类型或重复字段都必须拒绝，不能忽略后继续备份；未来版本必须安全提示需要新版 StowCrate，不能降级猜测。读取旧版文档只做内存迁移，不自动改写 File-backed 文件；升级和保存为新 schemaVersion 必须是用户明确操作。文档有效性、本机 binding/readiness 与归档平台 capability 是不同状态，必须分别报告。
+
 Portable document 只保存逻辑 Source、Archive Unit 相对路径和 External Source declaration，不保存设备绝对 SourceRoot、CurrentRoot、HistoryRoot 或 External Source 路径。这些物理位置属于按 DeviceId 隔离的 Local Binding；同一个 Plan 可在不同设备重新绑定。
 
 Local Binding v1 可以使用 StowCrate 定义的 `${HOME}` 根变量，但不支持任意环境变量、shell expansion 或命令替换。binding 展开后必须得到绝对路径并完成 physical canonicalization 与三根两两不重叠验证。

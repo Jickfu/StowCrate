@@ -1,6 +1,6 @@
 # Backup Plan Document v1
 
-本文是 `*.backupplan` 文档角色、Plan Authority、稳定 Identity、Portable Configuration 与 Device Local Binding 的规范真相源。JSON Schema 等尚未确认的部分仍以“未决”处理，不得从示例或工作稿推断。
+本文是 `*.backupplan` 文档角色、Plan Authority、稳定 Identity、Portable Configuration、Device Local Binding 与 schema compatibility 的规范真相源。具体 JSON 字段和 JSON Schema 等尚未确认的部分仍以“未决”处理，不得从示例或工作稿推断。
 
 ## 1. 文档语义
 
@@ -624,18 +624,90 @@ root overlap、output path collision、destination capability 与可用空间等
 
 本节只固定 portable output/history policy、local binding、publish/maintenance、relocation 和 fingerprint 边界，不定义 JSON Schema、SQLite schema/Entity、具体 OutputPathEncoding、History physical naming 或跨文件系统复制实现。
 
-## 19. 与实现现状的差异和迁移约束
+## 19. Schema Compatibility 与 Unknown Fields v1
+
+### 19.1 版本分派与严格输入
+
+每份 `*.backupplan` 必须包含权威的正整数 `schemaVersion`。它是 Document Contract Version，不是 StowCrate 软件 SemVer；缺失、非整数或小于等于零分别以 `MissingSchemaVersion` / `InvalidSchemaVersion` 拒绝。reader 只把已支持版本交给对应版本解析器；未来未知版本返回 `UnsupportedSchemaVersion`，不得尝试按最近旧版本降级读取或执行。未来可增加用于 IDE discovery 的 `$schema`，但它不取代 `schemaVersion`，其 URI 可用性也不影响 reader 分派。
+
+v1 只接受 UTF-8；允许读取 UTF-8 BOM，writer 默认输出无 BOM 的 UTF-8。输入必须是严格标准 JSON，不接受 comment、trailing comma、single quote、NaN 或 Infinity。property name 大小写敏感；重复 property 必须在解析阶段主动检测并以 `DuplicateProperty` 拒绝，不能采用 first-wins 或 last-wins。
+
+### 19.2 Closed-world document contract
+
+每个已知 schemaVersion 都使用版本专属的 closed-world schema。所有对象层级默认禁止未知 property；未知 enum value 和未知 discriminator/union variant 同样 Fatal。v1 不提供 `x-*`、任意 `extensions` bag 或“忽略但 round-trip 保存”的扩展机制。未来若需要插件扩展，必须先定义 namespace、capability declaration、required/optional semantics 与 round-trip 契约，并通过新的 schema contract 引入。
+
+因此，已正式发布 schema 的以下改变原则上必须增加 `schemaVersion`：新增、删除或改变字段结构；新增 enum/union/trigger/retention variant；改变 omitted optional field 的默认含义。同一受支持文档不得因应用升级而静默改变 desired configuration。若 JSON 结构未变且行为由独立的 RulesSemanticsVersion、ArchiveSemanticsVersion、OutputPathEncodingVersion、FingerprintFormatVersion 等显式版本固定，则只升级对应 semantics version，不必机械增加 document schemaVersion。
+
+每个 optional field 的缺省值属于版本化 document semantics。版本专属解析器必须在进入 current semantic model 前展开默认值；省略字段与显式写出相同默认值时，ResolvedPlanSnapshot 及其 semantic fingerprints 必须相同。
+
+### 19.3 Version-specific reader 与显式升级
+
+兼容读取使用清晰的版本边界，而不是一个包含历代 nullable 字段的最新 DTO：
+
+```text
+Raw UTF-8 bytes
+  → strict JSON parse + duplicate detection
+  → schemaVersion dispatch
+  → version-specific closed-schema validation
+  → version-specific semantic validation
+  → version-specific migrator
+  → current semantic model
+```
+
+已正式发布的 schema version 应尽可能长期保留 read/import migration 支持；只有严重安全问题或无法安全解释时才可停止，并必须提供迁移说明。Migrator 在内存中转换旧文档，不得因 read、preview、register 或 run 自动改写 File-backed 文件或污染 Git working tree。
+
+升级 File-backed 文档是明确的 `Upgrade Backup Plan` / `Upgrade & Save` 操作，必须先告知将修改文件并允许预览语义变化。若 reader 能读旧版本但 writer 只写当前版本，普通编辑保存旧文档必须返回 `DocumentUpgradeRequired`，不得偷偷升版。Managed Import 可以把旧文档迁移为当前内部模型而不修改原文件；以后 Export 使用当前 writer/schemaVersion。
+
+writer 只能从合法 current semantic model 投影文档，并执行 schema validation、临时文件写入、read/validate round-trip 与原子替换。具体 serializer、临时文件命名与 JSON 格式留待实现设计。
+
+### 19.4 验证阶段与错误边界
+
+完整流水线固定为：
+
+```text
+Raw *.backupplan bytes
+  → Encoding / JSON parsing
+  → schemaVersion dispatch
+  → Document schema validation
+  → Version-specific semantic validation
+  → Migration to current semantic model
+  → Plan authority resolution
+  → Device Local Binding resolution
+  → ResolvedPlanSnapshot
+  → Capability / Readiness validation
+  → Execution
+```
+
+文档 schema 有效不代表当前设备可执行。缺少 Source/Current/conditional History/External/Secret binding 是 `PlanNotReady` / `MissingBinding`；合法 ArchiveSpec 在当前 adapter 不可用是 `UnsupportedArchiveCapability`，都不是 schema invalid。错误模型至少区分：
+
+```text
+MalformedJson / InvalidEncoding
+MissingSchemaVersion / InvalidSchemaVersion / UnsupportedSchemaVersion
+DuplicateProperty / UnknownProperty / MissingRequiredProperty
+InvalidPropertyValue / UnknownEnumValue / UnknownVariant
+SchemaValidationFailed / DocumentMigrationFailed / UnsupportedDocumentSemantics
+IdentityConflict / PlanNotReady / UnsupportedArchiveCapability / MissingBinding
+```
+
+### 19.5 Fingerprint 与 schema evolution
+
+raw JSON bytes、formatting、property order、DocumentSchemaVersion 和纯结构迁移不直接进入 PlanSemanticFingerprint、ExecutionSemanticFingerprint 或三类 archive fingerprint。fingerprint 必须基于验证、默认值展开并迁移后的 resolved semantics；不同 schemaVersion 若解析为相同 desired configuration，semantic fingerprints 应相同。迁移真的改变配置语义时，才由对应 resolved semantics 改变相应 fingerprint。
+
+Schema evolution 必须分类处理：实现优化、错误消息或文档修正不 bump；受独立显式 semantics version 控制的算法变化升级该版本；字段集合/结构、enum/variant 或缺省语义变化升级 schemaVersion。任何无法由显式 version pin 保持旧含义的变化，都不得在相同 schemaVersion 下发布。
+
+本节只固定 compatibility、closed-world、migration、validation pipeline、writer safety 与 fingerprint 边界；不创建 JSON Schema，不定义具体字段名/结构，不实现 serializer/migrator，也不定义 SQLite schema、Entity、Repository 或 migration。
+
+## 20. 与实现现状的差异和迁移约束
 
 1. **`.backupignore v1` Directive 集合变化**：规范最初只允许 `@version/@mode/@case`；现在已正式加入可选 `@id`。当前 parser 尚未实现 `@id`，后续业务实现必须同步 parser、领域返回类型和兼容性测试。
 2. **Fingerprint 强类型与字段**：ArchiveUnitId/ExternalSourceId 已正式排除于 SelectionFingerprint，logical source/path/mapping 仍包含；当前 Core 尚未实现这些强类型 fingerprint，不得把旧聚合 string 当作 v1 durable baseline。
 3. **Baseline key 与 DeviceId**：Change Detection 的 `PlanId + ArchiveUnitId` 是 portable unit key；DeviceId 只作为本机 registration/binding/runtime namespace，不替换该 key。
-4. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无完整 declaration/discovery resolver、ExternalSource/SecretSlot identity、DeviceId、Local/Secret/Schedule/Storage Binding、Global Rules Snapshot、ProtectionCapabilities、ScheduleIntent、History policy、OutputLayout/ExecutionBinding fingerprint、relocation 或完整的 Current/History publish。本文不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
+4. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无完整 declaration/discovery resolver、ExternalSource/SecretSlot identity、DeviceId、Local/Secret/Schedule/Storage Binding、Global Rules Snapshot、ProtectionCapabilities、ScheduleIntent、History policy、OutputLayout/ExecutionBinding fingerprint、relocation、version-specific document reader/migrator 或完整的 Current/History publish。本文不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
 
-## 20. 当前未决顺序
+## 21. 当前未决顺序
 
-Identity、Portable Path/Local Binding、Global Rules、FILE_MANAGED declaration/discovery、Protection Configuration/Secret Binding、Schedule Portability 与 History/Output Portability P0 已确认。JSON Schema 前继续按以下顺序解决：
+Identity、Portable Path/Local Binding、Global Rules、FILE_MANAGED declaration/discovery、Protection Configuration/Secret Binding、Schedule Portability、History/Output Portability 与 Schema Compatibility/Unknown Fields P0 已确认。JSON Schema 前只剩：
 
-1. Schema compatibility 与 unknown fields；
-2. Import identity conflict / merge semantics。
+1. Import identity conflict / merge semantics。
 
 ArchiveSpec override 与 External Source 的完整行为仍需设计，但不得提前固化 JSON 字段。本轮同样不定义 JSON Schema、SQLite schema、Entity、Repository 或 migration。
