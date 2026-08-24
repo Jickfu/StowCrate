@@ -37,6 +37,27 @@ public sealed class ProjectDependencyTests
     }
 
     [Fact]
+    public void JsonSchemaLibraryIsConfinedToInfrastructure()
+    {
+        var sourceProjects = Directory.GetDirectories(Path.Combine(RepositoryRoot, "src"));
+
+        foreach (var projectDirectory in sourceProjects)
+        {
+            var projectName = Path.GetFileName(projectDirectory);
+            var packages = ReadPackageReferences(ProjectPath(projectName));
+
+            if (projectName == "StowCrate.Infrastructure")
+            {
+                Assert.Contains("JsonSchema.Net", packages);
+            }
+            else
+            {
+                Assert.DoesNotContain("JsonSchema.Net", packages);
+            }
+        }
+    }
+
+    [Fact]
     public void ViewModelsDoNotReferenceSqliteDirectly()
     {
         var viewModelsPath = Path.Combine(RepositoryRoot, "src", "StowCrate.App", "ViewModels");

@@ -1,13 +1,12 @@
-using System.Text.Json;
 using System.Text.Json.Nodes;
-using Json.Schema;
+using StowCrate.Infrastructure.Configuration.BackupPlans.V1;
 
 namespace StowCrate.Infrastructure.Tests.Configuration;
 
 public sealed class BackupPlanSchemaTests
 {
     private static readonly string SchemaRoot = Path.Combine(AppContext.BaseDirectory, "schemas");
-    private static readonly JsonSchema Schema = LoadSchema();
+    private static readonly BackupPlanDocumentV1Reader Reader = new();
 
     public static TheoryData<string> ValidFixtures => DiscoverFixtures("valid");
 
@@ -27,34 +26,18 @@ public sealed class BackupPlanSchemaTests
     [MemberData(nameof(ValidFixtures))]
     public void ValidFixturePassesSchemaValidation(string fixturePath)
     {
-        var result = Evaluate(fixturePath);
+        var result = Reader.Read(File.ReadAllBytes(fixturePath));
 
-        Assert.True(result.IsValid, $"Expected valid fixture '{Path.GetFileName(fixturePath)}' to pass.\n{result}");
+        Assert.True(result.IsSuccess, $"Expected valid fixture '{Path.GetFileName(fixturePath)}' to pass.\n{result.Error}");
     }
 
     [Theory]
     [MemberData(nameof(InvalidFixtures))]
     public void InvalidFixtureFailsForItsNamedStructuralReason(string fixturePath)
     {
-        var result = Evaluate(fixturePath);
+        var result = Reader.Read(File.ReadAllBytes(fixturePath));
 
-        Assert.False(result.IsValid, $"Expected structural/schema fixture '{Path.GetFileName(fixturePath)}' to fail.");
-    }
-
-    private static EvaluationResults Evaluate(string fixturePath)
-    {
-        using var instance = JsonDocument.Parse(File.ReadAllText(fixturePath));
-
-        return Schema.Evaluate(instance.RootElement, new EvaluationOptions
-        {
-            OutputFormat = OutputFormat.List
-        });
-    }
-
-    private static JsonSchema LoadSchema()
-    {
-        var schemaPath = Path.Combine(SchemaRoot, "backupplan-v1.schema.json");
-        return JsonSchema.FromText(File.ReadAllText(schemaPath));
+        Assert.False(result.IsSuccess, $"Expected structural/schema fixture '{Path.GetFileName(fixturePath)}' to fail.");
     }
 
     private static TheoryData<string> DiscoverFixtures(string kind)

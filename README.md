@@ -5,7 +5,7 @@
 
 StowCrate 将目录整理成一组可理解、可独立恢复的标准归档文件，而不是只有原软件才能读取的专有备份仓库。
 
-项目已进入 **Milestone 1 — Planning Kernel**，采用 [Apache License 2.0](LICENSE)。
+项目已进入 **Milestone 3 — Backup Plan Document Runtime**，采用 [Apache License 2.0](LICENSE)。
 
 ## 设计原则
 
@@ -25,10 +25,11 @@ StowCrate 将目录整理成一组可理解、可独立恢复的标准归档文�
 - [Change Detection & Baseline Commit v1](docs/CHANGE-DETECTION.md)
 - [Backup Plan Document v1](docs/BACKUPPLAN.md)
 - [Milestone 2 — Source Scanner & Filesystem Semantics](docs/milestones/MILESTONE-2-SOURCE-SCANNER.md)
+- [Milestone 3 — Backup Plan Document Runtime](docs/milestones/MILESTONE-3-BACKUP-PLAN-DOCUMENT.md)
 - [仓库开发约束](AGENTS.md)
 
 ## 当前状态
 
-规划内核已经具备跨平台逻辑路径、`.backupignore` v1 解析与规则合成、Archive Unit 边界树、不可变 `ArchivePlan` 以及确定性 fingerprint。当前正在接入 no-follow 的真实文件系统 Scanner。
+规划内核与 no-follow 真实文件系统 Scanner 已具备跨平台逻辑路径、规则合成、Archive Unit 边界、不可变 `ArchivePlan`、确定性 fingerprint 和可见扫描问题。
 
-当前进入 Change Detection、Backup Plan 和 Persistence 的契约设计阶段，暂不实现 Avalonia UI、SQLite 或归档执行器。尚未决策事项统一记录在产品设计文档中。
+Backup Plan v1 Document Contract Runtime 已完成 DTO、strict reader、版本分派与 Schema 验证。下一项是 `BackupPlanDocumentV1` Semantic Validator 与 DTO→Frozen Domain Mapper；暂不实现 Avalonia UI、SQLite、writer 或归档执行器。尚未决策事项统一记录在产品设计文档中。

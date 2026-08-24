@@ -1,8 +1,18 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="JsonSchema.Net" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\StowCrate.Application\StowCrate.Application.csproj" />
     <ProjectReference Include="..\StowCrate.Core\StowCrate.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\schemas\backupplan-v1.schema.json"
+                      Link="Configuration\BackupPlans\V1\backupplan-v1.schema.json"
+                      LogicalName="StowCrate.Infrastructure.Configuration.BackupPlans.V1.backupplan-v1.schema.json" />
   </ItemGroup>
 
 </Project>

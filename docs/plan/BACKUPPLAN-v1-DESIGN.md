@@ -226,14 +226,11 @@ ResolvedPlanSnapshot
 
 这些语义已经进入 `BACKUPPLAN.md` 与 `BACKUPIGNORE.md`，但仍不生成 canonical JSON 示例。
 
-## 13. 当前设计焦点：Document boundary implementation
+## 13. 当前实现焦点：Semantic validation and frozen domain mapping
 
-下一项按顺序解决：
+Backup Plan v1 Document Contract Runtime 已完成：frozen DTO、strict UTF-8/duplicate-property reader、`schemaVersion` dispatch 和 Draft 2020-12 structural validation 均位于 Infrastructure document adapter boundary。
 
-1. 以 frozen Schema 与 fixtures 设计 BackupPlanDocumentV1 DTO；
-2. 实现 strict UTF-8/duplicate-property reader 与 atomic writer；
-3. 独立实现 semantic mapper/validator；
-4. 不从 Schema/DTO 直接生成或复用 SQLite Entity。
+下一项推进为 **BackupPlanDocumentV1 Semantic Validator + DTO→Frozen Domain Mapper**。该阶段独立处理 reference graph、规则语法、Archive Boundary、External collision 与 reader 支持的 semantics pins；仍不实现 Import/Update、Local Binding、writer、SQLite 或 EF，也不从 Schema/DTO 直接生成或复用 persistence Entity。
 
 ## 14. 后续产物
 
