@@ -23,10 +23,7 @@ publish/
 Thumbs.db
 
 ## StowCrate runtime data and secrets
-*.db
-*.db-shm
-*.db-wal
+/.local/
 *.partial
 staging/
 secrets.dat
-

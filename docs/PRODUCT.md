@@ -13,7 +13,7 @@ StowCrate 是面向开发者和个人重要资料的**结构化归档备份工�
 1. **Transparent Backup（透明备份）**：输出就是普通 `.7z`、`.zip` 或 `.tar.zst` 文件，不依赖专有仓库格式。
 2. **Structured Archive Units（结构化归档单元）**：把一个大目录拆成多个有语义的归档箱，并保留可理解的相对目录结构。
 3. **Developer-aware（项目感知）**：识别开发项目和可重建产物，帮助用户显著减少备份体积和小文件数量。
-4. **Visual Rules + Config as Code**：普通用户用目录树和向导，高级用户用 `.backupignore` 与 `.backupplan`。
+4. **Visual Rules + Config as Code**：普通用户用目录树和向导，高级用户用 `.backupignore` 与 Backup Plan 文件（`*.backupplan`）。
 5. **Current 与 History 分离**：当前备份目录保持干净，可直接交给网盘、NAS 或同步软件；历史库独立保存旧版本。
 
 ## 3. 产品语言
@@ -52,7 +52,7 @@ StowCrate 是面向开发者和个人重要资料的**结构化归档备份工�
 - 压缩、归档保护、卷大小、历史保留和调度设置；
 - 可选外部源映射。
 
-源目录、Current Backup 和 History Store 不得相互嵌套到会形成递归备份的位置。检测到错误配置时必须提醒用户，并跳过有风险的目录，而不是继续执行。
+`SourceRoot`、`CurrentRoot` 和 `HistoryRoot` 经过绝对化、分隔符与大小写等平台规则规范化后必须两两不重叠：任意两个路径不得相等，任意一个也不得是另一个的祖先或子孙目录。该规则同时禁止 Source/输出递归、History 位于 Current 内，以及 Current 或 History 位于 Source 内。检测到冲突时必须阻止保存或执行方案并明确指出冲突路径，不能只跳过部分目录后继续。
 
 ### 4.2 归档箱与层级边界
 
@@ -101,14 +101,14 @@ Current/A
 
 每个 Archive Unit 的局部规则来源只能是：
 
-- `UI_MANAGED`：SQLite 中的 UI 配置是唯一事实来源；或
-- `FILE_MANAGED`：`.backupignore` 是唯一事实来源，SQLite 只记录选择的模式和必要索引。
+- `UI_MANAGED`：SQLite 保存 `RuleSource`、`RuleMode` 和 `Rules`，是局部规则的唯一事实来源；或
+- `FILE_MANAGED`：SQLite 只保存 `RuleSource = FILE_MANAGED`、文件位置和可重建的索引状态；`RuleMode` 与全部 `Rules` 都从 `.backupignore` 读取，`.backupignore` 是完整的局部规则唯一事实来源。
 
 产品应支持 UI 规则与 `.backupignore` 的导入/导出，但两者不得同时控制同一个 Archive Unit。
 
-### 4.4 可移植 `.backupplan`
+### 4.4 Backup Plan 文件（`*.backupplan`）
 
-`.backupplan` 是版本化、可导出、可审阅的完整方案文件，用于迁移、灾难恢复和 Git 管理。它不保存密码、令牌等秘密。
+`*.backupplan` 是文件扩展名约定而不是固定文件名，例如 `MyCode.backupplan`、`Documents.backupplan`。它是版本化、可导出、可审阅的完整方案文件，用于迁移、灾难恢复和 Git 管理，不保存密码、令牌等秘密。
 
 路径采用逻辑源和分平台映射，允许 `${HOME}` 等可移植表达，不把 Windows 盘符写成唯一身份。同一个计划可在不同设备重新绑定实际路径。
 
@@ -127,7 +127,7 @@ Current/A
 扫描首先以规范化路径、大小和修改时间判断 Archive Unit 是否变化；需要消除歧义时再计算快速哈希或加密哈希。平台日志只作为未来加速器。
 
 - 未变化：保留 Current，不创建重复历史版本；
-- 已变化：验证新归档成功后，把旧 Current 移入独立 History Store，再原子发布新 Current；
+- 已变化：验证新归档成功后，在旧 Current 仍位于原路径且有效的前提下，将其持久化为独立 History Version；历史版本验证完成后，再在 `CurrentRoot` 所在文件系统内原子替换 Current；
 - 失败：保留最后一个有效 Current，记录错误和遗漏。
 
 历史用于恢复误删和误改，不默认混入第三方同步的 Current 目录。用户可以按 Archive Unit 配置是否保留历史。
@@ -189,12 +189,16 @@ Current/A
 
 ## 8. 尚未决策或需验证
 
-- 开源许可证；
 - 首版精确的历史保留预设和清理算法；
 - `.backupignore` 的完整语法规范、跨层否定/覆盖细节和大小写规则；
+- `*.backupplan` 的 v1 JSON Schema；
 - 隐私保护恢复信息在 7z、ZIP、TAR.ZST 中的可靠承载方式；
+- 7-Zip 密码能否在不出现在命令行或进程列表的前提下可靠地自动传入；
+- `config.snapshot.db` 在 Current Backup 中的最终逻辑路径与版本结构；
+- 首版符号链接的跟随、保留、越界和循环处理策略；
 - 首版是否同时交付三平台，还是 Windows 先行后补 macOS/Linux；
 - 首版 7-Zip 是随应用分发、使用系统安装，还是两者兼容；
 - VSS/文件系统快照、符号链接、ACL、xattr 和锁定文件的首版支持边界；
 - 默认压缩级别、分卷阈值、大小警告和历史默认值。
 
+本项目采用 Apache License 2.0，详见仓库根目录 `LICENSE`。
