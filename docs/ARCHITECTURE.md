@@ -136,7 +136,8 @@ Planned
   → Persist previous Current as a History Version while Current remains valid
   → Verify durable History Version
   → Atomic replace Current on Current filesystem
-  → Commit metadata/cache
+  → Durable ArchiveVersion / Baseline commit in config.db
+  → Refresh disposable cache
   → Cleanup
 ```
 
@@ -149,20 +150,24 @@ Planned
 - 取消、断电或进程失败后，`.partial` 不得被识别为有效备份；
 - 启动时可识别并安全清理陈旧 staging/partial，但必须保留诊断信息；
 - 并发任务对同一 Backup Plan 或输出路径加锁；不同单元可在资源预算内并行；
-- 日志和结果必须记录被跳过、不可读、变化中或锁定的文件。
+- 日志和结果必须记录被跳过、不可读、变化中或锁定的文件；Incomplete Observation 默认阻止发布。
 
 无历史或首次发布时，同样只允许把已验证的目标文件系统临时文件原子发布为 Current。元数据提交必须可从 Current 与 History 的实际文件状态重建，不能成为判断归档有效性的唯一依据。
 
 ## 6. 变更检测
 
-便携基线为：规范化相对路径、类型、大小、`mtime`，必要时追加内容哈希。每个文件状态关联 Archive Unit 和上次成功版本。
+变更检测的完整行为以 [`CHANGE-DETECTION.md`](CHANGE-DETECTION.md) 为准。纯 Change Detector 接收 Candidate Unit State 与 Committed Baseline，不直接访问数据库或物理文件系统。
+
+每个 Archive Unit 独立比较强类型的 `EntrySetFingerprint`、`SelectionFingerprint` 与 `ArchiveSpecFingerprint`。fingerprint 使用版本化 canonical encoding 和 SHA-256；不得使用运行时 `GetHashCode()` 或依赖通用 JSON serializer 的输出稳定性。Standard/Strict 的文件内容 hash 与最终 Archive Integrity SHA-256 是不同概念和类型。
+
+Committed Baseline 是 Current ArchiveVersion 的持久事实，位于 `config.db`；逐文件 metadata/hash、扫描缓存和 journal cursor 位于可删除的 `cache.db`：
 
 ```text
 config.db  — 计划、规则、调度、历史策略、归档版本与必要审计（重要）
 cache.db   — 文件状态、哈希、扫描缓存和平台游标（可重建）
 ```
 
-只有成功发布后才能把本次状态设为基线。失败或取消的扫描不得造成下一次误判为“未变化”。USN/FSEvents/inotify 只减少扫描范围，检测结果仍能回退到便携算法。
+只有成功发布 Current 后，才能在 `config.db` 事务中把对应 ArchiveVersion 标记为 Published 并更新该单元的 CurrentVersion 引用。随后才能刷新 `cache.db`；cache 永远不能领先 durable state。失败、取消、stale Plan revision、发布前状态或 Incomplete Observation 均不得推进 baseline。USN/FSEvents/inotify 只减少扫描与 hash 范围，检测结果仍能回退到便携算法。
 
 ## 7. SQLite 与配置恢复
 
@@ -208,7 +213,7 @@ manifest 不保存真实密码、密钥、token 或不必要的主机隐私信�
 ## 11. 测试策略
 
 - **Core 单元测试**：规则语义、层级边界、路径规范化、ArchivePlan 稳定性。
-- **Application 测试**：变化/未变化、History 切换、取消、失败补偿、预览与结果。
+- **Application 测试**：变化原因、独立 baseline commit、History 切换、取消、失败补偿、预览与结果。
 - **Infrastructure 集成测试**：SQLite migration/backup、文件锁、原子替换、调度适配。
 - **Archiving 契约测试**：每种格式的创建、测试、恢复、加密、Unicode、大文件和分卷。
 - **跨平台测试**：Windows/macOS/Linux CI，大小写、权限、链接和长路径 fixture。

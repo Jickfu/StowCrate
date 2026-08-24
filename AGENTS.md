@@ -10,6 +10,7 @@
 - `docs/ARCHITECTURE.md`：模块边界、依赖规则、持久化与执行设计。
 - `docs/BACKUPIGNORE.md`：`.backupignore v1` 的正式语法与规则语义。
 - `docs/FILESYSTEM.md`：真实文件系统扫描、链接、特殊对象和扫描问题的 v1 语义。
+- `docs/CHANGE-DETECTION.md`：候选状态、变更判定、Committed Baseline 与提交时序。
 
 仓库文档是项目设计的唯一真相源：`PRODUCT.md` 负责产品行为，`ARCHITECTURE.md` 负责技术架构，`AGENTS.md` 负责开发约束。新的产品或架构决定必须同步更新相应文档，不能仅存在于聊天、Issue 或 Pull Request 讨论中。
 
@@ -40,7 +41,8 @@
 - `StowCrate.App` 与未来的 `StowCrate.Cli` 是组合根。业务规则不得放进 View、ViewModel 或命令行处理器。
 - 当前模板可以直接创建 `MainViewModel`；一旦引入 Scanner、Repository、ArchiveWriter 等业务服务，应使用 `Microsoft.Extensions.DependencyInjection` 在 App/CLI 组合根完成装配，不得在 ViewModel 中手工构造基础设施对象。除非生命周期需求证明必要，不必引入完整 Generic Host。
 - USN Journal、FSEvents、inotify 等平台加速器必须具备便携回退方案。
-- Milestone 2 只实现 Source Scanner 与 Filesystem Semantics：no-follow 枚举、纯 `SourceSnapshot`、扫描问题和跨平台文件系统边界；不得引入 UI、SQLite、Change Detection、7-Zip 适配或 `*.backupplan` Schema。
+- 当前设计阶段按 `CHANGE-DETECTION.md` → Backup Plan v1 → Persistence 的顺序收敛契约；Persistence 规范完成前不得实现 SQLite schema、Entity、Repository 或 migration。
+- Change Detection 以 Archive Unit 为提交粒度；Observed、Candidate、Committed Baseline 不得混用，失败、取消或发布前状态不得推进 baseline。
 - 归档先写入 `.partial` 临时文件，完成测试和完整性计算后再原子发布。不得用未验证结果覆盖有效 Current。
 - 一致的 SQLite 配置快照必须通过 SQLite Online Backup API 创建，不得直接复制正在使用的数据库文件。
 

@@ -128,11 +128,17 @@ Current/A
 
 ### 4.6 变更检测与历史
 
-扫描首先以规范化路径、大小和修改时间判断 Archive Unit 是否变化；需要消除歧义时再计算快速哈希或加密哈希。平台日志只作为未来加速器。
+变更检测以 Archive Unit 为最小单位，严格区分 Scanner 的 Observed State、Planner 的 Candidate State 和最近成功发布 Current 所对应的 Committed Baseline。完整规范见 [`CHANGE-DETECTION.md`](CHANGE-DETECTION.md)。
+
+首版提供两种清晰模式：Standard 默认依据规范路径、类型、大小、`mtime`、metadata 和 Link raw target；Strict 每轮读取候选普通文件并计算内容 hash。Standard 无法保证发现“内容变化但 size/mtime/metadata 完全不变”的修改，产品必须明确提示这一限制。平台日志只作为未来加速器，不能成为正确性的唯一来源。
+
+文件集合、选择语义和归档规格分别具有确定性 fingerprint。调度、History retention、窗口状态等不改变归档字节的设置不得触发重压缩；输出根迁移也不得伪装成内容变化。
 
 - 未变化：保留 Current，不创建重复历史版本；
 - 已变化：验证新归档成功后，在旧 Current 仍位于原路径且有效的前提下，将其持久化为独立 History Version；历史版本验证完成后，再在 `CurrentRoot` 所在文件系统内原子替换 Current；
 - 失败：保留最后一个有效 Current，记录错误和遗漏。
+
+只有成功验证、原子发布并持久提交为 Current 的 ArchiveVersion 才能成为 baseline。单元部分成功时只推进成功单元；Incomplete Observation 默认阻止覆盖 Current。
 
 历史用于恢复误删和误改，不默认混入第三方同步的 Current 目录。用户可以按 Archive Unit 配置是否保留历史。
 
@@ -178,7 +184,7 @@ Current/A
 
 - 每个已发布归档必须可由对应标准工具独立解压。
 - 每个归档包含版本化的 `__stowcrate__/manifest.json`，记录非秘密的来源逻辑标识、创建时间、应用版本、规则摘要、文件数量、大小、子边界和完整性信息。
-- `config.db` 是重要配置，通过一致快照备份；`cache.db` 只保存可重建扫描状态，不属于灾难恢复必需数据。
+- `config.db` 是重要配置，通过一致快照备份；Current ArchiveVersion 及其 Committed Baseline 属于 `config.db` 的持久事实。`cache.db` 只保存可重建的逐文件 hash、扫描状态和平台游标，不属于灾难恢复必需数据。
 - 配置导出、清单和日志不包含明文密码、云令牌或恢复密钥。
 
 ## 7. 首版范围
@@ -202,5 +208,6 @@ Current/A
 - `config.snapshot.db` 在 Current Backup 中的最终逻辑路径与版本结构；
 - VSS/文件系统瞬时快照、ACL、xattr 和锁定文件的后续支持边界；
 - 默认压缩级别、分卷阈值、大小警告和历史默认值。
+- Standard 模式采用的快速文件内容 hash 算法及版本迁移策略。
 
 本项目采用 Apache License 2.0，详见仓库根目录 `LICENSE`。
