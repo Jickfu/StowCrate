@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="JsonSchema.Net" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
@@ -17,6 +18,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\StowCrate.Infrastructure\StowCrate.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\schemas\backupplan-v1.schema.json" Link="schemas\backupplan-v1.schema.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\schemas\fixtures\backupplan-v1\**\*.json" Link="schemas\fixtures\backupplan-v1\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,37 @@
+{
+  "$schema": "urn:stowcrate:schema:backupplan:v1",
+  "schemaVersion": 1,
+  "planId": "cf9c7217-d67f-4376-9454-74925aeacf7d",
+  "name": "Projects",
+  "description": "FILE_MANAGED with explicit overrides",
+  "semantics": { "rules": 2, "archive": 3, "outputPathEncoding": 4 },
+  "sources": [
+    { "sourceId": "287742a8-b4d8-4ca1-9219-b4a642cecc52", "name": "Projects", "sourceOutputPath": "projects" }
+  ],
+  "globalRules": {
+    "rules": [{ "action": "exclude", "pattern": "**/.DS_Store" }],
+    "provenance": { "name": "Cross-platform defaults", "revision": "2026-08-24" }
+  },
+  "planRules": [],
+  "archiveSpecDefault": {
+    "format": "sevenZip",
+    "compressionPreset": "standard",
+    "protection": { "mode": "none" }
+  },
+  "archiveUnits": [
+    {
+      "archiveUnitId": "d4f27ac8-e59a-4b0c-b6bb-057c65e5bb1d",
+      "sourceId": "287742a8-b4d8-4ca1-9219-b4a642cecc52",
+      "path": "large-repo",
+      "ruleSource": "fileManaged",
+      "archiveSpecOverride": { "format": "zip", "compressionPreset": "fast", "protection": { "mode": "privacy" } },
+      "historyOverride": { "mode": "enabled", "retention": { "kind": "keepLastVersions", "count": 3 } }
+    }
+  ],
+  "secretSlots": [],
+  "linkPolicy": "preserve",
+  "changeDetection": { "mode": "strict" },
+  "historyDefault": { "mode": "disabled" },
+  "schedule": { "enabled": false },
+  "externalSources": []
+}

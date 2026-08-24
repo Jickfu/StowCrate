@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "planId": "0c79c2c4-53bc-4a63-b4f0-a67bed58f8d8",
+  "name": "Duplicate weekly day",
+  "semantics": { "rules": 1, "archive": 1, "outputPathEncoding": 1 },
+  "sources": [{ "sourceId": "8b89c49e-f3ab-4cc7-a94e-3be782b36561", "name": "Code", "sourceOutputPath": "code" }],
+  "globalRules": { "rules": [] },
+  "planRules": [],
+  "archiveSpecDefault": { "format": "sevenZip", "compressionPreset": "standard", "protection": { "mode": "none" } },
+  "archiveUnits": [],
+  "secretSlots": [],
+  "linkPolicy": "preserve",
+  "changeDetection": { "mode": "standard" },
+  "historyDefault": { "mode": "disabled" },
+  "schedule": { "enabled": true, "triggers": [{ "type": "weekly", "daysOfWeek": ["monday", "monday"], "localTime": "08:00" }], "missedRunPolicy": "skip" },
+  "externalSources": []
+}

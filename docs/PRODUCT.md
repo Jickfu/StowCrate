@@ -139,6 +139,8 @@ Import 与 Register 是不同操作。Register 保持文件 authoritative，后�
 
 Backup Plan v1 领域模型已经 Domain Freeze Review 确认，无 schema-shaping blocker；后续 JSON Schema 必须投影既有领域契约，不能反向把 Document DTO 或数据库结构当作产品模型。
 
+Draft 2020-12 Schema、fixtures 与自动验证 Review 已通过，Backup Plan v1 Document Contract Frozen。正式公开 Schema URI 尚未配置；在确认长期稳定托管地址前不得虚构 `$id` 或 writer 默认发布 URI。
+
 v1 不提供自动、字段级、部分或 three-way merge。Update Existing 只对相同 PlanId 做整份 portable desired configuration 替换，并在确认 semantic diff 后按稳定 ID 保留适用的本机/运行状态；新增对象需要重新绑定/首次备份，移除对象的 Current、History 与 baseline 进入 inactive recovery state，不自动删除。Clone 才递归生成全部 portable IDs，且不继承 binding、Current、History、baseline 或调度状态。Managed/File-backed authority 转换和 File-backed registration relocation 即使语义相同也必须显式确认。
 
 Portable document 只保存逻辑 Source、Archive Unit 相对路径和 External Source declaration，不保存设备绝对 SourceRoot、CurrentRoot、HistoryRoot 或 External Source 路径。这些物理位置属于按 DeviceId 隔离的 Local Binding；同一个 Plan 可在不同设备重新绑定。

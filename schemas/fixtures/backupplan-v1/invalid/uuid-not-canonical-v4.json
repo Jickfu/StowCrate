@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "planId": "0C79C2C4-53BC-4A63-B4F0-A67BED58F8D8",
+  "name": "Invalid UUID",
+  "semantics": { "rules": 1, "archive": 1, "outputPathEncoding": 1 },
+  "sources": [{ "sourceId": "8b89c49e-f3ab-4cc7-a94e-3be782b36561", "name": "Code", "sourceOutputPath": "code" }],
+  "globalRules": { "rules": [] },
+  "planRules": [],
+  "archiveSpecDefault": { "format": "sevenZip", "compressionPreset": "standard", "protection": { "mode": "none" } },
+  "archiveUnits": [],
+  "secretSlots": [],
+  "linkPolicy": "preserve",
+  "changeDetection": { "mode": "standard" },
+  "historyDefault": { "mode": "disabled" },
+  "schedule": { "enabled": false },
+  "externalSources": []
+}

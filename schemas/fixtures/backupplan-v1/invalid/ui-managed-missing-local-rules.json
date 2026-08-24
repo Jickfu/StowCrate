@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "planId": "0c79c2c4-53bc-4a63-b4f0-a67bed58f8d8",
+  "name": "Missing UI rules",
+  "semantics": { "rules": 1, "archive": 1, "outputPathEncoding": 1 },
+  "sources": [{ "sourceId": "8b89c49e-f3ab-4cc7-a94e-3be782b36561", "name": "Code", "sourceOutputPath": "code" }],
+  "globalRules": { "rules": [] },
+  "planRules": [],
+  "archiveSpecDefault": { "format": "sevenZip", "compressionPreset": "standard", "protection": { "mode": "none" } },
+  "archiveUnits": [{ "archiveUnitId": "6c3ad16a-ae76-4d21-9738-c70e6264c209", "sourceId": "8b89c49e-f3ab-4cc7-a94e-3be782b36561", "path": "app", "ruleSource": "uiManaged" }],
+  "secretSlots": [],
+  "linkPolicy": "preserve",
+  "changeDetection": { "mode": "standard" },
+  "historyDefault": { "mode": "disabled" },
+  "schedule": { "enabled": false },
+  "externalSources": []
+}

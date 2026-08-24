@@ -890,4 +890,6 @@ Identity、Portable Path/Local Binding、Global Rules、FILE_MANAGED declaration
 
 Backup Plan v1 Domain Freeze Review 已完成，结论见 `reviews/BACKUPPLAN-v1-DOMAIN-FREEZE-REVIEW.md`。required fixes 已进入规范，当前无 schema-shaping blocker，Backup Plan v1 标记为 **Domain Frozen / Ready for JSON Schema Design**。
 
-Schema structure design 与 review 已完成，见 `plan/BACKUPPLAN-v1-SCHEMA-DESIGN.md` 和 `reviews/BACKUPPLAN-v1-SCHEMA-DESIGN-REVIEW.md`。下一步可以创建并审查 `backupplan-v1.schema.json`，但 Document DTO/serializer/semantic mapper 与 Persistence / SQLite 仍是后续独立边界。任何新增字段、enum/variant 或改变默认语义的需求必须遵守第 19 节 schema evolution 规则；本轮仍不创建 JSON Schema、SQLite schema、Entity、Repository 或 migration。
+Draft 2020-12 Schema、fixtures、自动测试与 Schema Review 已完成，见 `schemas/backupplan-v1.schema.json`（仓库根相对路径）、`plan/BACKUPPLAN-v1-SCHEMA-DESIGN.md`、`reviews/BACKUPPLAN-v1-SCHEMA-DESIGN-REVIEW.md` 和 `reviews/BACKUPPLAN-v1-SCHEMA-REVIEW.md`。Review PASS 后 Backup Plan v1 标记为 **Document Contract Frozen**。canonical `$id` 在长期稳定公开 URI 确认前保持省略，不虚构发布域名。
+
+下一步可以设计 Document DTO、strict reader/writer 与 semantic mapper/validator；Persistence / SQLite 仍是更后的独立边界。任何新增字段、enum/variant 或改变默认语义的需求必须遵守第 19 节 schema evolution 规则；Schema structural validity 不能替代 semantic、readiness 或 capability validation。

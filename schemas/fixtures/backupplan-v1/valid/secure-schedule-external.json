@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "planId": "ae8d85e7-2f28-4f79-a2a8-83f319a41ea5",
+  "name": "Secure workstation",
+  "semantics": { "rules": 1, "archive": 1, "outputPathEncoding": 1 },
+  "sources": [
+    { "sourceId": "1d1effaf-68d6-4eab-ae6d-b817b376ed74", "name": "Documents", "sourceOutputPath": "documents" }
+  ],
+  "globalRules": { "rules": [] },
+  "planRules": [{ "action": "exclude", "pattern": "**/*.tmp" }],
+  "archiveSpecDefault": {
+    "format": "tarZstd",
+    "compressionPreset": "extreme",
+    "protection": { "mode": "secure", "secretSlotId": "554f1abe-043d-4fbf-86be-f3289467a4c2" }
+  },
+  "archiveUnits": [
+    {
+      "archiveUnitId": "0ac1268d-4a7c-4567-9fe0-54c689a2ce47",
+      "sourceId": "1d1effaf-68d6-4eab-ae6d-b817b376ed74",
+      "path": "work",
+      "ruleSource": "uiManaged",
+      "localRules": { "mode": "includeOnly", "case": "sensitive", "rules": [{ "action": "include", "pattern": "docs/**" }] },
+      "historyOverride": { "mode": "inherit" }
+    }
+  ],
+  "secretSlots": [
+    { "secretSlotId": "554f1abe-043d-4fbf-86be-f3289467a4c2", "name": "Archive password", "purpose": "archiveEncryption" }
+  ],
+  "linkPolicy": "skip",
+  "changeDetection": { "mode": "strict" },
+  "historyDefault": { "mode": "enabled", "retention": { "kind": "keepAll" } },
+  "schedule": {
+    "enabled": true,
+    "triggers": [
+      { "type": "daily", "localTime": "02:00" },
+      { "type": "weekly", "daysOfWeek": ["monday", "friday"], "localTime": "20:30" },
+      { "type": "onStartup" }
+    ],
+    "missedRunPolicy": "runOnceWhenAvailable"
+  },
+  "externalSources": [
+    {
+      "externalSourceId": "11b34cab-d089-4374-8616-65c69879cab2",
+      "name": "SSH config",
+      "kind": "file",
+      "targetArchiveUnitId": "0ac1268d-4a7c-4567-9fe0-54c689a2ce47",
+      "archiveDestination": "machine/ssh/config"
+    }
+  ]
+}

@@ -47,6 +47,7 @@
 - `*.backupplan` 是可移植声明文档，不是数据库或运行状态备份。Managed 与 File-backed 只能选择一个配置真相源，禁止与 SQLite 隐式双向同步；Core 不得感知 authority 或文档物理路径。
 - `*.backupplan` 必须按必填正整数 `schemaVersion` 使用 version-specific closed-world reader；未知字段、枚举或联合类型一律拒绝，禁止 case-insensitive property、任意 extension bag 或降级猜测未来版本。旧文档只允许内存迁移，未经用户明确升级不得改写 File-backed 文件。
 - `$schema` 是 v1 optional、non-authoritative discovery metadata。portable semantics pin 只允许 Rules、Archive 与 OutputPathEncoding 三项；Fingerprint、scanner、External mapping、Schedule/DST、manifest 与 storage binding 等内部版本不得临时暴露为 Plan 字段。
+- `schemas/backupplan-v1.schema.json` 是 frozen Draft 2020-12 closed-world document contract；长期稳定公开 URI 未配置前不得虚构 `$id`。Schema validation 不替代 strict duplicate-property parsing 或 semantic/reference/readiness/capability validation，Document DTO 也不得充当 persistence Entity。
 - Import/Update 以完整 Plan aggregate 为单位，禁止 automatic/field/partial/three-way merge；Update 只按稳定 ID 对应并原子替换 portable configuration，不得清空 baseline 或自动删除 removed identity 的 Current/History。Clone 必须递归生成全部 portable IDs 且不复制任何 local/runtime state；authority conversion 与 registration relocation 必须显式确认。
 - Plan、Source、Archive Unit、External Source 使用稳定 UUID v4 identity；名称、逻辑/物理路径、文件位置、数组下标和数据库键都不是 identity。Portable Configuration 不保存设备绝对路径，物理 Source/Current/History/External 路径属于 Device Local Binding。
 - `SourceOutputPath`、History Enabled/Retention 属于 Portable Configuration；CurrentRoot 永远是 required local binding，HistoryRoot 仅在至少一个单元 effective History Enabled 时 required。Retention cleanup 必须在 Current/baseline durable commit 后执行，失败不得回滚有效 Current。

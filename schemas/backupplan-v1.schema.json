@@ -1,0 +1,388 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StowCrate Backup Plan v1",
+  "description": "Closed-world structural contract for StowCrate *.backupplan v1 documents. The canonical published $id is intentionally omitted until a stable public schema URI is configured.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "planId",
+    "name",
+    "semantics",
+    "sources",
+    "globalRules",
+    "planRules",
+    "archiveSpecDefault",
+    "archiveUnits",
+    "secretSlots",
+    "linkPolicy",
+    "changeDetection",
+    "historyDefault",
+    "schedule",
+    "externalSources"
+  ],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": 1 },
+    "planId": { "$ref": "#/$defs/UuidV4" },
+    "name": { "$ref": "#/$defs/NonEmptyDisplayName" },
+    "description": { "type": "string" },
+    "semantics": { "$ref": "#/$defs/PortableSemanticsPinsV1" },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/BackupSourceV1" }
+    },
+    "globalRules": { "$ref": "#/$defs/GlobalRulesSnapshotV1" },
+    "planRules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/RuleV1" }
+    },
+    "archiveSpecDefault": { "$ref": "#/$defs/ArchiveSpecV1" },
+    "archiveUnits": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ArchiveUnitDeclarationV1" }
+    },
+    "secretSlots": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/SecretSlotV1" }
+    },
+    "linkPolicy": { "$ref": "#/$defs/LinkPolicyV1" },
+    "changeDetection": { "$ref": "#/$defs/ChangeDetectionV1" },
+    "historyDefault": { "$ref": "#/$defs/HistoryPolicyV1" },
+    "schedule": { "$ref": "#/$defs/ScheduleIntentV1" },
+    "externalSources": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ExternalSourceDeclarationV1" }
+    }
+  },
+  "$defs": {
+    "UuidV4": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "NonEmptyDisplayName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "LogicalPath": {
+      "type": "string",
+      "pattern": "^(?:[^/\\\\\\u0000]+(?:/[^/\\\\\\u0000]+)*)?$"
+    },
+    "NonEmptyLogicalPath": {
+      "allOf": [
+        { "$ref": "#/$defs/LogicalPath" },
+        { "minLength": 1 }
+      ]
+    },
+    "ArchiveDestination": {
+      "$ref": "#/$defs/NonEmptyLogicalPath"
+    },
+    "LocalTime": {
+      "type": "string",
+      "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+    },
+    "PortableSemanticsPinsV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rules", "archive", "outputPathEncoding"],
+      "properties": {
+        "rules": { "type": "integer", "minimum": 1 },
+        "archive": { "type": "integer", "minimum": 1 },
+        "outputPathEncoding": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "BackupSourceV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceId", "name", "sourceOutputPath"],
+      "properties": {
+        "sourceId": { "$ref": "#/$defs/UuidV4" },
+        "name": { "$ref": "#/$defs/NonEmptyDisplayName" },
+        "sourceOutputPath": { "$ref": "#/$defs/NonEmptyLogicalPath" }
+      }
+    },
+    "GlobalRulesSnapshotV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rules"],
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RuleV1" }
+        },
+        "provenance": { "$ref": "#/$defs/GlobalRuleProvenanceV1" }
+      }
+    },
+    "GlobalRuleProvenanceV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 }
+      }
+    },
+    "RuleV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "pattern"],
+      "properties": {
+        "action": { "$ref": "#/$defs/RuleActionV1" },
+        "pattern": { "type": "string", "minLength": 1 }
+      }
+    },
+    "RuleActionV1": { "enum": ["include", "exclude"] },
+    "RuleModeV1": { "enum": ["exclude", "includeOnly"] },
+    "CasePolicyV1": { "enum": ["auto", "sensitive", "insensitive"] },
+    "UiManagedLocalRulesV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "case", "rules"],
+      "properties": {
+        "mode": { "$ref": "#/$defs/RuleModeV1" },
+        "case": { "$ref": "#/$defs/CasePolicyV1" },
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RuleV1" }
+        }
+      }
+    },
+    "ArchiveUnitDeclarationV1": {
+      "oneOf": [
+        { "$ref": "#/$defs/UiManagedArchiveUnitV1" },
+        { "$ref": "#/$defs/FileManagedArchiveUnitV1" }
+      ]
+    },
+    "UiManagedArchiveUnitV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["archiveUnitId", "sourceId", "path", "ruleSource", "localRules"],
+      "properties": {
+        "archiveUnitId": { "$ref": "#/$defs/UuidV4" },
+        "sourceId": { "$ref": "#/$defs/UuidV4" },
+        "path": { "$ref": "#/$defs/LogicalPath" },
+        "ruleSource": { "const": "uiManaged" },
+        "localRules": { "$ref": "#/$defs/UiManagedLocalRulesV1" },
+        "archiveSpecOverride": { "$ref": "#/$defs/ArchiveSpecOverrideV1" },
+        "historyOverride": { "$ref": "#/$defs/HistoryOverrideV1" }
+      }
+    },
+    "FileManagedArchiveUnitV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["archiveUnitId", "sourceId", "path", "ruleSource"],
+      "properties": {
+        "archiveUnitId": { "$ref": "#/$defs/UuidV4" },
+        "sourceId": { "$ref": "#/$defs/UuidV4" },
+        "path": { "$ref": "#/$defs/LogicalPath" },
+        "ruleSource": { "const": "fileManaged" },
+        "archiveSpecOverride": { "$ref": "#/$defs/ArchiveSpecOverrideV1" },
+        "historyOverride": { "$ref": "#/$defs/HistoryOverrideV1" }
+      }
+    },
+    "ArchiveSpecV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "compressionPreset", "protection"],
+      "properties": {
+        "format": { "$ref": "#/$defs/ArchiveFormatV1" },
+        "compressionPreset": { "$ref": "#/$defs/CompressionPresetV1" },
+        "protection": { "$ref": "#/$defs/ProtectionConfigurationV1" }
+      }
+    },
+    "ArchiveSpecOverrideV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "format": { "$ref": "#/$defs/ArchiveFormatV1" },
+        "compressionPreset": { "$ref": "#/$defs/CompressionPresetV1" },
+        "protection": { "$ref": "#/$defs/ProtectionConfigurationV1" }
+      }
+    },
+    "ArchiveFormatV1": { "enum": ["sevenZip", "zip", "tarZstd"] },
+    "CompressionPresetV1": { "enum": ["store", "fast", "standard", "extreme"] },
+    "ProtectionConfigurationV1": {
+      "oneOf": [
+        { "$ref": "#/$defs/NoProtectionV1" },
+        { "$ref": "#/$defs/PrivacyProtectionV1" },
+        { "$ref": "#/$defs/SecureProtectionV1" }
+      ]
+    },
+    "NoProtectionV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": { "mode": { "const": "none" } }
+    },
+    "PrivacyProtectionV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": { "mode": { "const": "privacy" } }
+    },
+    "SecureProtectionV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "secretSlotId"],
+      "properties": {
+        "mode": { "const": "secure" },
+        "secretSlotId": { "$ref": "#/$defs/UuidV4" }
+      }
+    },
+    "SecretSlotV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secretSlotId", "name", "purpose"],
+      "properties": {
+        "secretSlotId": { "$ref": "#/$defs/UuidV4" },
+        "name": { "$ref": "#/$defs/NonEmptyDisplayName" },
+        "purpose": { "const": "archiveEncryption" }
+      }
+    },
+    "LinkPolicyV1": { "enum": ["preserve", "skip"] },
+    "ChangeDetectionV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": { "mode": { "enum": ["standard", "strict"] } }
+    },
+    "HistoryPolicyV1": {
+      "oneOf": [
+        { "$ref": "#/$defs/HistoryDisabledV1" },
+        { "$ref": "#/$defs/HistoryEnabledV1" }
+      ]
+    },
+    "HistoryDisabledV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": { "mode": { "const": "disabled" } }
+    },
+    "HistoryEnabledV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "retention"],
+      "properties": {
+        "mode": { "const": "enabled" },
+        "retention": { "$ref": "#/$defs/RetentionPolicyV1" }
+      }
+    },
+    "HistoryOverrideV1": {
+      "oneOf": [
+        { "$ref": "#/$defs/HistoryInheritV1" },
+        { "$ref": "#/$defs/HistoryDisabledV1" },
+        { "$ref": "#/$defs/HistoryEnabledV1" }
+      ]
+    },
+    "HistoryInheritV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": { "mode": { "const": "inherit" } }
+    },
+    "RetentionPolicyV1": {
+      "oneOf": [
+        { "$ref": "#/$defs/KeepAllRetentionV1" },
+        { "$ref": "#/$defs/KeepLastVersionsRetentionV1" }
+      ]
+    },
+    "KeepAllRetentionV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": { "kind": { "const": "keepAll" } }
+    },
+    "KeepLastVersionsRetentionV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "count"],
+      "properties": {
+        "kind": { "const": "keepLastVersions" },
+        "count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ScheduleIntentV1": {
+      "oneOf": [
+        { "$ref": "#/$defs/ManualOnlyScheduleV1" },
+        { "$ref": "#/$defs/AutomaticScheduleV1" }
+      ]
+    },
+    "ManualOnlyScheduleV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": { "enabled": { "const": false } }
+    },
+    "AutomaticScheduleV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "triggers", "missedRunPolicy"],
+      "properties": {
+        "enabled": { "const": true },
+        "triggers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ScheduleTriggerV1" }
+        },
+        "missedRunPolicy": { "$ref": "#/$defs/MissedRunPolicyV1" }
+      }
+    },
+    "ScheduleTriggerV1": {
+      "oneOf": [
+        { "$ref": "#/$defs/DailyTriggerV1" },
+        { "$ref": "#/$defs/WeeklyTriggerV1" },
+        { "$ref": "#/$defs/OnStartupTriggerV1" }
+      ]
+    },
+    "DailyTriggerV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "localTime"],
+      "properties": {
+        "type": { "const": "daily" },
+        "localTime": { "$ref": "#/$defs/LocalTime" }
+      }
+    },
+    "WeeklyTriggerV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "daysOfWeek", "localTime"],
+      "properties": {
+        "type": { "const": "weekly" },
+        "daysOfWeek": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/DayOfWeekV1" }
+        },
+        "localTime": { "$ref": "#/$defs/LocalTime" }
+      }
+    },
+    "OnStartupTriggerV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": { "type": { "const": "onStartup" } }
+    },
+    "DayOfWeekV1": {
+      "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    },
+    "MissedRunPolicyV1": { "enum": ["skip", "runOnceWhenAvailable"] },
+    "ExternalSourceDeclarationV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["externalSourceId", "name", "kind", "targetArchiveUnitId", "archiveDestination"],
+      "properties": {
+        "externalSourceId": { "$ref": "#/$defs/UuidV4" },
+        "name": { "$ref": "#/$defs/NonEmptyDisplayName" },
+        "kind": { "$ref": "#/$defs/ExternalSourceKindV1" },
+        "targetArchiveUnitId": { "$ref": "#/$defs/UuidV4" },
+        "archiveDestination": { "$ref": "#/$defs/ArchiveDestination" }
+      }
+    },
+    "ExternalSourceKindV1": { "enum": ["file", "directory"] }
+  }
+}
