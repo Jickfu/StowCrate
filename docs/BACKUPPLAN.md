@@ -255,7 +255,8 @@ ArchiveUnitDeclaration
   Path
   RuleSource = UI_MANAGED | FILE_MANAGED
   LocalRuleSet?        # required for UI_MANAGED; forbidden for FILE_MANAGED
-  PortableOverrides?  # requires declaration
+  ArchiveSpecOverride? # declared units only
+  HistoryOverride?     # declared units only
 ```
 
 `Declared`/`Discovered` 只描述 Application resolution 的来源，不属于 Core backup semantics。Application 产生统一的 Resolved ArchiveUnit 后，Planning Kernel 不感知 origin。
@@ -323,7 +324,7 @@ Privacy recovery material 由执行阶段生成，其 carrier 属于 Archiving c
 
 ### 16.2 Portable SecretSlot
 
-SecretSlot 是 Plan-scoped portable logical requirement，可被同一 Plan 的多个 resolved Archive Unit 引用；具体 per-unit ArchiveSpec override 位置仍属后续设计，不在本轮固定：
+SecretSlot 是 Plan-scoped portable logical requirement，可被同一 Plan 的多个 resolved Archive Unit 的 effective ProtectionConfiguration 引用：
 
 ```text
 SecretSlot
@@ -396,14 +397,14 @@ Secret 不得通过 `7zz -p...`、进程环境或其他可被 process list/histo
 ArchiveSpecFingerprint 至少包含：
 
 ```text
-ProtectionMode
+resolved EffectiveArchiveSpec: Format + CompressionPreset + ProtectionConfiguration
 Secure: SecretSlotId + local SecretRevision
 Privacy: PrivacyProtectionSemanticsVersion
-Archive format / compression / metadata policy
-manifest and archive semantics versions
+resolved format/compression/metadata capability semantics
+manifest and ArchiveSemanticsVersion
 ```
 
-它不包含 SecretValue、secret-derived verifier、OS SecretReference/locator、Secret Store provider/implementation、DeviceId、Privacy 随机 material 或 Recovery Package bytes。SecretRevision 改变必须 RebuildRequired；只有 locator/provider 变化而逻辑 slot、revision 与有效语义不变时不得伪装成 archive spec 变化。
+它不包含 authored inherit/explicit 表达、SecretValue、secret-derived verifier、OS SecretReference/locator、Secret Store provider/implementation、DeviceId、Privacy 随机 material 或 Recovery Package bytes。SecretRevision 改变必须 RebuildRequired；只有 locator/provider 变化而逻辑 slot、revision 与有效语义不变时不得伪装成 archive spec 变化。ArchiveSpec 的 portable default/override 与 single-volume 边界见第 21 节。
 
 本节只固定 protection/secret 的领域、portable/local 和安全边界，不定义 JSON Schema、SQLite tables、provider DTO、Recovery Package、Privacy carrier、具体算法或 CLI 参数。
 
@@ -757,20 +758,67 @@ Save As / Copy 只复制同一个 document，保留 PlanId 与全部 child IDs�
 
 至少区分 `IdentityConflict`、`AuthorityConflict`、`RegistrationConflict`、`RegisteredDocumentIdentityChanged`、`AlreadyExistsSameSemantic`、`AlreadyRegistered`、`UpdateRequiresConfirmation` 与 `DocumentUpgradeRequired`。本节不定义 UI 布局、JSON Schema、SQLite schema/transaction 实现或 cleanup 物理算法。
 
-## 21. 与实现现状的差异和迁移约束
+## 21. ArchiveSpec Default / Override v1
+
+### 21.1 Portable intent 与解析模型
+
+每个 Plan 必须持久化完整 `ArchiveSpecDefault`；不得在读取旧 Plan 时使用当前应用默认值补猜。创建新 Plan 的产品默认是 `SevenZip + Standard + None`，一旦形成 portable document 就成为显式 desired configuration。
+
+v1 portable ArchiveSpec 只包含：
+
+```text
+ArchiveSpec
+  Format = SevenZip | Zip | TarZstd
+  CompressionPreset = Store | Fast | Standard | Extreme
+  ProtectionConfiguration = None | Privacy | Secure(SecretSlotId)
+```
+
+declared Archive Unit 可以携带逐组件 `ArchiveSpecOverride`，每个组件要么 inherit，要么显式给值。Application 在进入 Planning/Change Detection/Archiving 前解析：
+
+```text
+ArchiveSpecDefault + ArchiveSpecOverride? → EffectiveArchiveSpec
+EffectiveArchiveSpec += ArchiveSemanticsVersion
+```
+
+Archiver 只接收完整 EffectiveArchiveSpec，不感知 default、inherit 或 declaration origin。未声明 FILE_MANAGED unit 直接使用 Plan default；要设置 override 必须先加入 declaration。FILE_MANAGED 的规则仍只来自 `.backupignore`，而 ArchiveSpecOverride/HistoryOverride 来自 Plan declaration，两者不冲突。这里的 override 是文档内部明确的领域继承，不是第 20 节禁止的 Import merge。
+
+### 21.2 Override、Protection 与 capability
+
+Format、CompressionPreset、ProtectionConfiguration 可独立 override。Protection override 只能引用 Plan-scoped SecretSlotId，不能包含 inline SecretValue 或 local SecretReference；readiness 按每个 Unit 的 effective protection 判断。先完成 override resolution，再由当前 adapter 对完整 EffectiveArchiveSpec 做 capability validation；不支持的有效组合返回 `UnsupportedArchiveCapability`，不得降级 format、preset 或 protection。
+
+同一个 ArchiveSemanticsVersion 下，Format + CompressionPreset 到具体 algorithm、level、solid behavior、metadata behavior 和 backend 参数的映射必须永久稳定。改变映射时升级 ArchiveSemanticsVersion，不能用应用版本替代。TarZstd 只表示 portable format intent；tar/zstd 实现、level、ACL/xattr 表示继续由 versioned semantics 与 capability prototype 决定。
+
+v1 document 禁止 algorithm、dictionary/word/solid block size、thread count、lzma/deflate/zstd level、raw CLI arguments 等 backend-specific 字段。metadata preservation 也不是用户可配置 override，而由 Format、平台 capability 与 ArchiveSemanticsVersion 固定；无法忠实满足已规划条目时安全失败。
+
+### 21.3 Single-volume v1
+
+v1 固定每个 Archive Unit 的 Current 为单一 archive artifact，不支持 split volume，也没有 portable volume size/policy。分卷需要 Archive Artifact Set、逐卷 integrity、原子发布、History、relocation、restore 和 manifest 的新模型，必须留给未来 schema/semantics version。产品仍可提供大归档 warning、预计大小、文件数和最大文件提示，但不能实际 split 或接受 raw backend volume 参数。
+
+### 21.4 Fingerprint 与发布
+
+PlanSemanticFingerprint 保留 authored inheritance intent，因此区分 inherit 与 explicit-same-value。ExecutionSemanticFingerprint 与每单元 ArchiveSpecFingerprint 使用 resolved EffectiveArchiveSpec；当前 effective semantics 相同时，从 explicit same value 改为 inherit 或反向改变不触发 rebuild，也不废弃本轮相同单元归档。Plan default 变化只影响真正继承该组件的单元；publish stale revalidation 必须比较本轮每个单元的 resolved execution semantics，不能因其他单元无关的 default 变化废弃全部结果。
+
+ArchiveSpecFingerprint 至少基于 EffectiveArchiveSpec、ArchiveSemanticsVersion、resolved format/capability semantics、适用的 SecretRevision、PrivacyProtectionSemanticsVersion 与 manifest semantics version。解析出的 algorithm/solid/metadata behavior 可以进入 fingerprint 以证明归档语义，但它们不是 portable fields。
+
+- Format 变化同时改变 ArchiveSpecFingerprint 与 OutputLayoutFingerprint，需要 rebuild，并允许新 Current RelativeStoragePath 使用新扩展名；旧 Current 仍按 History capture → 新文件验证/发布 → durable commit → 清理旧路径的顺序处理。
+- CompressionPreset 或 Protection/SecretRevision 变化通常只改变 ArchiveSpecFingerprint 并 rebuild，不改变 output path。
+- 仅 output path inheritance 表达变化而 effective format 不变时，不产生 OutputReorganization。
+
+本节只固定 portable intent、inheritance、effective resolution、single-volume、capability 与 fingerprint 边界；不定义 JSON Schema、具体 backend 参数、Archiver 实现、SQLite schema 或 metadata carrier。TarZstd 在 Schema freeze 前仍需最小 capability sanity check。
+
+## 22. 与实现现状的差异和迁移约束
 
 1. **`.backupignore v1` Directive 集合变化**：规范最初只允许 `@version/@mode/@case`；现在已正式加入可选 `@id`。当前 parser 尚未实现 `@id`，后续业务实现必须同步 parser、领域返回类型和兼容性测试。
 2. **Fingerprint 强类型与字段**：ArchiveUnitId/ExternalSourceId 已正式排除于 SelectionFingerprint，logical source/path/mapping 仍包含；当前 Core 尚未实现这些强类型 fingerprint，不得把旧聚合 string 当作 v1 durable baseline。
 3. **Baseline key 与 DeviceId**：Change Detection 的 `PlanId + ArchiveUnitId` 是 portable unit key；DeviceId 只作为本机 registration/binding/runtime namespace，不替换该 key。
-4. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无完整 declaration/discovery resolver、ExternalSource/SecretSlot identity、DeviceId、Local/Secret/Schedule/Storage Binding、Global Rules Snapshot、ProtectionCapabilities、ScheduleIntent、History policy、OutputLayout/ExecutionBinding fingerprint、relocation、version-specific document reader/migrator、Import/Update/Clone workflow 或完整的 Current/History publish。本文不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
+4. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无完整 declaration/discovery resolver、ExternalSource/SecretSlot identity、DeviceId、Local/Secret/Schedule/Storage Binding、Global Rules Snapshot、ProtectionCapabilities、ScheduleIntent、ArchiveSpec default/override/effective resolution、History policy、OutputLayout/ExecutionBinding fingerprint、relocation、version-specific document reader/migrator、Import/Update/Clone workflow 或完整的 Current/History publish。本文不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
 
-## 22. 当前未决顺序
+## 23. 当前未决顺序
 
 Identity、Portable Path/Local Binding、Global Rules、FILE_MANAGED declaration/discovery、Protection Configuration/Secret Binding、Schedule Portability、History/Output Portability、Schema Compatibility/Unknown Fields 与 Import/Update/Clone 冲突语义 P0 已确认，Backup Plan P0 已全部冻结。
 
-正式冻结 Backup Plan v1 Domain Model 和编写 JSON Schema 前，仍须依次完成会改变 schema 结构的设计：
+正式冻结 Backup Plan v1 Domain Model 和编写 JSON Schema 前，只剩一项会改变 schema 结构的设计：
 
-1. ArchiveSpec default / per-unit override；
-2. External Source 完整语义。
+1. External Source 完整语义。
 
-完成后才可冻结领域模型并设计 `backupplan-v1.schema.json`、Document DTO/serializer，随后进入 Persistence / SQLite。本轮不定义 JSON Schema、SQLite schema、Entity、Repository 或 migration。
+完成后还需进行一次 Backup Plan v1 Domain Freeze Review，检查跨规范冲突，并对 TarZstd 等格式做最小 capability sanity check；通过后才可设计 `backupplan-v1.schema.json`、Document DTO/serializer，随后进入 Persistence / SQLite。本轮不定义 JSON Schema、SQLite schema、Entity、Repository 或 migration。

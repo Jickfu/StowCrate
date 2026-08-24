@@ -50,6 +50,7 @@
 - Plan、Source、Archive Unit、External Source 使用稳定 UUID v4 identity；名称、逻辑/物理路径、文件位置、数组下标和数据库键都不是 identity。Portable Configuration 不保存设备绝对路径，物理 Source/Current/History/External 路径属于 Device Local Binding。
 - `SourceOutputPath`、History Enabled/Retention 属于 Portable Configuration；CurrentRoot 永远是 required local binding，HistoryRoot 仅在至少一个单元 effective History Enabled 时 required。Retention cleanup 必须在 Current/baseline durable commit 后执行，失败不得回滚有效 Current。
 - OutputLayout 与 effective History Enabled 属于 ExecutionSemanticFingerprint；RetentionPolicy 不属于。物理 Source/Current/effective History/External binding 进入仅用于单次运行 stale check 的 ExecutionBindingFingerprint，不进入 archive fingerprint 或 Committed Baseline。
+- Backup Plan 必须显式保存完整 ArchiveSpecDefault；declared unit 只能逐组件 override Format、CompressionPreset、Protection。Archiver 只接收 resolved EffectiveArchiveSpec。v1 固定 single-volume，禁止把 algorithm、solid、thread、volume size、raw CLI 参数或 metadata toggle 暴露为 portable 配置。
 - `.backupignore @id <uuid-v4>` 是 FILE_MANAGED Archive Unit 的可选稳定 identity；空文件仍合法，任何流程都不得未经用户明确确认自动写入 `@id`。
 - 归档先写入 `.partial` 临时文件，完成测试和完整性计算后再原子发布。不得用未验证结果覆盖有效 Current。
 - 一致的 SQLite 配置快照必须通过 SQLite Online Backup API 创建，不得直接复制正在使用的数据库文件。

@@ -32,6 +32,7 @@ StowCrate.slnx
 - `BackupPlan`、`BackupSource`、`ArchiveUnit`、`ArchiveBoundary`；
 - `RuleSet`、`BackupRule`、`RuleMode`、`RuleSource`；
 - `ArchivePlan`、`ArchiveEntry`、`ArchiveVersion`、`RetentionPolicy`；
+- portable `ArchiveSpecDefault`、逐组件 `ArchiveSpecOverride`、resolved `EffectiveArchiveSpec`，以及 Format/CompressionPreset/ArchiveSemanticsVersion；
 - `ProtectionConfiguration`、强类型 `SecretSlotId` 与 resolved `SecretRevision`，但不包含 OS SecretReference 或 SecretValue；
 - portable `ScheduleIntent`、Daily/Weekly/OnStartup trigger 与 MissedRunPolicy，但不包含任何 native scheduler identity/configuration；
 - portable `SourceOutputPath`、History default/unit override、`KeepAll` / `KeepLastVersions` 与 output/history result state；
@@ -52,6 +53,7 @@ StowCrate.slnx
 - 管理 Secret Slot 的显式 Bind/Set/Replace/Unbind，用 local SecretRevision 维护变更语义并验证交互式/无头 readiness；
 - 保存 ScheduleIntent、协调本机 scheduler installation/status，并由所有触发方式调用同一 Run Plan 用例；
 - 验证 OutputLayout、协调 Current/History publish、retention maintenance 与 CurrentRoot/HistoryRoot 的受控 relocation；
+- 按 declared Archive Unit 解析 ArchiveSpec default/override，为每单元生成 EffectiveArchiveSpec 后再执行 capability/readiness validation；
 - 智能项目识别与建议确认；
 - 恢复、验证、配置快照和任务结果查询。
 
@@ -78,7 +80,7 @@ StowCrate.slnx
 - 7-Zip/7zz 进程适配；
 - ZIP；
 - TAR.ZST 与平台元数据策略；
-- 分卷、加密、测试、哈希和 `SupportsSecureEncryption` / `SupportsPrivacyProtection` 等 capability 探测。
+- single-volume 归档、加密、测试、哈希和 `SupportsSecureEncryption` / `SupportsPrivacyProtection` 等 capability 探测；v1 不实现 split volume。
 
 外部可执行文件的许可、版本、路径和能力必须显式管理。应用层不得拼接命令行。
 
@@ -261,7 +263,7 @@ OutputLayoutFingerprint 与 ExecutionBindingFingerprint 都不进入 EntrySet/Se
 
 - schema、StowCrate 版本、archive/plan/unit ID；
 - 逻辑源、归档路径和创建时间（UTC）；
-- 格式、压缩、分卷、保护模式的非秘密描述；
+- 格式、压缩预设、保护模式与 ArchiveSemanticsVersion 的非秘密描述；
 - 文件数、原始/归档大小、规则摘要、排除的子 Archive Unit；
 - 内容或卷的 SHA-256、上一个版本 ID；
 - 跨平台元数据能力与未保留项警告。
@@ -294,10 +296,10 @@ ArchiveVersion 的 durable identity 与物理绝对路径分离：概念上记�
 
 ## 11. 测试策略
 
-- **Core 单元测试**：规则语义、层级边界、路径规范化、ArchivePlan 稳定性。
-- **Application 测试**：变化原因、独立 baseline commit、History capture/retention 顺序、取消、失败补偿、预览与结果，schema validity/semantic validity/local readiness/capability 的错误分层，旧文档内存迁移与显式 upgrade，Import 幂等/IdentityConflict、whole-document Update 的 stable-ID diff 与原子性、state preserved/added/removed/modified、Clone 递归重写、authority conversion/registration relocation、registered PlanId drift，MissingSecretBinding/SecretUnavailable/SecretStoreError、SecretRevision drift、headless 不降级，schedule reconcile/out-of-sync、schedule-only stale change 不阻止发布、SkipIfRunning，以及 History Enabled/Retention/OutputLayout/ExecutionBinding drift 的不同发布结果。
+- **Core 单元测试**：规则语义、层级边界、路径规范化、ArchivePlan 稳定性，以及 ArchiveSpec 逐组件 inherit/override、explicit-same-value 与 per-unit effective fingerprint。
+- **Application 测试**：变化原因、独立 baseline commit、History capture/retention 顺序、取消、失败补偿、预览与结果，schema validity/semantic validity/local readiness/capability 的错误分层，旧文档内存迁移与显式 upgrade，Import 幂等/IdentityConflict、whole-document Update 的 stable-ID diff 与原子性、state preserved/added/removed/modified、Clone 递归重写、authority conversion/registration relocation、registered PlanId drift，ArchiveSpec default 只影响继承单元、format 同时改变 archive/output fingerprint、compression/protection 只改变 archive fingerprint、effective capability/secret readiness，MissingSecretBinding/SecretUnavailable/SecretStoreError、SecretRevision drift、headless 不降级，schedule reconcile/out-of-sync、schedule-only stale change 不阻止发布、SkipIfRunning，以及 History Enabled/Retention/OutputLayout/ExecutionBinding drift 的不同发布结果。
 - **Infrastructure 集成测试**：UTF-8/BOM、严格 JSON、property 大小写/重复检测、各层 unknown property/enum/variant、schemaVersion dispatch、writer round-trip/原子替换，SQLite migration/backup、文件锁、Current/History relocation、跨文件系统 copy/verify、output collision/case semantics、跨 Plan root overlap、scheduler install/update/remove/status、DST/missed-run 映射与 native identity lifecycle。
-- **Archiving 契约测试**：每种格式的创建、测试、恢复、加密、Unicode、大文件和分卷；验证 protection capabilities，且 SecretValue 不出现在参数、环境、日志或诊断输出。
+- **Archiving 契约测试**：每种格式与 CompressionPreset 的 single-volume 创建、测试、恢复、加密、Unicode 和大文件；验证 versioned preset/metadata/protection capabilities、split/raw option 不可表示，且 SecretValue 不出现在参数、环境、日志或诊断输出。
 - **跨平台测试**：Windows/macOS/Linux CI，大小写、权限、链接和长路径 fixture；Secret Store prototype 还必须覆盖 GUI 用户与 Task Scheduler/launchd/systemd timer/cron 的实际执行身份。
 - **故障注入测试**：写入中断、空间不足、损坏归档、进程退出、Current/History 移动失败。
 - **架构测试**：验证项目依赖方向、Core 不引用 Avalonia/SQLite、Application 不引用外层项目，以及 ViewModel 不直接引用 SQLite。

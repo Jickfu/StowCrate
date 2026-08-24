@@ -185,7 +185,9 @@ History 默认 Disabled。Portable Plan 保存 Plan default 和 declared Archive
 - `ZIP`：兼容性优先；
 - `TAR.ZST`：Linux/macOS 需要保留 POSIX 权限、符号链接、ACL 或扩展属性时使用。
 
-单个归档允许很大，并应支持分卷、可配置大小告警、预计大小、文件数量和最大文件提示。
+单个归档允许很大；v1 固定 single-volume，不支持分卷。产品提供可配置大小告警、预计大小、文件数量和最大文件提示；未来分卷必须先设计 Archive Artifact Set、逐卷完整性和原子发布语义。
+
+每个 Plan 必须显式保存完整 ArchiveSpec 默认值，新 Plan 产品默认是 SevenZip + Standard + None。v1 portable ArchiveSpec 只提供 SevenZip/Zip/TarZstd、Store/Fast/Standard/Extreme 压缩预设和 Protection Configuration；declared Archive Unit 可逐组件 override，未声明的 FILE_MANAGED unit 使用 Plan 默认。算法、solid、线程、分卷和 metadata toggle 等底层参数不作为 portable 配置。
 
 首版随应用分发各目标平台对应的 7-Zip/7zz 可执行文件，不要求用户预先安装；发行物必须固定兼容版本并包含第三方许可与归属说明。
 
@@ -255,7 +257,7 @@ Scheduler installation 是 `PlanId + DeviceId` 下的本机状态，与 Plan 配
 - 7-Zip 密码能否在不出现在命令行或进程列表的前提下可靠地自动传入；
 - `config.snapshot.db` 在 Current Backup 中的最终逻辑路径与版本结构；
 - VSS/文件系统瞬时快照、ACL、xattr 和锁定文件的后续支持边界；
-- 默认压缩级别、分卷阈值、大小警告和历史默认值。
+- 各格式压缩预设的最终 adapter capability 验证、大小警告默认值和历史默认值。
 - Standard 模式采用的快速文件内容 hash 算法及版本迁移策略。
 
 本项目采用 Apache License 2.0，详见仓库根目录 `LICENSE`。

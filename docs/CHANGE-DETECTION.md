@@ -62,11 +62,13 @@ Archive Unit logical path 仍然进入 SelectionFingerprint：即使 identity �
 
 表示相同输入应如何生成归档，至少包含：
 
-- format、compression algorithm/level、solid mode、volume size；
-- metadata preservation 与 protection mode；
+- 每单元 resolved `EffectiveArchiveSpec`：Format、CompressionPreset 与 ProtectionConfiguration；
+- `ArchiveSemanticsVersion` 解析出的 algorithm/level、solid 与 metadata capability semantics；
 - Secure protection 使用的 portable `SecretSlotId` 与当前设备 local `SecretRevision`；
 - Privacy protection semantics version；
 - manifest schema 与 archive semantics version。
+
+portable `*.backupplan v1` 不直接配置 algorithm、level、solid、metadata toggle 或 volume size；v1 固定 single-volume。ArchiveSpecFingerprint 记录 resolved archiver semantics 不代表这些底层参数必须成为文档字段。
 
 `SecretValue`、secret-derived verifier/hash、OS `SecretReference`/locator、Secret Store provider/implementation、`DeviceId`、Privacy 每次执行随机生成的 key/nonce/recovery material bytes 都不进入 ArchiveSpecFingerprint。`SecretRevision` 由 StowCrate 在 Set/Replace/Rebind 有效 secret 时保守递增；即使新值与旧值相同也允许额外 rebuild，不得通过持久化 secret hash 判断相等。
 
@@ -78,13 +80,15 @@ PlanAuthority、File-backed registration path 与 Managed/File-backed 转换也�
 
 `PlanSemanticFingerprint` 描述完整 portable desired configuration，因此包含 ScheduleIntent；它用于识别 Plan 语义版本和协调 scheduler 等配置状态，不等于“当前归档是否仍可发布”。
 
-`ExecutionSemanticFingerprint` 只描述会影响本轮扫描、选择、归档 bytes 或发布正确性的 portable Plan 语义，至少覆盖 Source logical configuration、Archive Units、Rules、Boundary、LinkPolicy、External Source mapping、ArchiveSpec、Protection intent、Change Detection mode、OutputLayoutFingerprint、每个单元 effective History Enabled 状态与相应 semantics versions。ScheduleIntent、History RetentionPolicy、UI metadata、authority 和 registration path 不进入。
+`ExecutionSemanticFingerprint` 只描述会影响本轮扫描、选择、归档 bytes 或发布正确性的 portable Plan 语义，至少覆盖 Source logical configuration、Archive Units、Rules、Boundary、LinkPolicy、External Source mapping、每单元 EffectiveArchiveSpec、Change Detection mode、OutputLayoutFingerprint、每个单元 effective History Enabled 状态与相应 semantics versions。ScheduleIntent、History RetentionPolicy、authored ArchiveSpec inherit/explicit 表达（当 effective semantics 相同时）、UI metadata、authority 和 registration path 不进入。
 
 `OutputLayoutFingerprint` 描述 SourceOutputPath、确定性 Archive Unit-to-output mapping 与 OutputPathEncodingVersion；它进入 ExecutionSemanticFingerprint，但不进入 EntrySet/Selection/ArchiveSpec fingerprint。layout 变化需要安全 Output Reorganization，而不是 archive rebuild。
 
 设备本地路径不属于 PlanSemanticFingerprint。一次运行另行捕获 `ExecutionBindingFingerprint`，至少包含 physical-canonical resolved SourceRoot、CurrentRoot、effective HistoryRoot（有单元启用 History 时）、required External Source physical bindings、目标文件系统 case/capability identity 与 storage binding semantics version。它只用于本轮 stale check，不进入三类 archive fingerprint、InputFingerprint 或 Committed Baseline。
 
 运行期间完整 PlanSemanticFingerprint 变化时必须重新解析配置并比较 ExecutionSemanticFingerprint；只有执行关键语义变化才触发 PlanChangedDuringRun。Schedule-only 变化不废弃已验证归档，也不推进或改写 scheduler installation；scheduler reconciliation 是独立配置管理流程。
+
+ArchiveSpec stale check 必须能比较本轮每个 Archive Unit 的 resolved EffectiveArchiveSpec。Plan default 改变时，只阻止真正继承且 effective semantics 已变化的单元；显式 override 后 effective 不变的其他单元仍可独立发布。
 
 `InputFingerprint = SHA256(EntrySetFingerprint + SelectionFingerprint)`。如需要聚合 rebuild identity，则由 InputFingerprint 与 ArchiveSpecFingerprint 组合。领域 API 必须使用强类型 fingerprint，不能以可互换的裸 `string` 表达。
 

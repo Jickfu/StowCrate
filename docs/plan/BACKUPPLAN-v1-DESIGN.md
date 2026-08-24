@@ -47,13 +47,15 @@ BackupPlan
 ├─ Rules
 │  ├─ GlobalRuleSetRef / snapshot
 │  └─ PlanRuleSet
+├─ ArchiveSpecDefault
 ├─ ArchiveUnits[]
 │  ├─ ArchiveUnitId
 │  ├─ SourceId
 │  ├─ LogicalRoot
 │  ├─ RuleSource
 │  ├─ UiManagedLocalRules? 
-│  └─ ArchiveSpec
+│  ├─ ArchiveSpecOverride?
+│  └─ HistoryOverride?
 ├─ ExternalSources[]
 ├─ ChangeDetection
 ├─ Retention
@@ -132,20 +134,17 @@ Local Binding 的数据库结构、UI 编辑方式和未来 Device Binding Expor
 
 已确认 Global Rules 在 Plan 中保存 authoritative pinned snapshot；Library ID/revision 等只可作为 optional provenance，不是运行时依赖。FILE_MANAGED declaration/discovery 合成和 `.backupignore @id` 冲突规则也已进入 `BACKUPPLAN.md`。
 
-## 7. ArchiveSpec
+## 7. ArchiveSpec（schema-shaping design 已确认）
 
-建议 ArchiveSpec 只包含会影响归档字节、可恢复语义或执行能力的设置：
+Plan 必须显式保存完整 ArchiveSpecDefault；declared Archive Unit 可逐组件 override，Application 解析为每单元 EffectiveArchiveSpec。v1 portable intent 只有：
 
-- format；
-- compression algorithm/level、solid mode、volume size；
-- metadata preservation policy；
-- protection mode；
-- portable SecretSlotId；resolved execution 另携带本机 SecretRevision（没有 secret value）；
-- manifest/archive semantics version。
+- Format：SevenZip / Zip / TarZstd；
+- CompressionPreset：Store / Fast / Standard / Extreme；
+- ProtectionConfiguration：None / Privacy / Secure(SecretSlotId)。
 
-格式能力必须在执行前验证。无法 Preserve 某种 Link/metadata 时安全失败，不能自动 dereference 或静默降级。
+新 Plan 产品默认 SevenZip + Standard + None。未声明 FILE_MANAGED unit 继承 Plan default。algorithm/level/dictionary/solid/thread/raw CLI option、volume size 与 metadata toggle 都不是 portable fields；它们由 Format + Preset + ArchiveSemanticsVersion 固定并在 adapter capability validation 中解析。v1 固定 single-volume。
 
-未决：首版每种格式允许的精确参数集合与 portable default，以及 ArchiveSpec default + unit override 的结构和继承语义。Secret 已确认使用 portable logical SecretSlot + device-local SecretBinding。
+PlanSemanticFingerprint 区分 inherit 与 explicit；ExecutionSemanticFingerprint/ArchiveSpecFingerprint 使用 resolved effective semantics。Format 改变同时影响 archive 与 output layout，compression/protection 通常只影响 archive。完整规范见 `BACKUPPLAN.md` 第 21 节。
 
 ## 8. Change Detection、Retention 与 Schedule
 
@@ -193,7 +192,7 @@ External Source 必须通过稳定 ID、实际路径 binding、目标 ArchiveUni
 9. ~~Schema compatibility、unknown fields 与新版本读取策略~~：已确定；
 10. ~~Import identity conflict / merge semantics~~：已确定。
 
-Backup Plan P0 已全部冻结。ArchiveSpec default/override 与 External Source 完整语义仍会改变字段形状，必须完成后才能冻结 v1 Domain Model 和创建 Schema。
+Backup Plan P0 与 ArchiveSpec default/override 已冻结。External Source 完整语义仍会改变字段形状，必须完成后才能冻结 v1 Domain Model 和创建 Schema。
 
 ## 12. Identity + Portable Binding 结论
 
@@ -232,8 +231,8 @@ ResolvedPlanSnapshot
 
 下一项按顺序解决：
 
-1. ArchiveSpec portable default 与 per-unit override 的合法字段、继承、显式默认和 fingerprint 语义；
-2. External Source 的文件/目录类型、mapping、规则、冲突、边界、link 与 incomplete observation 语义；
+1. External Source 的文件/目录类型、mapping、规则、冲突、边界、link 与 incomplete observation 语义；
+2. 执行一次 Backup Plan v1 Domain Freeze Review 与最小 Archiving capability sanity check；
 3. 冻结 Backup Plan v1 Domain Model；
 4. 最后才设计 canonical JSON 示例与 JSON Schema。
 
@@ -242,7 +241,7 @@ ResolvedPlanSnapshot
 后续依次产出：
 
 1. 继续增量完善正式 `docs/BACKUPPLAN.md`；
-2. 完成 ArchiveSpec override 与 External Source 设计并冻结领域模型；
+2. 完成 External Source 设计与 Domain Freeze Review；
 3. 创建 canonical JSON 示例与 JSON Schema；
 4. 导入、注册、clone、update、冲突和 secret rebinding 测试矩阵；
 5. Application ports 与纯领域 contract；
