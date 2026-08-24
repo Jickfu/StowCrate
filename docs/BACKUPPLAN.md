@@ -91,6 +91,10 @@ authoritative declaration ────────┘                    │
                                             Resolved ArchiveUnits → Planner / Change Detector / Executor
 ```
 
+这里的 `ResolvedPlanSnapshot` 明确定义为 **device-resolved pre-observation immutable execution configuration snapshot**：位于 frozen `PortableBackupPlan` 之后、Source/External observation 与 FILE_MANAGED discovery 之前。它不是最终 execution-ready 的 Backup Plan。Authority 只负责上游取得 authoritative portable aggregate；authority/registration/document/persistence identity 与 publish-time revision guard 均不进入该 snapshot。
+
+pre-observation resolver 只消费已经由 Infrastructure 展开并 physical-canonicalize 的 binding facts。Source、CurrentRoot、External Source binding required；HistoryRoot 和 SecretBinding 可以作为 facts 携带，但 MissingHistoryRootBinding、MissingSecretBinding、SecretRevision/capability 与最终 output collision 必须等 resolved Archive Unit set 形成后再按 effective policy 检查，不能因 default 或尚未 discovery 的 FILE_MANAGED unit 提前误判。
+
 Core `BackupPlan` 不包含 `IsFileBacked`、registration path、SQLite identity 或 Declared/Discovered origin。Planning Kernel、Change Detector 和 Archiving 不感知配置来源；Scanner 只报告物理事实，不决定 declaration authority。
 
 每次运行捕获 `ExecutionSemanticSnapshot`。它包含 Managed 的 Revision（适用时，用于发现配置可能变化）、PlanSemanticFingerprint、ExecutionSemanticFingerprint、ExecutionBindingFingerprint、所有本轮解析的外部规则源 fingerprint，以及 Secure protection 实际解析的 `SecretSlotId + SecretRevision`。
@@ -684,8 +688,10 @@ Raw *.backupplan bytes
   → Migration to current semantic model
   → Plan authority resolution
   → Device Local Binding resolution
-  → ResolvedPlanSnapshot
-  → Capability / Readiness validation
+  → ResolvedPlanSnapshot (device-resolved, pre-observation)
+  → Source / External observation + FILE_MANAGED discovery
+  → ResolvedArchiveUnitSet
+  → Execution Readiness / Capability validation
   → Execution
 ```
 
@@ -886,7 +892,7 @@ v1 明确不支持 optional external、glob/multi-root、external rules/`.backup
 1. **`.backupignore v1` Directive 集合变化**：规范最初只允许 `@version/@mode/@case`；现在已正式加入可选 `@id`。当前 parser 尚未实现 `@id`，后续业务实现必须同步 parser、领域返回类型和兼容性测试。
 2. **Fingerprint 强类型与字段**：ArchiveUnitId/ExternalSourceId 已正式排除于 SelectionFingerprint，logical source/path/mapping 仍包含；当前 Core 尚未实现这些强类型 fingerprint，不得把旧聚合 string 当作 v1 durable baseline。
 3. **Baseline key 与 DeviceId**：Change Detection 的 `PlanId + ArchiveUnitId` 是 portable unit key；DeviceId 只作为本机 registration/binding/runtime namespace，不替换该 key。
-4. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无完整 declaration/discovery resolver、ExternalSource observation/staging、SecretSlot identity、DeviceId、Local/Secret/Schedule/Storage Binding、Global Rules Snapshot、ProtectionCapabilities、ScheduleIntent、ArchiveSpec default/override/effective resolution、History policy、OutputLayout/ExecutionBinding fingerprint、relocation、version-specific document reader/migrator、Import/Update/Clone workflow 或完整的 Current/History publish。本文不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
+4. **实现现状**：M3 已实现 strict version-specific document runtime、frozen portable authored aggregate/typed IDs、semantic validation、deterministic writer、ArchiveSpec/History effective policy primitives，以及 device-resolved pre-observation `ResolvedPlanSnapshot` contract。尚未实现 Source/External observation 合成、FILE_MANAGED discovery resolver、Execution Readiness/capability、Local/Secret/Schedule/Storage Binding persistence、OutputLayout/ExecutionBinding fingerprint、relocation、Import/Update/Clone workflow 或完整 Current/History publish。本文不授权提前实现 SQLite persistence。
 
 ## 24. 当前未决顺序
 

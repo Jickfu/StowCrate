@@ -118,7 +118,9 @@ Import/Update 的单位是完整 Plan aggregate，v1 没有 automatic、field、
 
 Portable identity 使用强类型 UUID v4 `PlanId`、`SourceId`、`ArchiveUnitId`、`ExternalSourceId`、`SecretSlotId`。Application 将 portable declaration 与当前 DeviceId 下的 Local Binding 合成为 `ResolvedPlanSnapshot`；Core 不读取 DeviceId、hostname、环境变量、registration path、OS SecretReference 或数据库键。
 
-`ResolvedPlanSnapshot` 携带 authoritative 的 pinned Global Rules Snapshot，并为 Scanner 提供已验证的 local binding。Global Rule Library 属于 Application/Infrastructure 的 authoring facility，运行时不得 live-reference 本机 library。扫描后，Application 再把 Archive Unit declarations、物理 discovery、`.backupignore` metadata/rules 与本机 registration 合成为 resolved units。Declared/Discovered origin、Plan authority 和规则文件物理路径不进入 Planning Kernel。
+`ResolvedPlanSnapshot` 是 frozen PortableBackupPlan 之后、Source/External physical observation 与 FILE_MANAGED discovery 之前的 device-resolved immutable execution configuration snapshot。它携带 pinned Global/Plan Rules、already-resolved Source/Current/External paths、prepared declared units、DefaultUnitPolicy 及可选 History/Secret revision facts，但不声称最终 execution-ready。PlanAuthority、registration path、Document DTO、SQLite identity、ScheduleIntent、description 与 Global Rule provenance 不进入 snapshot；publish-time revision/re-read guard 留给后续 `ExecutionSemanticSnapshot`。
+
+Raw binding expression（包括 `${HOME}`）的展开、绝对化和 physical canonicalization 属于 Infrastructure binding resolver。Application pure resolver 只接收 canonical `ResolvedPhysicalPath` facts 与 platform-aware comparison key，不调用 `Path.GetFullPath`、`Environment` 或 filesystem API。Source、CurrentRoot、External bindings 是 pre-observation required；HistoryRoot 与 SecretBinding 可以携带但不在此阶段条件阻塞。扫描后，Application 再把 prepared declarations、物理 discovery 与 `.backupignore` metadata/rules 合成为 resolved units，并在 Execution Readiness 阶段检查 effective History、Secret、capability 与最终 output collision。
 
 External Source 只指向 declared Archive Unit。它由独立 no-follow observation 作为 explicit inclusion 加入目标 Candidate，不经过普通 Rules，也不在 external directory 内做 `.backupignore` rule parsing 或 Archive Unit discovery。Application/Infrastructure 使用只读 private staging，并确保最终 EntrySet 状态对应真正 materialized payload；normal/external/generated entries 在统一 path trie 中验证 owner collision、reserved namespace 和 child Boundary。
 
@@ -135,7 +137,7 @@ Other logical paths / policies       Other local runtime state
                                    → validated ResolvedPlanSnapshot
 ```
 
-v1 path expression 只允许受控 `${HOME}` anchor，不把任意 process environment 作为隐式输入。解析后必须绝对化、physical canonicalize 并验证 Source/Current/History 两两不重叠。缺少 required binding 时不得进入 Scanner。
+v1 path expression 只允许受控 `${HOME}` anchor，不把任意 process environment 作为隐式输入。解析后必须绝对化、physical canonicalize 并验证单 Plan Source/Current/bound History root safety。跨 active Plan overlap 由 Application 接收的纯 `ActivePlanRootFacts` 检查；未来 Infrastructure 可从 persistence 提供这些 facts，但该 contract 不依赖 SQLite。缺少 Source/Current/External binding 时不得进入 observation；MissingHistoryRootBinding 与 MissingSecretBinding 延后到 resolved unit set 的 Execution Readiness。
 
 ### StowCrate.App / StowCrate.Cli
 

@@ -49,6 +49,28 @@ UTF-8 bytes / Stream
 - round-trip 测试覆盖 semantic preservation、canonical idempotence、collection permutation invariance、Rule order 与 authored override/inherit distinction；
 - bytes、同步 Stream 与异步 Stream writer 已完成，不包含 path-level replacement。
 
-## 下一项：Application ResolvedPlanSnapshot Resolution Contract
+## 已完成：Application ResolvedPlanSnapshot Resolution Contract
 
-下一项定义 Application 如何把 portable authored aggregate、authority/registration 与 device-local bindings 合成为不可变 `ResolvedPlanSnapshot`，并明确 readiness/capability/error boundary。Local Binding 的具体持久化、Import/Update、SQLite、EF 与归档执行仍不在本阶段实现。
+- `ResolvedPlanSnapshot` 固定为 device-resolved pre-observation immutable execution configuration，不表示最终 execution-ready；
+- Application 新增 `DeviceId`、`ResolvedPhysicalPath`、immutable binding/root facts、resolution result/issues 与 pure resolver contract；
+- raw expression/`${HOME}`/physical canonicalization 保持在未来 Infrastructure binding resolver；
+- Source、CurrentRoot、External binding 是本阶段 required，HistoryRoot 与 Secret revision facts 不提前条件阻塞；
+- Core 提供唯一 ArchiveSpec/History default+override/inherit resolution primitive；
+- declared UI_MANAGED unit 携带已知 LocalRuleSet，FILE_MANAGED 只形成无伪造 LocalRuleSet 的 prepared declaration；
+- snapshot 携带 effective `DefaultUnitPolicy` 供后续未声明 FILE_MANAGED discovery 使用；
+- PlanAuthority、registration、Document DTO、SQLite identity、Schedule/description/provenance 不进入 snapshot；
+- External 仅完成 physical input + target mapping，不产生 observation/staging state；
+- 单 Plan root safety 与纯 `ActivePlanRootFacts` 跨 Plan writable overlap 检查已完成。
+
+## 下一项：Source/External Observation + Archive Unit Resolution Contract
+
+```text
+ResolvedPlanSnapshot
++ SourceSnapshot[]
++ ExternalSourceSnapshot[]
++ .backupignore discovery
+→ ResolvedArchiveUnitSet
+→ Execution Readiness
+```
+
+下一阶段才处理 MissingHistoryRootBinding、MissingSecretBinding、SecretRevision、archive capability 与最终 output collision；仍不提前实现 SQLite、Archiver 或 backup execution。

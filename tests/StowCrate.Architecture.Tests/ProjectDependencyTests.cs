@@ -72,6 +72,27 @@ public sealed class ProjectDependencyTests
         }
     }
 
+    [Fact]
+    public void ApplicationPlanResolutionDoesNotCanonicalizePhysicalPathsOrUseFileSystemObjects()
+    {
+        var resolutionPath = Path.Combine(
+            RepositoryRoot,
+            "src",
+            "StowCrate.Application",
+            "BackupPlans",
+            "Resolution");
+
+        foreach (var sourcePath in Directory.GetFiles(resolutionPath, "*.cs", SearchOption.AllDirectories))
+        {
+            var source = File.ReadAllText(sourcePath);
+            Assert.DoesNotContain("Path.GetFullPath", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("Environment.", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("FileInfo", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("DirectoryInfo", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("FileStream", source, StringComparison.Ordinal);
+        }
+    }
+
     [Theory]
     [InlineData(@"..\StowCrate.Core\StowCrate.Core.csproj", "StowCrate.Core")]
     [InlineData("../StowCrate.Core/StowCrate.Core.csproj", "StowCrate.Core")]

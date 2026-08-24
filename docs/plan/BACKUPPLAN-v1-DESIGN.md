@@ -234,7 +234,9 @@ Backup Plan v1 Document Contract Runtime 已完成：frozen DTO、strict UTF-8/d
 
 `Document Writer + deterministic round-trip` 已完成：显式 Domain→DTO projector、canonical ordering/formatting、lower-camel contract strings 与 strict reader/Schema postcondition 已形成闭环。
 
-下一项推进为 **Application ResolvedPlanSnapshot Resolution Contract**；仍不实现 Import/Update、Local Binding persistence、SQLite 或 EF。
+`Application ResolvedPlanSnapshot Resolution Contract` 已完成，并固定为 portable domain 之后、physical observation/discovery 之前的 device-resolved immutable configuration snapshot。
+
+下一项推进为 **Source/External Observation + Archive Unit Resolution Contract**：`ResolvedPlanSnapshot + SourceSnapshot[] + ExternalSourceSnapshot[] + .backupignore discovery → ResolvedArchiveUnitSet → Execution Readiness`。MissingHistory/Secret、capability 与最终 output collision 到该阶段处理；仍不实现 Import/Update、Local Binding persistence、SQLite 或 EF。
 
 ## 14. 后续产物
 
