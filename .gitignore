@@ -1,0 +1,32 @@
+## .NET
+bin/
+obj/
+artifacts/
+TestResults/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## IDEs
+.vs/
+.idea/
+.vscode/
+
+## Build/package output
+*.nupkg
+*.snupkg
+publish/
+
+## OS
+.DS_Store
+Thumbs.db
+
+## StowCrate runtime data and secrets
+*.db
+*.db-shm
+*.db-wal
+*.partial
+staging/
+secrets.dat
+

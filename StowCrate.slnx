@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/StowCrate.App/StowCrate.App.csproj" />
+    <Project Path="src/StowCrate.Application/StowCrate.Application.csproj" />
+    <Project Path="src/StowCrate.Archiving/StowCrate.Archiving.csproj" />
+    <Project Path="src/StowCrate.Core/StowCrate.Core.csproj" />
+    <Project Path="src/StowCrate.Infrastructure/StowCrate.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/StowCrate.Application.Tests/StowCrate.Application.Tests.csproj" />
+    <Project Path="tests/StowCrate.Archiving.Tests/StowCrate.Archiving.Tests.csproj" />
+    <Project Path="tests/StowCrate.Core.Tests/StowCrate.Core.Tests.csproj" />
+    <Project Path="tests/StowCrate.Infrastructure.Tests/StowCrate.Infrastructure.Tests.csproj" />
+  </Folder>
+</Solution>
