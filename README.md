@@ -21,10 +21,12 @@ StowCrate 将目录整理成一组可理解、可独立恢复的标准归档文�
 - [技术架构](docs/ARCHITECTURE.md)
 - [`.backupignore` v1 规范](docs/BACKUPIGNORE.md)
 - [Milestone 1 — Planning Kernel](docs/milestones/MILESTONE-1-PLANNING-KERNEL.md)
+- [Filesystem Semantics v1](docs/FILESYSTEM.md)
+- [Milestone 2 — Source Scanner & Filesystem Semantics](docs/milestones/MILESTONE-2-SOURCE-SCANNER.md)
 - [仓库开发约束](AGENTS.md)
 
 ## 当前状态
 
-规划内核已经具备跨平台逻辑路径、`.backupignore` v1 解析与规则合成、Archive Unit 边界树、不可变 `ArchivePlan` 以及确定性 fingerprint，并通过端到端 dry-run 测试。
+规划内核已经具备跨平台逻辑路径、`.backupignore` v1 解析与规则合成、Archive Unit 边界树、不可变 `ArchivePlan` 以及确定性 fingerprint。当前正在接入 no-follow 的真实文件系统 Scanner。
 
-Milestone 1 暂不实现 Avalonia UI、SQLite、归档执行器和真实文件系统 Scanner；这些外层能力将在领域模型和符号链接策略稳定后接入。尚未决策事项统一记录在产品设计文档中。
+Milestone 2 暂不实现 Avalonia UI、SQLite、Change Detection 和归档执行器。尚未决策事项统一记录在产品设计文档中。

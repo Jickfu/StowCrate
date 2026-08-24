@@ -101,6 +101,8 @@ Current/A
 
 `.backupignore v1` 的完整、规范性定义见 [`BACKUPIGNORE.md`](BACKUPIGNORE.md)。该文件是规则解析器、Rule Engine 和相关测试的行为真相源。
 
+真实文件系统对象、链接、挂载边界和扫描问题的规范性定义见 [`FILESYSTEM.md`](FILESYSTEM.md)。
+
 每个 Archive Unit 的局部规则来源只能是：
 
 - `UI_MANAGED`：SQLite 保存 `RuleSource`、`RuleMode` 和 `Rules`，是局部规则的唯一事实来源；或
@@ -198,8 +200,7 @@ Current/A
 - 隐私保护恢复信息在 7z、ZIP、TAR.ZST 中的可靠承载方式；
 - 7-Zip 密码能否在不出现在命令行或进程列表的前提下可靠地自动传入；
 - `config.snapshot.db` 在 Current Backup 中的最终逻辑路径与版本结构；
-- 首版符号链接的跟随、保留、越界和循环处理策略；
-- VSS/文件系统快照、符号链接、ACL、xattr 和锁定文件的首版支持边界；
+- VSS/文件系统瞬时快照、ACL、xattr 和锁定文件的后续支持边界；
 - 默认压缩级别、分卷阈值、大小警告和历史默认值。
 
 本项目采用 Apache License 2.0，详见仓库根目录 `LICENSE`。

@@ -24,9 +24,3 @@ public enum CaseSensitivity
     Sensitive,
     Insensitive,
 }
-
-public enum SourceEntryKind
-{
-    File,
-    Directory,
-}

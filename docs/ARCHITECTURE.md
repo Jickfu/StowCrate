@@ -55,6 +55,7 @@ StowCrate.slnx
 
 - SQLite `config.db`、`cache.db` 与迁移；
 - 物理文件系统、路径映射、staging 与原子替换；
+- no-follow `SourceScanner`、平台对象分类和文件系统边界探测；
 - `.backupignore`/`*.backupplan` 序列化；
 - Windows Task Scheduler、launchd、systemd timer/cron 适配器；
 - Credential Manager/DPAPI、Keychain、Secret Service 适配器；
@@ -108,6 +109,8 @@ BackupPlan
 ```
 
 `SourceSnapshot` 是 Scanner 输出给纯规划内核的不可变边界。同一份 Source Snapshot、BackupPlan 与规则必须生成内容、顺序和 fingerprint 均相同的 ArchivePlan。Milestone 1 先用可构造快照验证规划内核；真实文件系统 Scanner 在首版符号链接策略确定后实现。
+
+Milestone 2 的 Scanner 按 [`FILESYSTEM.md`](FILESYSTEM.md) 将物理对象转换为纯数据快照。Scanner 永不跟随链接，也不根据 `LinkPolicy` 改变枚举；`Preserve` 或 `Skip` 由 Planning Kernel 决定。扫描问题与快照并列返回，任何跳过必须可见。
 
 1. 解析设备路径映射并按目标平台规则规范化路径；验证 `SourceRoot`、`CurrentRoot`、`HistoryRoot` 两两不相等且不存在任何祖先/子孙关系，并验证 staging 不会形成递归输入。
 2. 发现 UI 管理或 `.backupignore` 管理的 Archive Unit。
@@ -198,7 +201,7 @@ manifest 不保存真实密码、密钥、token 或不必要的主机隐私信�
 
 - 归档密码不出现在命令行、日志、崩溃报告或进程列表；若 CLI 工具无法满足，应通过受控输入或库接口解决。
 - `.backupignore`、`*.backupplan` 和源路径均视为不可信输入，防止路径穿越和归档条目逃逸。
-- 默认不跟随会逃离 Source 的符号链接；最终策略必须可配置且防循环。
+- 首版不跟随任何链接；默认保留链接对象及 raw target，可配置为 Skip。未知 Reparse Point 与 Unix 特殊文件不遍历且必须报告。
 - 解压/恢复前检测目标覆盖、路径穿越、磁盘空间和大小写冲突。
 - 第三方归档工具在发布包中固定兼容版本并附带许可说明。
 

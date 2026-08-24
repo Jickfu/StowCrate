@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Security.Cryptography;
 using System.Text;
+using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 using StowCrate.Core.Rules;
 
@@ -10,10 +11,13 @@ public sealed record SourceEntry
 {
     public SourceEntry(
         LogicalPath path,
-        SourceEntryKind kind,
+        FileSystemEntryKind kind,
         long length = 0,
         string? textContent = null,
-        string? contentFingerprint = null)
+        string? contentFingerprint = null,
+        DateTimeOffset? lastWriteTimeUtc = null,
+        LinkInfo? link = null,
+        SourceMetadata metadataFlags = SourceMetadata.None)
     {
         if (path.IsRoot)
         {
@@ -22,31 +26,56 @@ public sealed record SourceEntry
 
         ArgumentOutOfRangeException.ThrowIfNegative(length);
 
-        if (kind is SourceEntryKind.Directory && length != 0)
+        if (kind is not FileSystemEntryKind.File && length != 0)
         {
-            throw new ArgumentException("目录 entry 的 length 必须为 0。", nameof(length));
+            throw new ArgumentException("只有 File entry 可以具有非零 length。", nameof(length));
+        }
+
+        if ((kind is FileSystemEntryKind.Link) != (link is not null))
+        {
+            throw new ArgumentException("Link entry 必须且只有 Link entry 可以携带 LinkInfo。", nameof(link));
         }
 
         Path = path;
         Kind = kind;
         Length = length;
         TextContent = textContent;
+        LastWriteTimeUtc = lastWriteTimeUtc?.ToUniversalTime();
+        Link = link;
+        MetadataFlags = metadataFlags;
         ContentFingerprint = contentFingerprint ?? ComputeDefaultFingerprint();
     }
 
     public LogicalPath Path { get; }
 
-    public SourceEntryKind Kind { get; }
+    public FileSystemEntryKind Kind { get; }
 
     public long Length { get; }
 
     public string? TextContent { get; }
 
+    public DateTimeOffset? LastWriteTimeUtc { get; }
+
+    public LinkInfo? Link { get; }
+
+    public SourceMetadata MetadataFlags { get; }
+
     public string ContentFingerprint { get; }
 
     private string ComputeDefaultFingerprint()
     {
-        var canonical = $"{Path.Value}\n{Kind}\n{Length}\n{TextContent}";
+        var canonical = string.Join(
+            '\n',
+            Path.Value,
+            Kind,
+            Length,
+            LastWriteTimeUtc?.ToString("O") ?? string.Empty,
+            MetadataFlags,
+            Link?.Kind.ToString() ?? string.Empty,
+            Link?.Target ?? string.Empty,
+            Link?.TargetScope.ToString() ?? string.Empty,
+            Link?.IsDangling.ToString() ?? string.Empty,
+            TextContent ?? string.Empty);
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 }

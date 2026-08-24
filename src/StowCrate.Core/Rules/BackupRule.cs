@@ -1,3 +1,4 @@
+using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 
 namespace StowCrate.Core.Rules;
@@ -17,9 +18,13 @@ public sealed class BackupRule
 
     public string Pattern { get; }
 
-    public bool Matches(RelativePath path, SourceEntryKind entryKind, CaseSensitivity caseSensitivity)
+    public bool Matches(
+        RelativePath path,
+        FileSystemEntryKind entryKind,
+        CaseSensitivity caseSensitivity,
+        bool linkTargetsDirectory = false)
     {
-        return _globPattern.IsMatch(path, entryKind, caseSensitivity);
+        return _globPattern.IsMatch(path, entryKind, caseSensitivity, linkTargetsDirectory);
     }
 
     public override string ToString()

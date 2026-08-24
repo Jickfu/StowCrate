@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Text;
 using System.Text.RegularExpressions;
+using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 
 namespace StowCrate.Core.Rules;
@@ -60,7 +61,11 @@ internal sealed class GlobPattern
 
     public bool DirectoryOnly { get; }
 
-    public bool IsMatch(RelativePath path, SourceEntryKind entryKind, CaseSensitivity caseSensitivity)
+    public bool IsMatch(
+        RelativePath path,
+        FileSystemEntryKind entryKind,
+        CaseSensitivity caseSensitivity,
+        bool linkTargetsDirectory = false)
     {
         if (caseSensitivity is CaseSensitivity.Auto)
         {
@@ -73,12 +78,18 @@ internal sealed class GlobPattern
         }
 
         var regex = caseSensitivity is CaseSensitivity.Sensitive ? _sensitiveRegex : _insensitiveRegex;
-        if (regex.IsMatch(path.Value) && (!DirectoryOnly || entryKind is SourceEntryKind.Directory))
+        if (regex.IsMatch(path.Value) && (!DirectoryOnly || IsDirectoryLike(entryKind, linkTargetsDirectory)))
         {
             return true;
         }
 
         return path.GetAncestors().Any(ancestor => regex.IsMatch(ancestor.Value));
+    }
+
+    private static bool IsDirectoryLike(FileSystemEntryKind entryKind, bool linkTargetsDirectory)
+    {
+        return entryKind is FileSystemEntryKind.Directory
+            || (entryKind is FileSystemEntryKind.Link && linkTargetsDirectory);
     }
 
     public static string TrimPatternWhitespace(string value)

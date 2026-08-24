@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 using StowCrate.Core.Rules;
 
@@ -34,7 +35,8 @@ public sealed class BackupPlan
         IEnumerable<BackupRule>? globalRules = null,
         IEnumerable<BackupRule>? planRules = null,
         IEnumerable<ArchiveUnitDefinition>? archiveUnits = null,
-        RetentionPolicy? retentionPolicy = null)
+        RetentionPolicy? retentionPolicy = null,
+        LinkPolicy linkPolicy = LinkPolicy.Preserve)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         ArgumentNullException.ThrowIfNull(source);
@@ -45,6 +47,7 @@ public sealed class BackupPlan
         PlanRules = Freeze(planRules);
         ArchiveUnits = Freeze(archiveUnits);
         RetentionPolicy = retentionPolicy ?? RetentionPolicy.None;
+        LinkPolicy = linkPolicy;
     }
 
     public string Id { get; }
@@ -58,6 +61,8 @@ public sealed class BackupPlan
     public IReadOnlyList<ArchiveUnitDefinition> ArchiveUnits { get; }
 
     public RetentionPolicy RetentionPolicy { get; }
+
+    public LinkPolicy LinkPolicy { get; }
 
     private static ReadOnlyCollection<T> Freeze<T>(IEnumerable<T>? values)
     {

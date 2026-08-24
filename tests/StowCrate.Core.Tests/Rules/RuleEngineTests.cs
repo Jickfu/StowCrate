@@ -1,4 +1,5 @@
 using System.Text;
+using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 using StowCrate.Core.Rules;
 
@@ -70,7 +71,7 @@ public sealed class RuleEngineTests
     {
         var rule = new BackupRule(RuleAction.Exclude, pattern);
 
-        var matches = rule.Matches(new RelativePath(path), SourceEntryKind.File, CaseSensitivity.Sensitive);
+        var matches = rule.Matches(new RelativePath(path), FileSystemEntryKind.File, CaseSensitivity.Sensitive);
 
         Assert.Equal(expectedMatch, matches);
     }
@@ -115,11 +116,11 @@ public sealed class RuleEngineTests
 
         Assert.False(rule.Matches(
             new RelativePath("node_modules"),
-            SourceEntryKind.File,
+            FileSystemEntryKind.File,
             CaseSensitivity.Sensitive));
         Assert.True(rule.Matches(
             new RelativePath("node_modules"),
-            SourceEntryKind.Directory,
+            FileSystemEntryKind.Directory,
             CaseSensitivity.Sensitive));
     }
 
@@ -142,7 +143,7 @@ public sealed class RuleEngineTests
     {
         var rule = new BackupRule(RuleAction.Exclude, pattern);
 
-        Assert.True(rule.Matches(new RelativePath(path), SourceEntryKind.File, CaseSensitivity.Sensitive));
+        Assert.True(rule.Matches(new RelativePath(path), FileSystemEntryKind.File, CaseSensitivity.Sensitive));
     }
 
     private static EffectiveRuleSet Effective(RuleSet localRules)
@@ -152,6 +153,16 @@ public sealed class RuleEngineTests
 
     private static RuleAction Decide(EffectiveRuleSet ruleSet, string path)
     {
-        return ruleSet.Decide(new RelativePath(path), SourceEntryKind.File);
+        return ruleSet.Decide(new RelativePath(path), FileSystemEntryKind.File);
+    }
+
+    [Fact]
+    public void DirectoryPatternMatchesOnlyDirectoryTargetLinks()
+    {
+        var rule = new BackupRule(RuleAction.Exclude, "shared/");
+        var path = new RelativePath("shared");
+
+        Assert.True(rule.Matches(path, FileSystemEntryKind.Link, CaseSensitivity.Sensitive, linkTargetsDirectory: true));
+        Assert.False(rule.Matches(path, FileSystemEntryKind.Link, CaseSensitivity.Sensitive, linkTargetsDirectory: false));
     }
 }

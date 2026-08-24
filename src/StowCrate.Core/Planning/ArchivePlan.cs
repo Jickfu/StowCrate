@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 using StowCrate.Core.Rules;
 
@@ -7,9 +8,12 @@ namespace StowCrate.Core.Planning;
 public sealed record ArchiveEntry(
     LogicalPath SourcePath,
     RelativePath ArchivePath,
-    SourceEntryKind Kind,
+    FileSystemEntryKind Kind,
     long Length,
-    string SourceFingerprint);
+    string SourceFingerprint,
+    DateTimeOffset? LastWriteTimeUtc,
+    LinkInfo? Link,
+    SourceMetadata MetadataFlags);
 
 public sealed class PlannedArchive
 {

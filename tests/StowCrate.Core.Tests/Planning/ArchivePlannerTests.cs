@@ -1,3 +1,4 @@
+using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 using StowCrate.Core.Planning;
 using StowCrate.Core.Rules;
@@ -265,6 +266,55 @@ public sealed class ArchivePlannerTests
         Assert.Equal("keep.txt", entry.ArchivePath.Value);
     }
 
+    [Fact]
+    public void PreserveIncludesLinkWithoutTargetContents()
+    {
+        var source = new BackupSource("source", "A");
+        var snapshot = Snapshot(
+            source,
+            Directory("Project"),
+            File("Project/.backupignore", text: string.Empty),
+            Link("Project/shared", "../Shared"),
+            File("Shared/external.txt"));
+
+        var plan = SuccessfulPlan(new BackupPlan("plan", source), snapshot);
+
+        var entry = Assert.Single(Assert.Single(plan.Archives).Entries, item => item.Kind is FileSystemEntryKind.Link);
+        Assert.Equal("shared", entry.ArchivePath.Value);
+        Assert.Equal("../Shared", entry.Link!.Target);
+        Assert.DoesNotContain(Assert.Single(plan.Archives).Entries, item => item.ArchivePath.Value.Contains("external", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SkipRemovesLinkAndLinkTargetChangesFingerprint()
+    {
+        var source = new BackupSource("source", "A");
+        SourceSnapshot CreateSnapshot(string target) => Snapshot(
+            source,
+            Directory("Project"),
+            File("Project/.backupignore", text: string.Empty),
+            Link("Project/current", target));
+
+        var preserveV1 = SuccessfulPlan(new BackupPlan("plan", source), CreateSnapshot("releases/v1"));
+        var preserveV2 = SuccessfulPlan(new BackupPlan("plan", source), CreateSnapshot("releases/v2"));
+        var skip = SuccessfulPlan(new BackupPlan("plan", source, linkPolicy: LinkPolicy.Skip), CreateSnapshot("releases/v1"));
+
+        Assert.NotEqual(preserveV1.Fingerprint, preserveV2.Fingerprint);
+        Assert.DoesNotContain(Assert.Single(skip.Archives).Entries, item => item.Kind is FileSystemEntryKind.Link);
+    }
+
+    [Fact]
+    public void BackupIgnoreLinkIsRejectedByPlanningBoundaryToo()
+    {
+        var source = new BackupSource("source", "A");
+        var snapshot = Snapshot(source, Link("Project/.backupignore", "../../rules"));
+
+        var result = ArchivePlanner.CreatePlan(new BackupPlan("plan", source), snapshot);
+
+        Assert.False(result.IsSuccess);
+        Assert.Contains(result.Issues, issue => issue.Code == "INVALID_BACKUPIGNORE_ENTRY");
+    }
+
     private static ArchivePlan SuccessfulPlan(BackupPlan backupPlan, SourceSnapshot snapshot)
     {
         var result = ArchivePlanner.CreatePlan(backupPlan, snapshot);
@@ -284,11 +334,19 @@ public sealed class ArchivePlannerTests
 
     private static SourceEntry Directory(string path)
     {
-        return new SourceEntry(new LogicalPath(path), SourceEntryKind.Directory);
+        return new SourceEntry(new LogicalPath(path), FileSystemEntryKind.Directory);
     }
 
     private static SourceEntry File(string path, long length = 0, string? text = null)
     {
-        return new SourceEntry(new LogicalPath(path), SourceEntryKind.File, length, text);
+        return new SourceEntry(new LogicalPath(path), FileSystemEntryKind.File, length, text);
+    }
+
+    private static SourceEntry Link(string path, string target)
+    {
+        return new SourceEntry(
+            new LogicalPath(path),
+            FileSystemEntryKind.Link,
+            link: new LinkInfo(LinkKind.SymbolicLink, target, LinkTargetScope.Unresolved, isDangling: true));
     }
 }

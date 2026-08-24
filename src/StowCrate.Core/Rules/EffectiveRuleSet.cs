@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Security.Cryptography;
 using System.Text;
+using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 
 namespace StowCrate.Core.Rules;
@@ -46,13 +47,13 @@ public sealed class EffectiveRuleSet
 
     public string Fingerprint { get; }
 
-    public RuleAction Decide(RelativePath path, SourceEntryKind entryKind)
+    public RuleAction Decide(RelativePath path, FileSystemEntryKind entryKind, bool linkTargetsDirectory = false)
     {
         var decision = Mode is RuleMode.Exclude ? RuleAction.Include : RuleAction.Exclude;
 
         foreach (var rule in OrderedRules)
         {
-            if (rule.Matches(path, entryKind, ResolvedCaseSensitivity))
+            if (rule.Matches(path, entryKind, ResolvedCaseSensitivity, linkTargetsDirectory))
             {
                 decision = rule.Action;
             }

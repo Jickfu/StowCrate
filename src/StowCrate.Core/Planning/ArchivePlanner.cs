@@ -1,3 +1,4 @@
+using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 using StowCrate.Core.Rules;
 
@@ -20,6 +21,15 @@ public static class ArchivePlanner
                 "SOURCE_MISMATCH",
                 $"BackupPlan source '{backupPlan.Source.Id}' 与 snapshot source '{sourceSnapshot.Source.Id}' 不一致。"));
             return PlanningResult.Failure(issues);
+        }
+
+        foreach (var invalidControlEntry in sourceSnapshot.Entries.Where(
+                     entry => IsBackupIgnore(entry.Path) && entry.Kind is not FileSystemEntryKind.File))
+        {
+            issues.Add(new PlanningIssue(
+                "INVALID_BACKUPIGNORE_ENTRY",
+                ".backupignore 必须是真实 regular file，不能是 Link、Directory 或 Special。",
+                invalidControlEntry.Path));
         }
 
         var candidates = DiscoverArchiveUnits(backupPlan, sourceSnapshot, issues);
@@ -68,7 +78,7 @@ public static class ArchivePlanner
     {
         var candidates = new Dictionary<LogicalPath, ArchiveUnitCandidate>();
         var controlFiles = sourceSnapshot.Entries
-            .Where(entry => entry.Kind is SourceEntryKind.File && IsBackupIgnore(entry.Path))
+            .Where(entry => entry.Kind is FileSystemEntryKind.File && IsBackupIgnore(entry.Path))
             .ToArray();
 
         foreach (var controlFile in controlFiles)
@@ -111,7 +121,7 @@ public static class ArchivePlanner
             }
 
             if (!definition.Root.IsRoot && !sourceSnapshot.Entries.Any(
-                    entry => entry.Path == definition.Root && entry.Kind is SourceEntryKind.Directory))
+                    entry => entry.Path == definition.Root && entry.Kind is FileSystemEntryKind.Directory))
             {
                 issues.Add(new PlanningIssue(
                     "ARCHIVE_UNIT_NOT_FOUND",
@@ -212,12 +222,21 @@ public static class ArchivePlanner
                 continue;
             }
 
+            if (sourceEntry.Kind is FileSystemEntryKind.Special
+                || (sourceEntry.Kind is FileSystemEntryKind.Link && backupPlan.LinkPolicy is LinkPolicy.Skip))
+            {
+                continue;
+            }
+
             var archivePath = sourceEntry.Path.RelativeTo(unit.Root);
             var isOwnControlFile = unit.RuleSource is RuleSource.FileManaged
                 && archivePath.Value.Equals(BackupIgnoreFileName, StringComparison.Ordinal);
             var action = isOwnControlFile
                 ? RuleAction.Include
-                : unit.EffectiveRules.Decide(archivePath, sourceEntry.Kind);
+                : unit.EffectiveRules.Decide(
+                    archivePath,
+                    sourceEntry.Kind,
+                    sourceEntry.MetadataFlags.HasFlag(SourceMetadata.DirectoryTarget));
             if (action is RuleAction.Exclude)
             {
                 continue;
@@ -228,7 +247,10 @@ public static class ArchivePlanner
                 archivePath,
                 sourceEntry.Kind,
                 sourceEntry.Length,
-                sourceEntry.ContentFingerprint));
+                sourceEntry.ContentFingerprint,
+                sourceEntry.LastWriteTimeUtc,
+                sourceEntry.Link,
+                sourceEntry.MetadataFlags));
         }
 
         var outputPath = unit.Root.IsRoot
@@ -244,6 +266,7 @@ public static class ArchivePlanner
                 $"unit:{unit.Root.Value}",
                 $"rule-source:{unit.RuleSource}",
                 $"rules:{unit.EffectiveRules.Fingerprint}",
+                $"link-policy:{backupPlan.LinkPolicy}",
             }
             .Concat(descendantBoundaries.Select(boundary => $"boundary:{boundary}"))
             .Concat(entries
