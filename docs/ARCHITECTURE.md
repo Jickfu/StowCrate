@@ -88,6 +88,8 @@ Plan authority、registration path、local binding 与 scheduler installation st
 
 Portable identity 使用强类型 UUID v4 `PlanId`、`SourceId`、`ArchiveUnitId`、`ExternalSourceId`。Application 将 portable declaration 与当前 DeviceId 下的 Local Binding 合成为 `ResolvedPlanSnapshot`；Core 不读取 DeviceId、hostname、环境变量、registration path 或数据库键。
 
+`ResolvedPlanSnapshot` 携带 authoritative 的 pinned Global Rules Snapshot，并为 Scanner 提供已验证的 local binding。Global Rule Library 属于 Application/Infrastructure 的 authoring facility，运行时不得 live-reference 本机 library。扫描后，Application 再把 Archive Unit declarations、物理 discovery、`.backupignore` metadata/rules 与本机 registration 合成为 resolved units。Declared/Discovered origin、Plan authority 和规则文件物理路径不进入 Planning Kernel。
+
 ```text
 Portable Configuration              Device Local State
 PlanId / SourceId                    DeviceId / Registration
@@ -137,13 +139,14 @@ BackupPlan
 Milestone 2 的 Scanner 按 [`FILESYSTEM.md`](FILESYSTEM.md) 将物理对象转换为纯数据快照。Scanner 永不跟随链接，也不根据 `LinkPolicy` 改变枚举；`Preserve` 或 `Skip` 由 Planning Kernel 决定。扫描问题与快照并列返回，任何跳过必须可见。
 
 1. 解析设备路径映射并按目标平台规则规范化路径；验证 `SourceRoot`、`CurrentRoot`、`HistoryRoot` 两两不相等且不存在任何祖先/子孙关系，并验证 staging 不会形成递归输入。
-2. 发现 UI 管理或 `.backupignore` 管理的 Archive Unit。
-3. 构建 Archive Unit 树；把所有直接子单元注册为父单元的停止边界。
-4. 分别合成每个单元的全局、方案和局部规则。
-5. 遍历单元内容；先检查边界，再匹配规则。边界优先于普通 include/exclude。
-6. 解析外部源映射和归档内逻辑路径，检测路径冲突。
-7. 生成规范排序的 entries、警告、预估与变更指纹。
-8. 只有经过用户确认或无头策略允许的计划才进入执行阶段。
+2. 独立发现真实枚举树中的全部 `.backupignore` FILE_MANAGED Archive Unit，并读取 authoritative metadata/rules；discovery 不依赖 declaration 或过滤规则。
+3. 在 Application resolution 阶段合并 declaration、discovery 与本机 registration；identity/source/path/rule-source 冲突、缺少 FILE_MANAGED 文件或未确认 relocation 时以 PlanNotReady/Fatal 停止。
+4. 构建 Archive Unit 树；把所有直接子单元注册为父单元的停止边界。
+5. 分别合成每个单元的 pinned global、方案和局部规则。
+6. 遍历单元内容；先检查边界，再匹配规则。边界优先于普通 include/exclude。
+7. 解析外部源映射和归档内逻辑路径，检测路径冲突。
+8. 生成规范排序的 entries、警告、预估与变更指纹。
+9. 只有经过用户确认或无头策略允许的计划才进入执行阶段。
 
 路径匹配器必须独立测试以下情况：不同分隔符、根路径、`!`、`*`、`**`、尾随斜杠、Unicode、大小写敏感文件系统和嵌套边界。Scanner 实现时还必须独立测试符号链接循环及逃逸 Source 的链接。
 
@@ -193,7 +196,9 @@ cache.db   — 文件状态、哈希、扫描缓存和平台游标（可重建�
 
 只有成功发布 Current 后，才能在 `config.db` 事务中把对应 ArchiveVersion 标记为 Published 并更新该单元的 CurrentVersion 引用。随后才能刷新 `cache.db`；cache 永远不能领先 durable state。失败、取消、stale Plan revision、发布前状态或 Incomplete Observation 均不得推进 baseline。USN/FSEvents/inotify 只减少扫描与 hash 范围，检测结果仍能回退到便携算法。
 
-Plan authority 和 `*.backupplan` 的物理存放路径不属于 SelectionFingerprint 或 ArchiveSpecFingerprint。Managed 与 File-backed 解析出相同语义 Plan Snapshot 时，切换 authority 或移动注册文件不得触发 rebuild。File-backed 运行捕获 PlanSemanticFingerprint，Publish 前重新加载并比较；变化时按 PlanChangedDuringRun 处理。
+Plan authority、`PlanId`、`ArchiveUnitId`、`ExternalSourceId`、`DeviceId`、Global Rule Library provenance 和 `*.backupplan` 的物理存放路径不属于 SelectionFingerprint 或 ArchiveSpecFingerprint；`SourceId`、Archive Unit logical path 与实际选择/映射语义仍属于 SelectionFingerprint。Managed 与 File-backed 解析出相同语义 Plan Snapshot 时，切换 authority 或移动注册文件不得触发 rebuild。
+
+每次运行捕获 `ExecutionSemanticSnapshot`：包含适用的 PlanRevision、PlanSemanticFingerprint 和所有已解析外部规则源 fingerprint。Publish 前重新读取并比较；`*.backupplan` 或任一 FILE_MANAGED `.backupignore` 变化时均按 PlanChangedDuringRun 处理。
 
 ## 7. SQLite 与配置恢复
 

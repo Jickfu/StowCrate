@@ -47,10 +47,14 @@ Committed Baseline 是最近一个已验证、成功发布为 Current，并完�
 表示条目为何被选择，至少包含：
 
 - rule/scanner/fingerprint semantics version；
-- Global、Plan、Local Rules、mode 与 resolved case sensitivity；
+- `SourceId` 与 Archive Unit 的 Source-relative logical path；
+- authoritative、concrete 的 pinned Global Rules Snapshot，以及 Plan Rules、Local Rules、mode、case policy 与 resolved case sensitivity；
 - LinkPolicy、Archive Boundary Tree；
-- External Source Mapping；
-- Archive Unit 的稳定逻辑 identity/path。
+- External Source 的逻辑 mapping、archive destination 与相关选择语义。
+
+`PlanId`、`ArchiveUnitId`、`ExternalSourceId`、`DeviceId`、数据库 ID、authority、registration path，以及 Global Rule Library 的 ID、名称、revision/provenance 都不进入 SelectionFingerprint。它们是 identity、运行命名空间或 authoring metadata，不是归档内容选择语义。`PlanId + ArchiveUnitId` 仍是 baseline key；更换该 key 会因为没有对应 baseline 得到 `FirstBackup`，不需要把 identity 再编码进 SelectionFingerprint。
+
+Archive Unit logical path 仍然进入 SelectionFingerprint：即使 identity 保持不变，路径变化也会改变来源与 manifest/Current 的逻辑结构。External Source 同理，进入 fingerprint 的是逻辑映射与归档目标，而不是 `ExternalSourceId` 自身。FILE_MANAGED 的 `@id` 文本虽然不作为独立 identity 字段进入 SelectionFingerprint，但 `.backupignore` 是本单元的保留归档内容；修改其 bytes 会自然改变 EntrySetFingerprint。
 
 ### ArchiveSpecFingerprint
 
@@ -63,7 +67,7 @@ Committed Baseline 是最近一个已验证、成功发布为 Current，并完�
 
 调度、History retention、UI 状态、日志级别、CurrentRoot 和 HistoryRoot 不进入 ArchiveSpecFingerprint。输出根变化产生 Storage Relocation，而不是 Archive Rebuild。应用版本本身不进入 fingerprint；只有行为 semantics/schema version 变化才使 baseline 失效。
 
-PlanAuthority、File-backed registration path 与 Managed/File-backed 转换也不进入 fingerprint。两种 authority 解析出的 Plan Snapshot 语义相同时不得 rebuild；File-backed 文档在运行中变化则触发 PlanChangedDuringRun。
+PlanAuthority、File-backed registration path 与 Managed/File-backed 转换也不进入 fingerprint。两种 authority 解析出的 Plan Snapshot 语义相同时不得 rebuild；File-backed 文档或已解析的外部规则源在运行中变化则触发 PlanChangedDuringRun。
 
 `InputFingerprint = SHA256(EntrySetFingerprint + SelectionFingerprint)`。如需要聚合 rebuild identity，则由 InputFingerprint 与 ArchiveSpecFingerprint 组合。领域 API 必须使用强类型 fingerprint，不能以可互换的裸 `string` 表达。
 
@@ -131,7 +135,7 @@ Scan / Candidate / Change Decision
   → Write .partial
   → Archive Test + Integrity Verification
   → Persist and verify previous Current as History（启用时）
-  → Revalidate PlanRevision + PlanSemanticFingerprint
+  → Revalidate ExecutionSemanticSnapshot
   → Atomic Publish Current
   → Durable ArchiveVersion / CurrentVersion commit in config.db
   → Baseline committed
@@ -140,7 +144,9 @@ Scan / Candidate / Change Decision
 
 概念状态为 `Prepared → Verified → Published → Superseded`，失败可进入 `Failed`；只有 Published 可以作为 baseline。这些是领域/事务语义，不预先规定 SQLite schema。
 
-运行开始时捕获 PlanRevision 与 PlanSemanticFingerprint，发布前再次检查。Plan 已变化时返回 PlanChangedDuringRun，默认不发布、不提交 baseline。执行层还必须按 `FILESYSTEM.md` 重新验证关键 path/kind/metadata，防止 TOCTOU 类型替换。
+运行开始时捕获 `ExecutionSemanticSnapshot`，发布前再次检查。它至少包含 Managed Plan 的 PlanRevision（适用时）、PlanSemanticFingerprint，以及所有已解析外部规则源的 fingerprint。FILE_MANAGED 的 `.backupignore` 必须纳入外部规则源 fingerprint；从规则解析/扫描到发布前只要文件发生变化，即按 PlanChangedDuringRun 处理，默认不发布、不提交 baseline。这里的 reason 覆盖整个已解析执行配置，不只覆盖 `*.backupplan`。
+
+外部规则源 fingerprint 必须基于运行实际读取的文件 bytes 和版本化解析语义确定，不能只依赖 mtime。即使一次变化解析后得到相同规则，也不得让本轮以过期的规则源观察结果发布。执行层还必须按 `FILESYSTEM.md` 重新验证关键 path/kind/metadata，防止 TOCTOU 类型替换。
 
 `cache.db` 永远不能领先 Current 和 `config.db` durable state。cache 丢失或落后只导致重新扫描/hash；不能导致 baseline、Current 或 History 丢失。
 
@@ -166,14 +172,14 @@ Change Detector 位于 Core 或 Application 的纯逻辑边界，只接收 Candi
 
 ## 10. 规范测试矩阵
 
-至少覆盖：无 baseline、完全一致、增删文件、size/mtime/link target、Rules/Boundary/LinkPolicy/External Source、格式/压缩/secret revision/manifest schema、非归档设置不触发、输入顺序稳定、semantics version、invalid baseline、Standard/Strict、cache 丢失、partial unit success、失败/取消/发布前不提交、stale plan、Incomplete Observation 阻止与 IntentionalSkip 允许。
+至少覆盖：无 baseline、完全一致、增删文件、size/mtime/link target、Rules/Boundary/LinkPolicy/External Source、格式/压缩/secret revision/manifest schema、非归档设置不触发、输入顺序稳定、semantics version、invalid baseline、Standard/Strict、cache 丢失、partial unit success、失败/取消/发布前不提交、stale plan、运行中 `.backupignore` 变化、identity-only 变化不改变 SelectionFingerprint、logical path 变化会改变 SelectionFingerprint、Incomplete Observation 阻止与 IntentionalSkip 允许。
 
 ## 11. 与现有仓库的差异和迁移约束
 
 本建议稿与现有规范没有不可兼容的产品冲突，但存在以下实现或阶段差异；本文不得被理解为这些能力已经完成：
 
 1. `ARCHITECTURE.md` 第 13 节旧的阶段建议把 SQLite/归档适配放在 Change Detection 实现前。当前只调整**设计顺序**为 Change Detection → Backup Plan → Persistence；不提前实现数据库，也不宣称执行链已完成。
-2. 当前 Core 的 Archive Unit 主要以逻辑 root 表达，尚无正式、稳定、可持久化的 `ArchiveUnitId`。Baseline identity 所需 ID 必须在 Backup Plan v1 设计中解决，不能临时用数据库行号或物理绝对路径代替。
+2. 当前 Core 的 Archive Unit 主要以逻辑 root 表达，尚未实现正式、稳定、可持久化的 `ArchiveUnitId`。Backup Plan v1 已确定该 identity；实现时不能临时用数据库行号或物理绝对路径代替。
 3. 当前 `ArchivePlan.Fingerprint` 是一个聚合字符串，尚未拆成强类型 EntrySet/Selection/ArchiveSpec/Input fingerprint。未来实现需提供显式迁移与 fingerprint format version，不能把现有值误当 v1 durable baseline。
 4. `FILESYSTEM.md` 已允许 Warning 后继续规划；本文进一步区分 IntentionalSkip 与 IncompleteObservation，用于决定能否发布。这是发布层收紧，不改变 Scanner 的 no-follow 或 issue severity 事实。
 5. 当前仓库尚未实现 External Source、ArchiveSpec、Secret revision、ArchiveVersion、Current 发布或 Reconciliation。本文只定义这些边界，不得为满足文档而引入临时 SQLite schema。

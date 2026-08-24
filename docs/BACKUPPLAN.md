@@ -69,7 +69,7 @@ Authority 是 Application/Infrastructure 的配置管理概念，不是 Core Bac
 
 ## 5. Portable Configuration 与 Local Runtime State
 
-文档保存 portable desired configuration，例如：Plan name、logical sources、Archive Units、Plan/UI-managed rules、ArchiveSpec、LinkPolicy、Change Detection mode、History policy、schedule intent 与 External Source definitions。
+文档保存 portable desired configuration，例如：Plan name、logical sources、Archive Units、pinned Global Rules Snapshot、Plan/UI-managed rules、ArchiveSpec、LinkPolicy、Change Detection mode、History policy、schedule intent 与 External Source definitions。
 
 以下永不进入文档：Committed Baseline、ArchiveVersion records、CurrentVersionId、last run/success、cached hashes、scan/journal cursor、scheduler task ID 和 secret values。
 
@@ -77,27 +77,35 @@ File-backed 不等于无状态执行。持续执行仍需要本机 registration�
 
 ## 6. 统一解析边界
 
-Managed 和 File-backed 最终都解析为不可变、已验证的统一 Plan Snapshot：
+Managed 和 File-backed 都先解析为不可变、已验证的统一 Plan Snapshot，再经过相同的扫描与 Archive Unit resolution。Application 负责把 authoritative declaration、物理 discovery、FILE_MANAGED `.backupignore` metadata/rules 与当前设备的 local registration 合并为 resolved units：
 
 ```text
 Managed repository ─────────┐
-                            ├─→ ResolvedPlanSnapshot → Scanner / Planner / Change Detector / Executor
-Plan document loader ───────┘
+                            ├─→ declaration + local binding → ResolvedPlanSnapshot → Scanner
+Plan document loader ───────┘                                                    │
+                                                                                 ▼
+Device local registration ────────┐                              SourceSnapshot / physical discovery
+                                  ├─→ Archive Unit resolution ←─ .backupignore metadata/rules
+authoritative declaration ────────┘                    │
+                                                       ▼
+                                            Resolved ArchiveUnits → Planner / Change Detector / Executor
 ```
 
-Core `BackupPlan` 不包含 `IsFileBacked`、registration path 或 SQLite identity。Scanner、Planning Kernel、Change Detector 和 Archiving 不感知配置来源。
+Core `BackupPlan` 不包含 `IsFileBacked`、registration path、SQLite identity 或 Declared/Discovered origin。Planning Kernel、Change Detector 和 Archiving 不感知配置来源；Scanner 只报告物理事实，不决定 declaration authority。
 
-Managed 运行捕获 Revision + PlanSemanticFingerprint；File-backed 运行至少捕获 PlanSemanticFingerprint。Publish 前必须重新验证当前 semantic identity；变化时返回 PlanChangedDuringRun，不发布 Current、不推进 baseline。
+每次运行捕获 `ExecutionSemanticSnapshot`。它包含 Managed 的 Revision（适用时）、PlanSemanticFingerprint，以及所有本轮解析的外部规则源 fingerprint。Publish 前必须重新读取并验证；`*.backupplan` 或任一 FILE_MANAGED `.backupignore` 变化时返回 PlanChangedDuringRun，不发布 Current、不推进 baseline。外部规则源 fingerprint 基于实际读取的文件 bytes 与版本化解析语义，不能只比较 mtime。
 
 ## 7. Fingerprint 与文件移动
 
-PlanAuthority、Import/Register 方式、registration path 和 authority conversion 不属于备份语义，因此不进入 SelectionFingerprint 或 ArchiveSpecFingerprint。
+PlanAuthority、Import/Register 方式、registration path、authority conversion、`PlanId`、`ArchiveUnitId`、`ExternalSourceId`、`DeviceId` 与 Global Rule Library provenance 不属于内容选择语义，因此不进入 SelectionFingerprint 或 ArchiveSpecFingerprint。`PlanId + ArchiveUnitId` 仍用于 baseline identity；新 identity 没有 baseline 时自然得到 FirstBackup。
+
+`SourceId`、Archive Unit Source-relative logical path、pinned Global Rules Snapshot、Plan/Local Rules、Boundary、LinkPolicy，以及 External Source 的逻辑 mapping/archive destination 属于 SelectionFingerprint。identity 与逻辑路径必须分开处理：明确迁移 identity 不代表内容变化，而 logical path 变化仍可能改变 manifest 与 Current 逻辑结构，必须触发 rebuild。
 
 - authority 切换前后 Plan Snapshot 语义相同：不 rebuild；
 - `E:\configs\Code.backupplan` 移到其他位置但内容语义相同：不 rebuild；
 - 仅 JSON formatting/property order 变化：PlanSemanticFingerprint 不变；
 - 文档内规则、ArchiveSpec 等语义变化：对应 fingerprint 变化；
-- 运行期间文件语义变化：PlanChangedDuringRun。
+- 运行期间 Plan 文档或已解析 `.backupignore` 变化：PlanChangedDuringRun。
 
 ## 8. 灾难恢复
 
@@ -123,7 +131,7 @@ Name、LogicalPath、RelativePath、physical/absolute path、realpath、文件�
 - `ArchiveUnitId` 表示逻辑 Crate，与其当前 Source-relative path 无关；
 - `ExternalSourceId` 表示逻辑外部输入，与本机实际文件位置无关。
 
-SourceId 变化属于来源语义变化并参与 SelectionFingerprint。ArchiveUnitId 当前是否直接进入 SelectionFingerprint 与现有 `CHANGE-DETECTION.md` 存在差异，按第 15 节处理。
+SourceId 变化属于来源语义变化并参与 SelectionFingerprint。ArchiveUnitId 与 ExternalSourceId 只作为 identity/manifest/version/baseline reference，不直接进入 SelectionFingerprint；对应 logical path、mapping、archive destination 与其他实际选择语义仍然进入。
 
 ## 10. ID 生命周期
 
@@ -151,7 +159,7 @@ Save As 只是同一 Plan Document 的物理副本，不能把两个相同 PlanI
 
 ## 11. Portable Configuration 与 Device Local Binding
 
-Portable Configuration 描述可 Git 管理、Import/Export 和跨设备复用的 desired configuration，包括 portable IDs、显示名、逻辑路径、Archive Units、规则、ArchiveSpec、LinkPolicy、Change Detection mode、History policy、schedule intent 与 External Source declaration。
+Portable Configuration 描述可 Git 管理、Import/Export 和跨设备复用的 desired configuration，包括 portable IDs、显示名、逻辑路径、Archive Units、pinned Global Rules Snapshot、其他规则、ArchiveSpec、LinkPolicy、Change Detection mode、History policy、schedule intent 与 External Source declaration。
 
 Device Local Binding 描述本机如何解析这些逻辑对象，包括：
 
@@ -193,38 +201,102 @@ v1 不支持 `${MY_CODE}`、`%APPDATA%`、shell expansion、命令替换、任�
 
 Binding 或文档物理位置不进入 archive semantic fingerprint。SourceRoot 改变后必须重新扫描，真实数据差异通过 EntrySetFingerprint 体现；CurrentRoot/HistoryRoot 改变产生 Storage Relocation，不伪装为 rebuild。
 
-## 14. FILE_MANAGED Archive Unit Identity
+## 14. Global Rules v1：Pinned Snapshot
 
-UI_MANAGED ArchiveUnitId 由 authoritative Managed/File-backed plan configuration 保存。FILE_MANAGED Archive Unit 的 `.backupignore` 可以使用可选 `@id <uuid-v4>` 声明其 portable ArchiveUnitId；完整语法见 `BACKUPIGNORE.md`。
+Backup Plan v1 的 Global Rules 必须是 concrete、authoritative 的 **pinned snapshot**，不得是运行时解析本机 Global Rule Library 的 live reference：
 
-- `.backupignore` 为空时仍合法；`@id` 不是必填；
-- StowCrate 不得为了生成 identity 自动修改用户文件或污染 Git working tree；
-- 用户主动执行“写入稳定 ID”操作时才可修改文件，并必须预览/确认；
-- 没有 `@id` 的自动发现单元可在本机 registration 中生成并记录 ArchiveUnitId；路径改变默认视为旧单元删除 + 新单元创建；
-- 用户可以显式确认 rename/move 并迁移 identity；不得根据 inode、FileId、realpath 或内容 hash 自动猜测；
-- portable plan 已声明 ArchiveUnitId 且 `.backupignore` 也有 `@id` 时，两者必须相同；不同则 IdentityConflict/Fatal；
-- 同一 Plan 中重复的 ArchiveUnitId 或 ExternalSourceId 是 Fatal validation error。
+```text
+Global Rule Library revision N
+  → user explicitly Apply / Update
+  → Pinned Global Rules Snapshot in Plan
+  → ResolvedPlanSnapshot
+```
 
-`@id` 只标识当前 `.backupignore` 所在 Archive Unit，不声明 child identity，也不改变 RuleMode/Rules。它属于文档 metadata；修改该行会改变被归档 `.backupignore` 文件内容，但 identity 本身是否直接触发 SelectionFingerprint 仍受第 15 节现有规范约束。
+Global Rule Library 可以作为跨 Plan 的 authoring/reuse facility，保存可维护的模板。Library 后续变化不得自动改变既有 Plan；用户显式 Apply/Update 后才替换 snapshot，并按正常配置变更重新预览和执行。这样同一 File-backed 文档在不同设备、Git revision 或灾难恢复场景中不依赖本机隐式状态。
 
-## 15. 与现有正式规范的差异
+Plan 可以携带 GlobalRuleSet name、ID、revision 等 optional provenance metadata，用于显示来源和提示可用更新，但：
 
-1. **`.backupignore v1` Directive 集合变化**：现有规范此前只允许 `@version/@mode/@case`，未知 directive fatal。本次根据明确决定加入可选 `@id`，并在 `BACKUPIGNORE.md` 记录演进。当前 parser 尚未实现 `@id`，本轮禁止修改业务代码；实现前仓库存在已知规范/代码差距。
-2. **ArchiveUnitId 与 SelectionFingerprint**：`CHANGE-DETECTION.md` 当前要求 Archive Unit 稳定 identity/path 进入 SelectionFingerprint；设计稿建议 ArchiveUnitId 只作为 manifest/version/baseline key，不直接触发 archive bytes rebuild。两者有实质差异，本次不覆盖 Change Detection：现行正式规则仍是 identity 参与 SelectionFingerprint，等待维护者后续明确。
-3. **Baseline key 与 DeviceId**：Change Detection 将 portable baseline identity 写为 `PlanId + ArchiveUnitId`；本设计加入 DeviceId，但仅作为本机 registration/binding/runtime namespace，不替换 portable unit key，因此不构成覆盖。
-4. **路径表达位置收紧**：PRODUCT 先前只说计划采用逻辑源和分平台映射并允许 `${HOME}`，未明确映射是否存入 portable document。本规范将 physical mapping 固定为 Device Local Binding；已同步 PRODUCT/ARCHITECTURE。
-5. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无 ExternalSource identity、DeviceId、Local Binding 或 `@id` parser。本规范不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
+- concrete rule action、pattern 与顺序才是 authoritative execution input；
+- provenance 不存在或目标设备没有对应 Library 时，Plan 仍可完整执行；
+- provenance 的 rename、revision label 或其他 metadata 不进入 SelectionFingerprint；
+- 只有 concrete snapshot 或 rule semantics version 变化才改变 SelectionFingerprint；
+- Managed 与 File-backed 使用完全相同的 snapshot 语义，Planning Kernel 不感知 Library。
 
-## 16. 当前未决顺序
+本节只确定领域/文档语义，不固定 JSON 字段、Library 持久化 schema 或更新 UI。
 
-Identity 与 Portable Path/Local Binding P0 已确认。JSON Schema 前继续按以下顺序解决：
+## 15. Archive Unit Declaration 与 FILE_MANAGED Discovery
 
-1. Global Rules 的 snapshot/reference 语义；
-2. FILE_MANAGED `.backupignore` 与 Backup Plan declaration 的完整规则/发现关系（identity 部分已确认）；
-3. Secret Reference / Encryption configuration；
-4. Schedule portability；
-5. History / output 配置的可移植边界；
-6. Schema compatibility 与 unknown fields；
-7. Import identity conflict / merge semantics。
+### 15.1 Declaration 与 Discovery 的职责
 
-ArchiveSpec override 与 External Source 的完整行为仍需设计，但不得提前固化 JSON 字段。
+Archive Unit declaration 是 portable desired configuration；discovery 是对 Source 真实枚举树的观察。二者不得混为一体：
+
+- 目录中存在真实 regular `.backupignore` 就声明一个 FILE_MANAGED Archive Unit；Plan 是否列出它不影响 discovery；
+- declaration 为一个已存在/应存在的 Archive Unit 关联 ArchiveUnitId、SourceId、expected logical path、RuleSource 与可选 non-rule portable per-unit settings；
+- `UI_MANAGED` declaration 自己携带完整 LocalRuleSet；
+- `FILE_MANAGED` declaration 禁止携带 Local RuleMode、CasePolicy 或 Rules，这些只从 `.backupignore` 解析；
+- 未 declaration 的 FILE_MANAGED unit 可以正常备份并使用 plan-level defaults，但 v1 不允许 portable per-unit override；要设置 override，必须先加入 declaration。
+
+概念模型只约束领域关系，不固定 JSON 字段：
+
+```text
+ArchiveUnitDeclaration
+  ArchiveUnitId
+  SourceId
+  Path
+  RuleSource = UI_MANAGED | FILE_MANAGED
+  LocalRuleSet?        # required for UI_MANAGED; forbidden for FILE_MANAGED
+  PortableOverrides?  # requires declaration
+```
+
+`Declared`/`Discovered` 只描述 Application resolution 的来源，不属于 Core backup semantics。Application 产生统一的 Resolved ArchiveUnit 后，Planning Kernel 不感知 origin。
+
+### 15.2 FILE_MANAGED resolution matrix
+
+| `.backupignore @id` | matching declaration | 结果 |
+|---|---|---|
+| 有 | 有 | 两者 ID 与 path 都匹配时正常解析；任一 identity 冲突为 Fatal |
+| 无 | 有 | declaration 提供 portable ArchiveUnitId；不要求也不得自动写入 `@id` |
+| 有 | 无 | 使用 `@id` 作为 ArchiveUnitId，应用 plan-level defaults |
+| 无 | 无 | 本机 registration 按 SourceId + RelativePath 复用或生成 ArchiveUnitId；该 ID 只在当前设备稳定 |
+
+identity resolution 的查找顺序是：`@id` → explicit declaration → local registration by `SourceId + RelativePath` → generate new local ArchiveUnitId。该顺序只用于寻找 identity，后一步不能覆盖前一步；多个显式来源同时存在时必须相容。
+
+没有 `@id` 和 declaration 的单元发生 path rename/move 时，默认视为旧单元删除 + 新单元发现。不得依据 inode、FileId、realpath、内容 hash 或相似性自动接续；用户显式确认 identity migration 后才可保持原 ID。StowCrate 也不得为了生成 identity 自动修改 `.backupignore` 或污染 Git working tree；只有用户主动发起、预览并确认“写入稳定 ID”时才允许。
+
+### 15.3 安全失败条件
+
+- `.backupignore @id = A` 而同 path declaration 的 ArchiveUnitId = B：`IdentityConflict` / Fatal，任何一方都不能静默覆盖另一方；
+- 同一 Plan 的不同 path 解析出相同 ArchiveUnitId：`DuplicateArchiveUnitIdentity` / Fatal；ExternalSourceId 重复同样 Fatal；
+- declaration 声明 ArchiveUnitId = X、Path = OldName，但 discovery 在 NewName 找到 `@id X`：`ArchiveUnitRelocated` + `PlanNotReady`，不得自动跟随、执行或修改 Managed/File-backed configuration；用户确认更新 path 后才可继续；
+- FILE_MANAGED declaration 的 path 不存在真实 regular `.backupignore`：`MissingFileManagedRuleSource` + `PlanNotReady` / Fatal，不得退化为 UI_MANAGED 或无 local rules；
+- UI_MANAGED declaration root 同时存在 `.backupignore`：`RuleSourceConflict` / Fatal，不得选择任一方优先；
+- `.backupignore` 不是 regular file、不可读或解析失败：继续遵守 `FILESYSTEM.md` / `BACKUPIGNORE.md` 的 Fatal 语义。
+
+### 15.4 Rule resolution 与运行一致性
+
+Application 对 FILE_MANAGED unit 读取 `.backupignore` 的 ArchiveUnitId?、RuleMode、CasePolicy 与 Rules，和 pinned Global Rules Snapshot、Plan Rules、Boundary、LinkPolicy 等一起生成 Resolved ArchiveUnit。最终规则顺序保持：
+
+```text
+Pinned Global Rules Snapshot → Plan Rules → .backupignore Local Rules
+```
+
+解析时必须把每个 `.backupignore` 纳入 `ExecutionSemanticSnapshot`，Publish 前重新验证。运行中变化时按 PlanChangedDuringRun 安全失败，不发布、不推进 baseline；不能用本轮早先解析的规则完成一次语义已经漂移的发布。
+
+## 16. 与实现现状的差异和迁移约束
+
+1. **`.backupignore v1` Directive 集合变化**：规范最初只允许 `@version/@mode/@case`；现在已正式加入可选 `@id`。当前 parser 尚未实现 `@id`，后续业务实现必须同步 parser、领域返回类型和兼容性测试。
+2. **Fingerprint 强类型与字段**：ArchiveUnitId/ExternalSourceId 已正式排除于 SelectionFingerprint，logical source/path/mapping 仍包含；当前 Core 尚未实现这些强类型 fingerprint，不得把旧聚合 string 当作 v1 durable baseline。
+3. **Baseline key 与 DeviceId**：Change Detection 的 `PlanId + ArchiveUnitId` 是 portable unit key；DeviceId 只作为本机 registration/binding/runtime namespace，不替换该 key。
+4. **实现现状**：当前 Core 仍使用 string ID/逻辑 root，尚无完整 declaration/discovery resolver、ExternalSource identity、DeviceId、Local Binding、Global Rules Snapshot 或 `ExecutionSemanticSnapshot`。本规范不表示这些实现已完成，也不授权 SQLite/JSON Schema 设计。
+
+## 17. 当前未决顺序
+
+Identity、Portable Path/Local Binding、Global Rules 与 FILE_MANAGED declaration/discovery P0 已确认。JSON Schema 前继续按以下顺序解决：
+
+1. Secret Reference / Encryption configuration；
+2. Schedule portability；
+3. History / output 配置的可移植边界；
+4. Schema compatibility 与 unknown fields；
+5. Import identity conflict / merge semantics。
+
+ArchiveSpec override 与 External Source 的完整行为仍需设计，但不得提前固化 JSON 字段。本轮同样不定义 JSON Schema、SQLite schema、Entity、Repository 或 migration。

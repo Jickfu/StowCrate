@@ -86,6 +86,8 @@ Current/A
 
 FILE_MANAGED Archive Unit 可以用 `.backupignore @id <uuid-v4>` 选择性携带跨 rename/move 的稳定 identity。没有 `@id` 仍合法；StowCrate 不得自动修改用户文件，且未标识单元的路径变化默认不自动猜测为同一单元。
 
+FILE_MANAGED Archive Unit 的存在由磁盘发现决定，不要求 Backup Plan 预先声明。Plan declaration 只负责 portable identity association 与非规则的 per-unit portable settings；FILE_MANAGED 的 RuleMode、CasePolicy 与 Local Rules 始终只来自 `.backupignore`。声明缺文件、与 `@id` 冲突、同 identity 路径迁移或 UI/FILE 规则来源冲突时，方案必须进入 PlanNotReady/Fatal 并等待用户确认，不能自动改写文件、计划或 SQLite。
+
 如果配置的备份根目录内没有任何 Archive Unit，首版应提示配置问题并不备份该目录。位于 Archive Unit 之外的普通文件也不隐式复制或打包。
 
 ### 4.3 三层规则
@@ -95,6 +97,8 @@ FILE_MANAGED Archive Unit 可以用 `.backupignore @id <uuid-v4>` 选择性携�
 ```text
 全局规则 → Backup Plan 规则 → 局部规则
 ```
+
+v1 执行使用 Plan 内保存的 pinned Global Rules Snapshot。Global Rule Library 只用于跨 Plan 编写、复用与显式更新模板；Library 变化不会自动影响既有 Plan。用户执行 Apply/Update 后才替换 snapshot 并产生可审阅的规则语义变化。可选的 library name/revision provenance 只用于提示，不是执行真相源。
 
 规则支持两种模式：
 
@@ -109,8 +113,8 @@ FILE_MANAGED Archive Unit 可以用 `.backupignore @id <uuid-v4>` 选择性携�
 
 每个 Archive Unit 的局部规则来源只能是：
 
-- `UI_MANAGED`：SQLite 保存 `RuleSource`、`RuleMode` 和 `Rules`，是局部规则的唯一事实来源；或
-- `FILE_MANAGED`：SQLite 只保存 `RuleSource = FILE_MANAGED`、文件位置和可重建的索引状态；`RuleMode` 与全部 `Rules` 都从 `.backupignore` 读取，`.backupignore` 是完整的局部规则唯一事实来源。
+- `UI_MANAGED`：authoritative Managed configuration 或 File-backed Plan declaration 保存 `RuleSource`、`RuleMode` 和 `Rules`，是局部规则的唯一事实来源；或
+- `FILE_MANAGED`：authoritative Plan configuration 只声明 `RuleSource = FILE_MANAGED` 及 identity association/non-rule settings；`RuleMode`、CasePolicy 与全部 `Rules` 都从 `.backupignore` 读取，`.backupignore` 是完整的局部规则唯一事实来源。SQLite 可保存本机 registration 与可重建索引，但不得保存独立规则副本。
 
 产品应支持 UI 规则与 `.backupignore` 的导入/导出，但两者不得同时控制同一个 Archive Unit。
 

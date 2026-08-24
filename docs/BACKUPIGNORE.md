@@ -48,6 +48,8 @@ v1 只支持：
 
 Parser 应把 `@id` 作为 document metadata 与 RuleSet 分离返回。它不是规则 pattern，也不应被序列化进 SQLite 的 FILE_MANAGED RuleMode/Rules。
 
+`.backupignore` 的存在本身声明 FILE_MANAGED Archive Unit，不依赖 `*.backupplan` 是否列出该单元。Backup Plan declaration 只能为已发现或期望存在的单元关联 portable identity 与非规则的 per-unit portable configuration；FILE_MANAGED declaration 不得携带 Local RuleMode、CasePolicy 或 Rules。完整的 discovery/declaration resolution 与错误状态见 [`BACKUPPLAN.md`](BACKUPPLAN.md)。
+
 ## 3. Rule Action、Mode 与顺序
 
 - 普通 pattern 永远是 `EXCLUDE`；
@@ -138,7 +140,9 @@ build/
 
 同一份 Source Snapshot、Backup Plan、解析后的规则和已解析 case sensitivity 必须产生相同、稳定排序的 `ArchivePlan`。
 
-Rules fingerprint 至少包含：Global Rules、Plan Rules、Local Rules、mode、case policy、resolved case sensitivity 和 Boundary Tree。任何一项变化都必须重新规划。FILE_MANAGED 的 `.backupignore` 自身属于源内容；即使只修改注释或 `@id` 文本，源快照和最终归档内容也已变化。ArchiveUnitId 是否作为独立 SelectionFingerprint 字段以 `CHANGE-DETECTION.md` 的当前规则为准。
+Rules fingerprint 至少包含：pinned Global Rules Snapshot、Plan Rules、Local Rules、mode、case policy、resolved case sensitivity 和 Boundary Tree。任何一项变化都必须重新规划。Global Rule Library provenance 与 `ArchiveUnitId` identity 本身不进入 SelectionFingerprint；SourceId 与 Archive Unit logical path 仍进入，完整边界见 [`CHANGE-DETECTION.md`](CHANGE-DETECTION.md)。
+
+FILE_MANAGED 的 `.backupignore` 自身属于源内容；即使只修改注释或 `@id` 文本，源快照和最终归档内容也已变化。运行开始解析该文件后还必须记录外部规则源 fingerprint，并在发布前重新验证；期间发生变化时按 PlanChangedDuringRun 安全失败，不发布、不推进 baseline。
 
 ## 9. 错误处理
 
@@ -155,6 +159,7 @@ Syntax Error、Unsupported Version、Invalid Pattern、Rule Source Conflict、Re
 7. pattern 使用 Archive Unit 相对逻辑路径和 `/`。
 8. `.backupignore`、生成 metadata 和安全约束不能被普通规则破坏。
 9. `@id` 是可选 identity metadata；空文件继续合法，工具不得自动写入。
+10. Unit discovery 由 `.backupignore` 的物理存在决定；Plan declaration 不是存在条件，也不是 FILE_MANAGED 局部规则的第二真相源。
 
 ## 11. v1 规范演进说明
 
