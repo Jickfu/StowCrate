@@ -98,6 +98,8 @@ Registered *.backupplan ─────────────┘
 
 Plan authority、registration path、local binding 与 scheduler installation state 是 Application/Infrastructure 管理信息，不进入 Core `BackupPlan`。同一 Plan 只能有一个 authoritative configuration source。不存在自动双向同步；Import 是复制为 Managed，Register 是链接到 File-backed document。
 
+Core 中的 portable authored contract 位于独立 `StowCrate.Core.BackupPlans` namespace，使用强类型 UUID v4 identity，并完整保留 ArchiveSpec/History default、override 与 inherit intent。它不复用 M1 `StowCrate.Core.Planning.BackupPlan`；后者继续作为早期单 Source Planning Kernel input，现有 API 与测试保持稳定。Infrastructure 的 versioned Document DTO 只能显式映射到 portable authored aggregate，不得泄漏到 Application 或充当 persistence Entity。
+
 File-backed loader 必须先按 UTF-8 与严格 JSON 读取并检测 duplicate property，再以必填正整数 `schemaVersion` 分派到 version-specific closed-schema reader、semantic validator 和 in-memory migrator。未知 property/enum/variant 或未来 schemaVersion 安全失败；Infrastructure 不得用 case-insensitive property binding、extension bag 或最新 DTO 猜测旧/新文档。Application 只接收迁移后的 current semantic model，并继续执行 authority、local binding、capability 与 readiness resolution。
 
 ```text

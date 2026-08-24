@@ -32,4 +32,4 @@ StowCrate 将目录整理成一组可理解、可独立恢复的标准归档文�
 
 规划内核与 no-follow 真实文件系统 Scanner 已具备跨平台逻辑路径、规则合成、Archive Unit 边界、不可变 `ArchivePlan`、确定性 fingerprint 和可见扫描问题。
 
-Backup Plan v1 Document Contract Runtime 已完成 DTO、strict reader、版本分派与 Schema 验证。下一项是 `BackupPlanDocumentV1` Semantic Validator 与 DTO→Frozen Domain Mapper；暂不实现 Avalonia UI、SQLite、writer 或归档执行器。尚未决策事项统一记录在产品设计文档中。
+Backup Plan v1 Document Contract Runtime 已完成 strict reader、Schema 验证、semantic validator 与 DTO→Frozen Portable Domain Mapper。下一项是 Document Writer + deterministic round-trip；暂不实现 Avalonia UI、SQLite、Local Binding 或归档执行器。尚未决策事项统一记录在产品设计文档中。

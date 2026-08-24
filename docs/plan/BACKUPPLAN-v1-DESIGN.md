@@ -230,7 +230,9 @@ ResolvedPlanSnapshot
 
 Backup Plan v1 Document Contract Runtime 已完成：frozen DTO、strict UTF-8/duplicate-property reader、`schemaVersion` dispatch 和 Draft 2020-12 structural validation 均位于 Infrastructure document adapter boundary。
 
-下一项推进为 **BackupPlanDocumentV1 Semantic Validator + DTO→Frozen Domain Mapper**。该阶段独立处理 reference graph、规则语法、Archive Boundary、External collision 与 reader 支持的 semantics pins；仍不实现 Import/Update、Local Binding、writer、SQLite 或 EF，也不从 Schema/DTO 直接生成或复用 persistence Entity。
+`BackupPlanDocumentV1 Semantic Validator + DTO→Frozen Domain Mapper` 已完成，并以独立 `StowCrate.Core.BackupPlans` authored aggregate 保持与 M1 Planning input、device/runtime resolution 和 persistence Entity 的边界。
+
+下一项推进为 **Document Writer + deterministic round-trip**。先稳定 portable authored aggregate 的确定性文档往返，再设计 Application `ResolvedPlanSnapshot` resolution contract；仍不实现 Import/Update、Local Binding、SQLite 或 EF。
 
 ## 14. 后续产物
 
