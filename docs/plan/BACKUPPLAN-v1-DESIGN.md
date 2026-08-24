@@ -232,7 +232,9 @@ Backup Plan v1 Document Contract Runtime 已完成：frozen DTO、strict UTF-8/d
 
 `BackupPlanDocumentV1 Semantic Validator + DTO→Frozen Domain Mapper` 已完成，并以独立 `StowCrate.Core.BackupPlans` authored aggregate 保持与 M1 Planning input、device/runtime resolution 和 persistence Entity 的边界。
 
-下一项推进为 **Document Writer + deterministic round-trip**。先稳定 portable authored aggregate 的确定性文档往返，再设计 Application `ResolvedPlanSnapshot` resolution contract；仍不实现 Import/Update、Local Binding、SQLite 或 EF。
+`Document Writer + deterministic round-trip` 已完成：显式 Domain→DTO projector、canonical ordering/formatting、lower-camel contract strings 与 strict reader/Schema postcondition 已形成闭环。
+
+下一项推进为 **Application ResolvedPlanSnapshot Resolution Contract**；仍不实现 Import/Update、Local Binding persistence、SQLite 或 EF。
 
 ## 14. 后续产物
 

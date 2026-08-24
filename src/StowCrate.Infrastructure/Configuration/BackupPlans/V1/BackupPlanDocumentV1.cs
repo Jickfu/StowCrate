@@ -109,37 +109,37 @@ public sealed record ExternalSourceDeclarationV1(
     Guid TargetArchiveUnitId,
     string ArchiveDestination);
 
-[JsonConverter(typeof(JsonStringEnumConverter<RuleActionV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<RuleActionV1>))]
 public enum RuleActionV1 { Include, Exclude }
-[JsonConverter(typeof(JsonStringEnumConverter<RuleModeV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<RuleModeV1>))]
 public enum RuleModeV1 { Exclude, IncludeOnly }
-[JsonConverter(typeof(JsonStringEnumConverter<RuleSourceV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<RuleSourceV1>))]
 public enum RuleSourceV1 { UiManaged, FileManaged }
-[JsonConverter(typeof(JsonStringEnumConverter<CasePolicyV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<CasePolicyV1>))]
 public enum CasePolicyV1 { Auto, Sensitive, Insensitive }
-[JsonConverter(typeof(JsonStringEnumConverter<ArchiveFormatV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<ArchiveFormatV1>))]
 public enum ArchiveFormatV1 { SevenZip, Zip, TarZstd }
-[JsonConverter(typeof(JsonStringEnumConverter<CompressionPresetV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<CompressionPresetV1>))]
 public enum CompressionPresetV1 { Store, Fast, Standard, Extreme }
-[JsonConverter(typeof(JsonStringEnumConverter<ProtectionModeV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<ProtectionModeV1>))]
 public enum ProtectionModeV1 { None, Privacy, Secure }
-[JsonConverter(typeof(JsonStringEnumConverter<SecretPurposeV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<SecretPurposeV1>))]
 public enum SecretPurposeV1 { ArchiveEncryption }
-[JsonConverter(typeof(JsonStringEnumConverter<LinkPolicyV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<LinkPolicyV1>))]
 public enum LinkPolicyV1 { Preserve, Skip }
-[JsonConverter(typeof(JsonStringEnumConverter<ChangeDetectionModeV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<ChangeDetectionModeV1>))]
 public enum ChangeDetectionModeV1 { Standard, Strict }
-[JsonConverter(typeof(JsonStringEnumConverter<HistoryModeV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<HistoryModeV1>))]
 public enum HistoryModeV1 { Disabled, Enabled }
-[JsonConverter(typeof(JsonStringEnumConverter<HistoryOverrideModeV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<HistoryOverrideModeV1>))]
 public enum HistoryOverrideModeV1 { Inherit, Disabled, Enabled }
-[JsonConverter(typeof(JsonStringEnumConverter<RetentionKindV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<RetentionKindV1>))]
 public enum RetentionKindV1 { KeepAll, KeepLastVersions }
-[JsonConverter(typeof(JsonStringEnumConverter<ScheduleTriggerTypeV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<ScheduleTriggerTypeV1>))]
 public enum ScheduleTriggerTypeV1 { Daily, Weekly, OnStartup }
-[JsonConverter(typeof(JsonStringEnumConverter<DayOfWeekV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<DayOfWeekV1>))]
 public enum DayOfWeekV1 { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }
-[JsonConverter(typeof(JsonStringEnumConverter<MissedRunPolicyV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<MissedRunPolicyV1>))]
 public enum MissedRunPolicyV1 { Skip, RunOnceWhenAvailable }
-[JsonConverter(typeof(JsonStringEnumConverter<ExternalSourceKindV1>))]
+[JsonConverter(typeof(LowerCamelEnumConverter<ExternalSourceKindV1>))]
 public enum ExternalSourceKindV1 { File, Directory }

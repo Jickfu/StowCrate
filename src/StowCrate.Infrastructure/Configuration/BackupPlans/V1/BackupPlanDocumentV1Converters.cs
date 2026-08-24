@@ -3,6 +3,10 @@ using System.Text.Json.Serialization;
 
 namespace StowCrate.Infrastructure.Configuration.BackupPlans.V1;
 
+internal sealed class LowerCamelEnumConverter<T>()
+    : JsonStringEnumConverter<T>(JsonNamingPolicy.CamelCase, allowIntegerValues: false)
+    where T : struct, Enum;
+
 internal abstract class DiscriminatedUnionConverter<T> : JsonConverter<T>
 {
     public sealed override T? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)

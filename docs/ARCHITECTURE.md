@@ -102,6 +102,8 @@ Core 中的 portable authored contract 位于独立 `StowCrate.Core.BackupPlans`
 
 File-backed loader 必须先按 UTF-8 与严格 JSON 读取并检测 duplicate property，再以必填正整数 `schemaVersion` 分派到 version-specific closed-schema reader、semantic validator 和 in-memory migrator。未知 property/enum/variant 或未来 schemaVersion 安全失败；Infrastructure 不得用 case-insensitive property binding、extension bag 或最新 DTO 猜测旧/新文档。Application 只接收迁移后的 current semantic model，并继续执行 authority、local binding、capability 与 readiness resolution。
 
+反向写入同样停留在 Infrastructure adapter boundary：Core portable authored aggregate 经显式 versioned projector 转为 frozen DTO，再按 canonical ordering/formatting 序列化；返回 bytes 前必须由同版本 strict reader 与 Schema 重新验证。Core 不引用 JSON/Schema 类型，writer 不负责 path-level atomic replacement。
+
 ```text
 Raw bytes → strict parse → versioned schema/semantic validation → in-memory migration
           → authority resolution → local binding → ResolvedPlanSnapshot

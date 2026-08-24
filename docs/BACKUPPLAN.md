@@ -665,7 +665,11 @@ Raw UTF-8 bytes
 
 升级 File-backed 文档是明确的 `Upgrade Backup Plan` / `Upgrade & Save` 操作，必须先告知将修改文件并允许预览语义变化。若 reader 能读旧版本但 writer 只写当前版本，普通编辑保存旧文档必须返回 `DocumentUpgradeRequired`，不得偷偷升版。Managed Import 可以把旧文档迁移为当前内部模型而不修改原文件；以后 Export 使用当前 writer/schemaVersion。
 
-writer 只能从合法 current semantic model 投影文档，并执行 schema validation、临时文件写入、read/validate round-trip 与原子替换。具体 serializer、临时文件命名与 JSON 格式留待实现设计。
+writer 只能从合法 current semantic model 投影文档，并执行 schema validation、read/validate round-trip；path-level 临时文件写入与原子替换属于后续 Application/Infrastructure 保存用例。
+
+Backup Plan v1 canonical writer formatting 固定为 UTF-8 no BOM、两个空格缩进、LF、final newline 和 JSON 默认安全 escaping。UUID 固定 canonical lowercase `D` text，时间固定 `HH:mm`，enum/discriminator 固定 Schema 定义的 lower-camel string。writer 不输出尚未配置正式公开 URI 的 optional `$schema`。object property 按 frozen v1 DTO declaration 顺序稳定输出；顶层依次为 `schemaVersion`、`planId`、`name`、optional `description`、`semantics`、`sources`、`globalRules`、`planRules`、`archiveSpecDefault`、`archiveUnits`、`secretSlots`、`linkPolicy`、`changeDetection`、`historyDefault`、`schedule`、`externalSources`。
+
+Rule arrays 保留 authored order。无顺序语义的集合必须按 Schema Design 的 canonical keys 排序：Sources 按 SourceId；Archive Units 按 SourceId/path/ArchiveUnitId；Secret Slots 按 SecretSlotId；External Sources 按 target/destination/kind/id；Schedule triggers 按 type/time/canonical days；weekly days 明确 Monday→Sunday，不依赖平台 enum 数值。writer 不以排序后去重掩盖 semantic invalid。生成 bytes 返回前必须交给同版本 strict reader 与正式 Schema 做 postcondition validation。
 
 ### 19.4 验证阶段与错误边界
 

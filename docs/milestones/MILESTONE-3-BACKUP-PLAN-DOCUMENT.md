@@ -37,8 +37,18 @@ UTF-8 bytes / Stream
 - semantic error/result 与 lexical/schema document error 保持独立；
 - semantic-invalid fixtures 均先证明通过 Draft 2020-12 Schema，再证明被预期语义拒绝。
 
-## 下一项：Document Writer + deterministic round-trip
+## 已完成：Document Writer + deterministic round-trip
 
-portable authored aggregate 已足以形成稳定的 document round-trip 边界。下一项先实现 v1 writer、deterministic canonical ordering/property emission，以及 DTO/domain/document round-trip 测试；writer 只输出当前支持的 semantics pins `1`，且不写入任何 local/runtime state。
+- Domain→Document 使用显式 `BackupPlanDocumentV1Projector`，Core 不感知 JSON；
+- writer 输入只能是通过现有 semantic validator 的 `PortableBackupPlan`，不改写 unsupported semantics pins；
+- Rule arrays 保留 authored order，其余 aggregate arrays、Schedule triggers 和 weekdays 使用 frozen canonical ordering；
+- lower-camel enum/discriminator string 显式配置，并由生成文档 Schema validation 覆盖；
+- formatting 固定为 UTF-8 no BOM、2-space、LF、final newline、lowercase UUID、`HH:mm`、稳定 escaping/property order；
+- 未配置 canonical public Schema URI 前不输出 optional `$schema`；
+- 每份生成 bytes 返回前必须通过同一 strict reader 与 embedded Draft 2020-12 Schema；
+- round-trip 测试覆盖 semantic preservation、canonical idempotence、collection permutation invariance、Rule order 与 authored override/inherit distinction；
+- bytes、同步 Stream 与异步 Stream writer 已完成，不包含 path-level replacement。
 
-Application `ResolvedPlanSnapshot` resolution contract 在 writer 契约稳定后推进。本阶段仍不实现 Import/Update、Local Binding、SQLite、EF 或归档执行。
+## 下一项：Application ResolvedPlanSnapshot Resolution Contract
+
+下一项定义 Application 如何把 portable authored aggregate、authority/registration 与 device-local bindings 合成为不可变 `ResolvedPlanSnapshot`，并明确 readiness/capability/error boundary。Local Binding 的具体持久化、Import/Update、SQLite、EF 与归档执行仍不在本阶段实现。
