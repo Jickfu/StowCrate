@@ -1,4 +1,5 @@
 using System.Text;
+using System.Security.Cryptography;
 using StowCrate.Core.Filesystem;
 
 namespace StowCrate.Infrastructure.Filesystem;
@@ -21,6 +22,8 @@ public interface IPhysicalFileSystem
     IEnumerable<string> EnumerateChildren(string directoryPath);
 
     string ReadAllText(string path);
+    byte[] ReadAllBytes(string path);
+    string ComputeSha256(string path, CancellationToken cancellationToken);
 }
 
 public sealed class SystemPhysicalFileSystem : IPhysicalFileSystem
@@ -124,6 +127,22 @@ public sealed class SystemPhysicalFileSystem : IPhysicalFileSystem
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true),
             detectEncodingFromByteOrderMarks: false);
         return reader.ReadToEnd();
+    }
+
+    public byte[] ReadAllBytes(string path) => File.ReadAllBytes(path);
+
+    public string ComputeSha256(string path, CancellationToken cancellationToken)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[128 * 1024];
+        int count;
+        while ((count = stream.Read(buffer)) != 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            hash.AppendData(buffer, 0, count);
+        }
+        return Convert.ToHexStringLower(hash.GetHashAndReset());
     }
 
     private PhysicalFileSystemEntry CreateSpecial(FileSystemInfo fileSystemInfo, SourceMetadata flags)

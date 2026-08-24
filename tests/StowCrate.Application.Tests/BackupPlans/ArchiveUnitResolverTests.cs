@@ -4,6 +4,8 @@ using StowCrate.Core.BackupPlans;
 using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 using StowCrate.Core.Rules;
+using StowCrate.Core.ChangeDetection;
+using System.Text;
 
 namespace StowCrate.Application.Tests.BackupPlans;
 
@@ -34,12 +36,12 @@ public sealed class ArchiveUnitResolverTests
         Assert.Null(ui.RuleSourceObservationFingerprint);
         var declared = Assert.Single(result.ResolvedSet.Units.Where(unit => unit.ArchiveUnitId == FileId));
         Assert.Equal(RuleSource.FileManaged, declared.RuleSource);
-        Assert.Equal("declared-fingerprint", declared.RuleSourceObservationFingerprint);
+        Assert.Equal(RawSha($"@id {FileId.Value:D}\n@mode include-only\n!keep/**"), declared.RuleSourceObservationFingerprint);
         Assert.Equal(RuleMode.IncludeOnly, declared.LocalRuleSet.Mode);
         Assert.Equal(PortableArchiveFormat.Zip, declared.ArchiveSpec.Format);
         var generated = Assert.Single(result.ResolvedSet.Units.Where(unit => unit.ArchiveUnitId == GeneratedId));
         Assert.Equal(PortableArchiveFormat.SevenZip, generated.ArchiveSpec.Format);
-        Assert.Equal("new-fingerprint", generated.RuleSourceObservationFingerprint);
+        Assert.Equal(RawSha("*.tmp"), generated.RuleSourceObservationFingerprint);
         var pending = Assert.Single(result.PendingRegistrations);
         Assert.Equal(new LogicalPath("new"), pending.Path);
         Assert.True(result.RequiresDurableRegistrationCommit);
@@ -202,7 +204,10 @@ public sealed class ArchiveUnitResolverTests
         Entry($"{root}/.backupignore", content, fingerprint);
 
     private static ObservedFileSystemEntry Entry(string path, string? content = null, string fingerprint = "fp") =>
-        new(new LogicalPath(path), FileSystemEntryKind.File, 0, content, fingerprint, null, null, SourceMetadata.None);
+        new(new LogicalPath(path), FileSystemEntryKind.File, 0, content, ObservedContentIdentity.MetadataV1,
+            content is null ? null : RawSha(content), null, null, SourceMetadata.None);
+
+    private static Sha256Digest RawSha(string content) => Sha256Digest.Hash(Encoding.UTF8.GetBytes(content));
 
     private sealed class FixedIdGenerator(ArchiveUnitId id) : IArchiveUnitIdGenerator
     {

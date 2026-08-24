@@ -92,6 +92,17 @@ ResolvedPlanSnapshot
 - Readiness 仅对实际 units 检查 conditional HistoryRoot、Secure SecretSlotId+SecretRevision、archive capability 与 pending identity durable registration；
 - incomplete observation 可保留已知 resolved state并生成 diagnostic Candidate，但 `CanExecute=false`。
 
-## 下一项：Candidate Fingerprints + Change Decision Integration
+## 已完成：Candidate Fingerprints + Change Decision Integration
 
-正式实现强类型 EntrySet / Selection / ArchiveSpec / OutputLayout / ExecutionSemantic / ExecutionBinding fingerprints，并把新版 Candidate 接入 Change Detection。仍不提前实现 Archiver、External staging/TOCTOU、SQLite/EF、baseline persistence 或 Current/History publish。
+- Candidate entry 保留 UTC mtime 与 typed/versioned observed content identity；Standard v1 使用 metadata policy，Strict v1 对 regular file 强制 full SHA-256；
+- `.backupignore` 的 rule-source observation identity 来自实际 raw bytes SHA-256，不再复用 legacy M2 fingerprint；
+- Core 新增六类不可互换 strong fingerprint 与 validated SHA-256 digest；
+- Canonical Fingerprint Encoding v1 使用显式 kind、field ID、length-delimited UTF-8/value encoding 与 deterministic ordering；
+- unit-scoped EntrySet/Selection/ArchiveSpec/OutputLayout/ExecutionSemantic/ExecutionBinding fingerprint 已覆盖 frozen v1 输入边界；
+- Rules/Boundary/LinkPolicy/External mapping 与 Format/Compression/Protection/Manifest component fingerprints 只用于诊断，top-level fingerprints 保持 equality authority；
+- pure `CommittedArchiveUnitBaseline` 以 `PlanId + ArchiveUnitId` 为 identity，并拒绝 preview/incomplete candidate；
+- Change Decision 独立表达 archive rebuild 与 output reorganization，unknown encoding/semantics 按 BaselineInvalid 保守处理。
+
+## 下一项：ExecutionSemanticSnapshot + Baseline / ArchiveVersion Durable State Contract
+
+把 strong fingerprints 接入 publish 前 stale guard、ArchiveVersion 与 baseline durable commit state model；仍不实现 SQLite/EF repository、Archiver、External staging/TOCTOU 或 Current/History publish。

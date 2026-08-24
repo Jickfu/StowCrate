@@ -208,6 +208,6 @@ Change Detector 位于 Core 或 Application 的纯逻辑边界，只接收 Candi
 
 1. `ARCHITECTURE.md` 第 13 节旧的阶段建议把 SQLite/归档适配放在 Change Detection 实现前。当前只调整**设计顺序**为 Change Detection → Backup Plan → Persistence；不提前实现数据库，也不宣称执行链已完成。
 2. 当前 Core 的 Archive Unit 主要以逻辑 root 表达，尚未实现正式、稳定、可持久化的 `ArchiveUnitId`。Backup Plan v1 已确定该 identity；实现时不能临时用数据库行号或物理绝对路径代替。
-3. 当前 `ArchivePlan.Fingerprint` 是一个聚合字符串，尚未拆成强类型 EntrySet/Selection/ArchiveSpec/Input fingerprint。未来实现需提供显式迁移与 fingerprint format version，不能把现有值误当 v1 durable baseline。
+3. 旧 `ArchivePlan.Fingerprint` 聚合字符串继续只服务 M1 compatibility；M3.7 已新增 strong EntrySet/Selection/ArchiveSpec/OutputLayout/ExecutionSemantic/ExecutionBinding fingerprints 与 Canonical Fingerprint Encoding v1，旧值不得迁移或误当 v1 durable baseline。
 4. `FILESYSTEM.md` 已允许 Warning 后继续规划；本文进一步区分 IntentionalSkip 与 IncompleteObservation，用于决定能否发布。这是发布层收紧，不改变 Scanner 的 no-follow 或 issue severity 事实。
-5. 当前仓库尚未实现 External Source、ArchiveSpec、Secret revision、OutputLayout/ExecutionBinding fingerprint、ArchiveVersion、Current/History 发布、relocation 或 Reconciliation。本文只定义这些边界，不得为满足文档而引入临时 SQLite schema。
+5. 当前仓库已完成 portable External/ArchiveSpec/Secret revision readiness 与 unit-scoped Candidate fingerprints/change decision；尚未实现 ArchiveVersion durable state、Current/History 发布、relocation、Reconciliation 或 persistence repository。本文不得被用于引入临时 SQLite schema。

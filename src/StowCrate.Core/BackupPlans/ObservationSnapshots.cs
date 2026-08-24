@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 using StowCrate.Core.Rules;
+using StowCrate.Core.ChangeDetection;
 
 namespace StowCrate.Core.BackupPlans;
 
@@ -27,12 +28,31 @@ public sealed class ObservationResult<TSnapshot> where TSnapshot : class
     public bool HasSnapshot => Snapshot is not null;
 }
 
+public enum ObservedContentIdentityKind { MetadataV1, FullContentSha256V1 }
+
+public sealed record ObservedContentIdentity
+{
+    private ObservedContentIdentity(ObservedContentIdentityKind kind, Sha256Digest? fullContentDigest)
+    {
+        if ((kind is ObservedContentIdentityKind.FullContentSha256V1) != (fullContentDigest is not null))
+            throw new ArgumentException("Full SHA-256 content identity requires exactly one digest.", nameof(fullContentDigest));
+        Kind = kind;
+        FullContentDigest = fullContentDigest;
+    }
+
+    public ObservedContentIdentityKind Kind { get; }
+    public Sha256Digest? FullContentDigest { get; }
+    public static ObservedContentIdentity MetadataV1 { get; } = new(ObservedContentIdentityKind.MetadataV1, null);
+    public static ObservedContentIdentity FullSha256(Sha256Digest digest) => new(ObservedContentIdentityKind.FullContentSha256V1, digest);
+}
+
 public sealed record ObservedFileSystemEntry(
     LogicalPath Path,
     FileSystemEntryKind Kind,
     long Length,
     string? TextContent,
-    string ContentFingerprint,
+    ObservedContentIdentity ContentIdentity,
+    Sha256Digest? RawFileSha256,
     DateTimeOffset? LastWriteTimeUtc,
     LinkInfo? Link,
     SourceMetadata MetadataFlags);

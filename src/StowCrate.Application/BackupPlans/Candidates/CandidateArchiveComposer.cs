@@ -74,7 +74,9 @@ public sealed class CandidateArchiveComposer : ICandidateArchiveComposer
                 null,
                 null,
                 0,
-                "generated:manifest",
+                null,
+                ObservedContentIdentity.MetadataV1,
+                null,
                 null,
                 SourceMetadata.None));
             ValidateOwnership(unit.ArchiveUnitId, entries, issues);
@@ -83,7 +85,8 @@ public sealed class CandidateArchiveComposer : ICandidateArchiveComposer
                 unit,
                 OutputPath(sourceBinding.SourceOutputPath, unit.Root, unit.ArchiveSpec.Format, plan.Semantics.OutputPathEncoding),
                 entries,
-                new GeneratedMetadataPlan(ManifestPath, plan.Semantics.Archive)));
+                new GeneratedMetadataPlan(ManifestPath, plan.Semantics.Archive, CandidateRuntimeSemantics.ManifestSchemaVersion),
+                resolvedUnits.Units.Where(candidate => candidate.ParentArchiveUnitId == unit.ArchiveUnitId).Select(candidate => candidate.Root)));
         }
 
         foreach (var duplicate in archives.GroupBy(archive => archive.OutputRelativePath).Where(group => group.Count() > 1))
@@ -156,7 +159,7 @@ public sealed class CandidateArchiveComposer : ICandidateArchiveComposer
     }
 
     private static CandidateArchiveEntry Map(ObservedFileSystemEntry entry, RelativePath path, CandidateEntryOwnerKind owner, SourceId? sourceId, ExternalSourceId? externalId) =>
-        new(path, entry.Kind, owner, sourceId, externalId, entry.Path, entry.Length, entry.ContentFingerprint, entry.Link, entry.MetadataFlags);
+        new(path, entry.Kind, owner, sourceId, externalId, entry.Path, entry.Length, entry.LastWriteTimeUtc, entry.ContentIdentity, entry.RawFileSha256, entry.Link, entry.MetadataFlags);
 
     private static void ValidateOwnership(ArchiveUnitId unitId, IReadOnlyCollection<CandidateArchiveEntry> entries, List<CandidateCompositionIssue> issues)
     {
@@ -189,4 +192,10 @@ public sealed class CandidateArchiveComposer : ICandidateArchiveComposer
         };
         return new LogicalPath(logical.Value + extension);
     }
+}
+
+public static class CandidateRuntimeSemantics
+{
+    public const int ManifestSchemaVersion = 1;
+    public const int PrivacyProtectionVersion = 1;
 }

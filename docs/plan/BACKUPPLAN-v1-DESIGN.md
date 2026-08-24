@@ -240,7 +240,9 @@ Backup Plan v1 Document Contract Runtime 已完成：frozen DTO、strict UTF-8/d
 
 `Candidate Archive Composition + Execution Readiness` 已完成为两个独立 pure stages：Candidate 冻结 normal/external/generated content 与 v1 logical output mapping；Readiness 冻结 capability、effective History、Secure revision requirements，并对 incomplete observation、conditional binding 与 pending registration 安全阻止执行。
 
-下一项推进为 **Candidate Fingerprints + Change Decision Integration**：实现强类型 EntrySet / Selection / ArchiveSpec / OutputLayout / ExecutionSemantic / ExecutionBinding fingerprints，并把新版 Candidate 接入 Change Detection；仍不实现 Import/Update、Local Binding persistence、SQLite 或 EF。
+`Candidate Fingerprints + Change Decision Integration` 已完成：六类 unit-scoped strong fingerprints、Canonical Encoding v1、component diagnostics、pure baseline/change decision 与 Standard/Strict content identity 已接入新版 Candidate。
+
+下一项推进为 **ExecutionSemanticSnapshot + Baseline / ArchiveVersion Durable State Contract**；仍不实现 Import/Update、Local Binding persistence、SQLite 或 EF。
 
 ## 14. 后续产物
 

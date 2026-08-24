@@ -1,4 +1,5 @@
 using System.Text;
+using System.Security.Cryptography;
 using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 using StowCrate.Core.Planning;
@@ -9,7 +10,8 @@ namespace StowCrate.Infrastructure.Filesystem;
 public sealed record SourceScanOptions(
     CaseSensitivity CaseSensitivity = CaseSensitivity.Auto,
     FileSystemBoundaryPolicy BoundaryPolicy = FileSystemBoundaryPolicy.StayOnSourceFileSystem,
-    bool ObserveBackupIgnoreRuleSource = true);
+    bool ObserveBackupIgnoreRuleSource = true,
+    bool ComputeFullContentHashes = false);
 
 public sealed class SourceScanner
 {
@@ -123,17 +125,34 @@ public sealed class SourceScanner
             }
 
             string? textContent = null;
+            string? rawFileSha256 = null;
+            string? fullContentSha256 = null;
             if (options.ObserveBackupIgnoreRuleSource
                 && physicalEntry.Kind is FileSystemEntryKind.File
                 && logicalPath.Value.Name.Equals(BackupIgnoreFileName, StringComparison.Ordinal))
             {
                 try
                 {
-                    textContent = _fileSystem.ReadAllText(childPath);
+                    var rawBytes = _fileSystem.ReadAllBytes(childPath);
+                    rawFileSha256 = Convert.ToHexStringLower(SHA256.HashData(rawBytes));
+                    textContent = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetString(rawBytes);
+                    if (options.ComputeFullContentHashes) fullContentSha256 = rawFileSha256;
                 }
                 catch (Exception exception) when (IsFileSystemException(exception) || exception is DecoderFallbackException)
                 {
                     issues.Add(new ScanIssue(ScanIssueSeverity.Fatal, "SCFS0005", logicalPath, $".backupignore 无法读取：{exception.Message}"));
+                    continue;
+                }
+            }
+            else if (options.ComputeFullContentHashes && physicalEntry.Kind is FileSystemEntryKind.File)
+            {
+                try
+                {
+                    fullContentSha256 = _fileSystem.ComputeSha256(childPath, cancellationToken);
+                }
+                catch (Exception exception) when (IsFileSystemException(exception))
+                {
+                    issues.Add(new ScanIssue(ScanIssueSeverity.Warning, "SCFS1006", logicalPath, $"文件完整内容 hash 无法读取，已跳过：{exception.Message}"));
                     continue;
                 }
             }
@@ -148,7 +167,9 @@ public sealed class SourceScanner
                 textContent,
                 lastWriteTimeUtc: physicalEntry.LastWriteTimeUtc,
                 link: link,
-                metadataFlags: physicalEntry.MetadataFlags));
+                metadataFlags: physicalEntry.MetadataFlags,
+                fullContentSha256: fullContentSha256,
+                rawFileSha256: rawFileSha256));
 
             if (physicalEntry.Kind is FileSystemEntryKind.Link && link!.IsDangling)
             {

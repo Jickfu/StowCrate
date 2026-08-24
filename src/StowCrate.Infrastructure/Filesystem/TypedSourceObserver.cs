@@ -2,6 +2,7 @@ using StowCrate.Application.BackupPlans.Resolution;
 using StowCrate.Core.BackupPlans;
 using StowCrate.Core.Filesystem;
 using StowCrate.Core.Planning;
+using StowCrate.Core.ChangeDetection;
 
 namespace StowCrate.Infrastructure.Filesystem;
 
@@ -42,7 +43,10 @@ public sealed class TypedSourceObserver(SourceScanner scanner)
         entry.Kind,
         entry.Length,
         entry.TextContent,
-        entry.ContentFingerprint,
+        entry.FullContentSha256 is null
+            ? ObservedContentIdentity.MetadataV1
+            : ObservedContentIdentity.FullSha256(new Sha256Digest(entry.FullContentSha256)),
+        entry.RawFileSha256 is null ? null : new Sha256Digest(entry.RawFileSha256),
         entry.LastWriteTimeUtc,
         entry.Link,
         entry.MetadataFlags);

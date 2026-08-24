@@ -3,6 +3,7 @@ using StowCrate.Core.BackupPlans;
 using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 using StowCrate.Core.Planning;
+using StowCrate.Core.ChangeDetection;
 
 namespace StowCrate.Infrastructure.Filesystem;
 
@@ -16,7 +17,7 @@ public sealed class ExternalSourceObserver(SourceScanner directoryScanner, IPhys
         ArgumentNullException.ThrowIfNull(external);
         return external.Kind switch
         {
-            PortableExternalSourceKind.File => ObserveFile(external, cancellationToken),
+            PortableExternalSourceKind.File => ObserveFile(external, directoryOptions, cancellationToken),
             PortableExternalSourceKind.Directory => ObserveDirectory(external, directoryOptions, cancellationToken),
             _ => throw new InvalidOperationException($"Unknown External Source kind {external.Kind}.")
         };
@@ -24,6 +25,7 @@ public sealed class ExternalSourceObserver(SourceScanner directoryScanner, IPhys
 
     private ObservationResult<ExternalSourceSnapshot> ObserveFile(
         ResolvedExternalSource external,
+        SourceScanOptions? options,
         CancellationToken cancellationToken)
     {
         try
@@ -41,12 +43,17 @@ public sealed class ExternalSourceObserver(SourceScanner directoryScanner, IPhys
                 physical.Length,
                 lastWriteTimeUtc: physical.LastWriteTimeUtc,
                 metadataFlags: physical.MetadataFlags);
+            options ??= new SourceScanOptions();
+            var contentIdentity = options.ComputeFullContentHashes
+                ? ObservedContentIdentity.FullSha256(new Sha256Digest(fileSystem.ComputeSha256(external.PhysicalInput.CanonicalPath, cancellationToken)))
+                : ObservedContentIdentity.MetadataV1;
             var rootEntry = new ObservedFileSystemEntry(
                 LogicalPath.Root,
                 legacy.Kind,
                 legacy.Length,
                 null,
-                legacy.ContentFingerprint,
+                contentIdentity,
+                null,
                 legacy.LastWriteTimeUtc,
                 null,
                 legacy.MetadataFlags);

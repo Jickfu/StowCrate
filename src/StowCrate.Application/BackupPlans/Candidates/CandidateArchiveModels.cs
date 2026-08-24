@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using StowCrate.Application.BackupPlans.ArchiveUnits;
 using StowCrate.Core.BackupPlans;
+using StowCrate.Core.ChangeDetection;
 using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 
@@ -16,13 +17,16 @@ public sealed record CandidateArchiveEntry(
     ExternalSourceId? ExternalSourceId,
     LogicalPath? ObservedPath,
     long Length,
-    string ContentFingerprint,
+    DateTimeOffset? LastWriteTimeUtc,
+    ObservedContentIdentity ContentIdentity,
+    Sha256Digest? RawFileSha256,
     LinkInfo? Link,
     SourceMetadata MetadataFlags);
 
 public sealed record GeneratedMetadataPlan(
     RelativePath ManifestPath,
-    int ArchiveSemanticsVersion);
+    int ArchiveSemanticsVersion,
+    int ManifestSchemaVersion);
 
 public sealed class CandidateArchive
 {
@@ -30,18 +34,21 @@ public sealed class CandidateArchive
         ResolvedArchiveUnit unit,
         LogicalPath outputRelativePath,
         IEnumerable<CandidateArchiveEntry> entries,
-        GeneratedMetadataPlan generatedMetadata)
+        GeneratedMetadataPlan generatedMetadata,
+        IEnumerable<LogicalPath> childBoundaryRoots)
     {
         Unit = unit;
         OutputRelativePath = outputRelativePath;
         Entries = [.. entries.OrderBy(entry => entry.ArchivePath.Value, StringComparer.Ordinal)];
         GeneratedMetadata = generatedMetadata;
+        ChildBoundaryRoots = [.. childBoundaryRoots.OrderBy(path => path.Value, StringComparer.Ordinal)];
     }
 
     public ResolvedArchiveUnit Unit { get; }
     public LogicalPath OutputRelativePath { get; }
     public ImmutableArray<CandidateArchiveEntry> Entries { get; }
     public GeneratedMetadataPlan GeneratedMetadata { get; }
+    public ImmutableArray<LogicalPath> ChildBoundaryRoots { get; }
 }
 
 public enum CandidateCompositionIssueCode

@@ -6,6 +6,7 @@ using StowCrate.Core.BackupPlans;
 using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
 using StowCrate.Core.Rules;
+using StowCrate.Core.ChangeDetection;
 
 namespace StowCrate.Application.Tests.BackupPlans;
 
@@ -28,7 +29,7 @@ public sealed class CandidateArchiveCompositionTests
         parent = parent with { ChildArchiveUnitIds = [ChildId] };
         var source = Source(
             Entry("project/.backupignore", content: "*.tmp"),
-            Entry("project/keep.txt"),
+            Entry("project/keep.txt", lastWriteTimeUtc: DateTimeOffset.UnixEpoch),
             Entry("project/drop.tmp"),
             Entry("project/child/owned.txt"));
         var set = Units([parent, child], source, External());
@@ -39,6 +40,7 @@ public sealed class CandidateArchiveCompositionTests
         var archive = Assert.Single(result.Archives.Where(item => item.Unit.ArchiveUnitId == UnitId));
         Assert.Contains(archive.Entries, item => item.ArchivePath.Value == ".backupignore");
         Assert.Contains(archive.Entries, item => item.ArchivePath.Value == "keep.txt");
+        Assert.Equal(DateTimeOffset.UnixEpoch, archive.Entries.Single(item => item.ArchivePath.Value == "keep.txt").LastWriteTimeUtc);
         Assert.DoesNotContain(archive.Entries, item => item.ArchivePath.Value == "drop.tmp");
         Assert.DoesNotContain(archive.Entries, item => item.ArchivePath.Value.StartsWith("child/", StringComparison.Ordinal));
         Assert.Equal("out/project.7z", archive.OutputRelativePath.Value);
@@ -116,12 +118,31 @@ public sealed class CandidateArchiveCompositionTests
         Assert.Equal("test-capability-v1", ready.Capability.CapabilitySemantics);
     }
 
+    [Fact]
+    public void StrictFingerprintRequiresFullHashWhileStandardUsesVersionedMetadataIdentity()
+    {
+        var standardPlan = Plan(includeExternal: false);
+        var unit = Unit(UnitId, "project", RuleSource.UiManaged);
+        var standardCandidates = new CandidateArchiveComposer().Compose(standardPlan, Units([unit], Source(Entry("project/a")), External()), []);
+        var standardReady = new ExecutionReadinessEvaluator().Evaluate(standardPlan, standardCandidates, [], new SupportedCapabilities()).ReadySet!.Archives[0];
+        var standard = CandidateFingerprintCalculator.Compute(standardPlan, standardReady, new StorageBindingFingerprintFacts(1, "fs-capability"));
+
+        var strictPlan = Plan(includeExternal: false, changeDetection: PortableChangeDetectionMode.Strict);
+        var strictCandidates = new CandidateArchiveComposer().Compose(strictPlan, Units([unit], Source(Entry("project/a")), External()), []);
+        var strictReady = new ExecutionReadinessEvaluator().Evaluate(strictPlan, strictCandidates, [], new SupportedCapabilities()).ReadySet!.Archives[0];
+        var missingHash = CandidateFingerprintCalculator.Compute(strictPlan, strictReady, new StorageBindingFingerprintFacts(1, "fs-capability"));
+
+        Assert.NotNull(standard.Fingerprints);
+        Assert.Contains(missingHash.Errors, error => error.Code == CandidateFingerprintErrorCode.MissingStrictContentHash);
+    }
+
     private static ResolvedPlanSnapshot Plan(
         PortableSemanticsPins? semantics = null,
         bool includeExternal = true,
         string externalDestination = "external",
         ResolvedPhysicalPath? historyRoot = null,
-        IEnumerable<SecretBindingFact>? secrets = null)
+        IEnumerable<SecretBindingFact>? secrets = null,
+        PortableChangeDetectionMode changeDetection = PortableChangeDetectionMode.Standard)
     {
         var external = includeExternal
             ? new[] { new ResolvedExternalSource(ExternalId, PortableExternalSourceKind.Directory, UnitId, new LogicalPath(externalDestination), new ResolvedPhysicalPath("/external", "/external")) }
@@ -137,7 +158,7 @@ public sealed class CandidateArchiveCompositionTests
             [], [], [],
             new DefaultUnitPolicy(spec, new EffectiveHistoryDisabled()),
             PortableLinkPolicy.Preserve,
-            PortableChangeDetectionMode.Standard,
+            changeDetection,
             external,
             secrets ?? []);
     }
@@ -158,7 +179,7 @@ public sealed class CandidateArchiveCompositionTests
             new EffectiveRuleSet([], [], rules, CaseSensitivity.Sensitive),
             archive ?? new EffectiveArchiveSpec(PortableArchiveFormat.SevenZip, PortableCompressionPreset.Standard, new NoProtection()),
             history ?? new EffectiveHistoryDisabled(),
-            ruleSource is RuleSource.FileManaged ? "rules-fp" : null,
+            ruleSource is RuleSource.FileManaged ? Sha256Digest.Hash("rules-fp"u8) : null,
             parent,
             ImmutableArray<ArchiveUnitId>.Empty);
     }
@@ -169,7 +190,7 @@ public sealed class CandidateArchiveCompositionTests
     private static SourceObservationSnapshot Source(params ObservedFileSystemEntry[] entries) => Source(ObservationCompleteness.Complete, entries);
     private static SourceObservationSnapshot Source(ObservationCompleteness completeness, params ObservedFileSystemEntry[] entries) => new(SourceId, CaseSensitivity.Sensitive, entries, [], completeness);
     private static ExternalSourceSnapshot External(params ObservedFileSystemEntry[] entries) => new(ExternalId, ExternalObservedRootKind.Directory, entries, [], ObservationCompleteness.Complete);
-    private static ObservedFileSystemEntry Entry(string path, string? content = null) => new(new LogicalPath(path), FileSystemEntryKind.File, 1, content, "fp:" + path, null, null, SourceMetadata.None);
+    private static ObservedFileSystemEntry Entry(string path, string? content = null, DateTimeOffset? lastWriteTimeUtc = null) => new(new LogicalPath(path), FileSystemEntryKind.File, 1, content, ObservedContentIdentity.MetadataV1, null, lastWriteTimeUtc, null, SourceMetadata.None);
 
     private sealed class SupportedCapabilities : IArchiveCapabilityResolver
     {

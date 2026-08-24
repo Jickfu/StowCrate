@@ -2,6 +2,7 @@ using StowCrate.Core.Filesystem;
 using StowCrate.Core.Planning;
 using StowCrate.Core.Rules;
 using StowCrate.Infrastructure.Filesystem;
+using System.Security.Cryptography;
 
 namespace StowCrate.Infrastructure.Tests.Filesystem;
 
@@ -83,6 +84,24 @@ public sealed class SourceScannerTests
         var marker = Assert.Single(result.Snapshot!.Entries);
         Assert.Equal(".backupignore", marker.Path.Value);
         Assert.Null(marker.TextContent);
+    }
+
+    [Fact]
+    public void RuleSourceUsesRawBytesSha256AndStrictOptionHashesRegularFiles()
+    {
+        using var fixture = new TemporaryDirectory();
+        var ruleBytes = System.Text.Encoding.UTF8.GetBytes("*.tmp\r\n");
+        File.WriteAllBytes(Path.Combine(fixture.Path, ".backupignore"), ruleBytes);
+        File.WriteAllText(Path.Combine(fixture.Path, "data.bin"), "content");
+
+        var result = new SourceScanner().Scan(
+            new BackupSource("source", "Root"), fixture.Path,
+            new SourceScanOptions(ComputeFullContentHashes: true));
+
+        var marker = Assert.Single(result.Snapshot!.Entries, entry => entry.Path.Value == ".backupignore");
+        Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(ruleBytes)), marker.RawFileSha256);
+        Assert.Equal(marker.RawFileSha256, marker.FullContentSha256);
+        Assert.NotNull(Assert.Single(result.Snapshot.Entries, entry => entry.Path.Value == "data.bin").FullContentSha256);
     }
 
     [Fact]
@@ -254,6 +273,13 @@ public sealed class SourceScannerTests
         public string ReadAllText(string path)
         {
             return string.Empty;
+        }
+
+        public byte[] ReadAllBytes(string path) => [];
+        public string ComputeSha256(string path, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Convert.ToHexStringLower(SHA256.HashData([]));
         }
 
         public void AddDirectory(string relativePath, string fileSystemId = "source")

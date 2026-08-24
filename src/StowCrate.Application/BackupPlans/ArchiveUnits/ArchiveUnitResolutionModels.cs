@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using StowCrate.Core.BackupPlans;
 using StowCrate.Core.Paths;
 using StowCrate.Core.Rules;
+using StowCrate.Core.ChangeDetection;
 
 namespace StowCrate.Application.BackupPlans.ArchiveUnits;
 
@@ -96,6 +97,6 @@ public sealed record ResolvedArchiveUnit(
     EffectiveRuleSet EffectiveRuleSet,
     EffectiveArchiveSpec ArchiveSpec,
     EffectiveHistoryPolicy History,
-    string? RuleSourceObservationFingerprint,
+    Sha256Digest? RuleSourceObservationFingerprint,
     ArchiveUnitId? ParentArchiveUnitId,
     ImmutableArray<ArchiveUnitId> ChildArchiveUnitIds);

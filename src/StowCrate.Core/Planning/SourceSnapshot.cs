@@ -17,7 +17,9 @@ public sealed record SourceEntry
         string? contentFingerprint = null,
         DateTimeOffset? lastWriteTimeUtc = null,
         LinkInfo? link = null,
-        SourceMetadata metadataFlags = SourceMetadata.None)
+        SourceMetadata metadataFlags = SourceMetadata.None,
+        string? fullContentSha256 = null,
+        string? rawFileSha256 = null)
     {
         if (path.IsRoot)
         {
@@ -44,6 +46,8 @@ public sealed record SourceEntry
         Link = link;
         MetadataFlags = metadataFlags;
         ContentFingerprint = contentFingerprint ?? ComputeDefaultFingerprint();
+        FullContentSha256 = fullContentSha256;
+        RawFileSha256 = rawFileSha256;
     }
 
     public LogicalPath Path { get; }
@@ -61,6 +65,8 @@ public sealed record SourceEntry
     public SourceMetadata MetadataFlags { get; }
 
     public string ContentFingerprint { get; }
+    public string? FullContentSha256 { get; }
+    public string? RawFileSha256 { get; }
 
     private string ComputeDefaultFingerprint()
     {

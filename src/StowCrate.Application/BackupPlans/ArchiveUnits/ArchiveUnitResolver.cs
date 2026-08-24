@@ -223,11 +223,20 @@ public sealed class ArchiveUnitResolver(IArchiveUnitIdGenerator idGenerator) : I
 
                 try
                 {
+                    if (entry.RawFileSha256 is null)
+                    {
+                        issues.Add(new ArchiveUnitResolutionIssue(
+                            ArchiveUnitResolutionIssueCode.InvalidBackupIgnore,
+                            ".backupignore requires a raw-byte SHA-256 observation identity.",
+                            observation.SourceId,
+                            root));
+                        continue;
+                    }
                     result.Add(new DiscoveredUnit(
                         observation.SourceId,
                         root,
                         BackupIgnoreParser.ParseDocument(entry.TextContent),
-                        entry.ContentFingerprint));
+                        entry.RawFileSha256.Value));
                 }
                 catch (BackupIgnoreParseException exception)
                 {
@@ -420,7 +429,7 @@ public sealed class ArchiveUnitResolver(IArchiveUnitIdGenerator idGenerator) : I
         SourceId SourceId,
         LogicalPath Path,
         BackupIgnoreParseResult Parsed,
-        string Fingerprint);
+        StowCrate.Core.ChangeDetection.Sha256Digest Fingerprint);
 
     private sealed record ProvisionalUnit(
         ArchiveUnitId ArchiveUnitId,
@@ -431,5 +440,5 @@ public sealed class ArchiveUnitResolver(IArchiveUnitIdGenerator idGenerator) : I
         EffectiveRuleSet EffectiveRuleSet,
         EffectiveArchiveSpec ArchiveSpec,
         EffectiveHistoryPolicy History,
-        string? Fingerprint);
+        StowCrate.Core.ChangeDetection.Sha256Digest? Fingerprint);
 }
