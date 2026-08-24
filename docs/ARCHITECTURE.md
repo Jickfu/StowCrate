@@ -30,6 +30,7 @@ StowCrate.slnx
 纯领域模型与确定性规则：
 
 - `BackupPlan`、`BackupSource`、`ArchiveUnit`、`ArchiveBoundary`；
+- `SourceSnapshot` 与独立强类型 `ExternalSourceSnapshot`；二者可复用纯 entry value types，但 External snapshot 不冒充 BackupSource snapshot；
 - `RuleSet`、`BackupRule`、`RuleMode`、`RuleSource`；
 - `ArchivePlan`、`ArchiveEntry`、`ArchiveVersion`、`RetentionPolicy`；
 - portable `ArchiveSpecDefault`、逐组件 `ArchiveSpecOverride`、resolved `EffectiveArchiveSpec`，以及 Format/CompressionPreset/ArchiveSemanticsVersion；
@@ -116,6 +117,8 @@ Portable identity 使用强类型 UUID v4 `PlanId`、`SourceId`、`ArchiveUnitId
 `ResolvedPlanSnapshot` 携带 authoritative 的 pinned Global Rules Snapshot，并为 Scanner 提供已验证的 local binding。Global Rule Library 属于 Application/Infrastructure 的 authoring facility，运行时不得 live-reference 本机 library。扫描后，Application 再把 Archive Unit declarations、物理 discovery、`.backupignore` metadata/rules 与本机 registration 合成为 resolved units。Declared/Discovered origin、Plan authority 和规则文件物理路径不进入 Planning Kernel。
 
 External Source 只指向 declared Archive Unit。它由独立 no-follow observation 作为 explicit inclusion 加入目标 Candidate，不经过普通 Rules，也不在 external directory 内做 `.backupignore` rule parsing 或 Archive Unit discovery。Application/Infrastructure 使用只读 private staging，并确保最终 EntrySet 状态对应真正 materialized payload；normal/external/generated entries 在统一 path trie 中验证 owner collision、reserved namespace 和 child Boundary。
+
+`ExternalSourceSnapshot` 是不可变、平台无关的 observation boundary，关联 ExternalSourceId、root kind、relative entries 与原始业务 metadata/ScanIssue，不包含 physical binding、staging path、FileInfo、Stream 或 Handle。Infrastructure 可以复用 SourceScanner 的底层 no-follow enumeration primitive；Application 负责 ArchiveDestination mapping，Planning Kernel 只接收规范化后的 Candidate entry facts。
 
 ```text
 Portable Configuration              Device Local State

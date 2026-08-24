@@ -143,21 +143,23 @@ Name、LogicalPath、RelativePath、physical/absolute path、realpath、文件�
 
 SourceId 变化属于来源语义变化并参与 SelectionFingerprint。ArchiveUnitId 与 ExternalSourceId 只作为 identity/manifest/version/baseline reference，不直接进入 SelectionFingerprint；对应 logical path、mapping、archive destination 与其他实际选择语义仍然进入。
 
+文档 semantic validation 必须在任何 authority/local binding resolution 前验证完整 reference graph：每个 ArchiveUnitDeclaration.SourceId 必须引用同 Plan 唯一 Source；每个 ExternalSource.TargetArchiveUnitId 必须引用同 Plan declared Archive Unit；每个 Secure ProtectionConfiguration.SecretSlotId（default 或 override）必须引用同 Plan 唯一 SecretSlot。所有 portable ID 在各自集合中必须唯一，跨强类型 ID 不因文本 UUID 相同而成为同一对象。dangling、重复或类型错误引用均为 SemanticValidationFailed / InvalidDocument，不能降级为 PlanNotReady，也不能靠本机 binding 补齐。
+
 ## 10. ID 生命周期
 
-| 操作 | PlanId | SourceId | ArchiveUnitId | ExternalSourceId |
-|---|---|---|---|---|
-| 修改显示名称 | 保持 | 保持 | 保持 | 保持 |
-| 修改本机 binding | 保持 | 保持 | 保持 | 保持 |
-| Archive Unit rename/move（明确为同一对象） | 保持 | 保持 | 保持 | 保持 |
-| External Source 修改本机路径或显示名 | 保持 | 保持 | 保持 | 保持 |
-| Export Managed Plan | 保持 | 保持 | 保持 | 保持 |
-| Import as Managed | 保持 | 保持 | 保持 | 保持 |
-| Register File-backed | 保持 | 保持 | 保持 | 保持 |
-| Save As / Copy 文档 | 保持 | 保持 | 保持 | 保持 |
-| Managed ↔ File-backed | 保持 | 保持 | 保持 | 保持 |
-| Update existing identity（用户明确选择） | 保持 | 保持 | 保持 | 保持 |
-| Clone as new Plan | 重新生成 | 全部重新生成 | 全部重新生成 | 全部重新生成 |
+| 操作 | PlanId | SourceId | ArchiveUnitId | ExternalSourceId | SecretSlotId |
+|---|---|---|---|---|---|
+| 修改显示名称 | 保持 | 保持 | 保持 | 保持 | 保持 |
+| 修改本机 binding | 保持 | 保持 | 保持 | 保持 | 保持 |
+| Archive Unit rename/move（明确为同一对象） | 保持 | 保持 | 保持 | 保持 | 保持 |
+| External Source 修改本机路径或显示名 | 保持 | 保持 | 保持 | 保持 | 保持 |
+| Export Managed Plan | 保持 | 保持 | 保持 | 保持 | 保持 |
+| Import as Managed | 保持 | 保持 | 保持 | 保持 | 保持 |
+| Register File-backed | 保持 | 保持 | 保持 | 保持 | 保持 |
+| Save As / Copy 文档 | 保持 | 保持 | 保持 | 保持 | 保持 |
+| Managed ↔ File-backed | 保持 | 保持 | 保持 | 保持 | 保持 |
+| Update existing identity（用户明确选择） | 保持 | 保持 | 保持 | 保持 | 保持 |
+| Clone as new Plan | 重新生成 | 全部重新生成 | 全部重新生成 | 全部重新生成 | 全部重新生成 |
 
 Import 表示接管同一逻辑 Plan，默认保留全部 portable IDs；Clone 才表示创建新的逻辑 Plan。Clone 不继承 ArchiveVersion、CurrentVersion、Committed Baseline、local binding、secret binding 或 scheduler installation。
 
@@ -585,6 +587,8 @@ History capture 是 Current replace 的前置安全事务：HistoryRoot 不可�
 
 RetentionPolicy 进入 PlanSemanticFingerprint，但不进入 ExecutionSemanticFingerprint 或 archive fingerprints；改变它产生 HistoryMaintenanceRequired。运行期间 retention-only 变化不废弃已生成归档，但本轮必须跳过基于旧 policy 的 cleanup 并标记 out-of-sync。effective History Enabled 进入 ExecutionSemanticFingerprint；运行中变化必须 PlanChangedDuringRun，因为它改变 old Current 是否必须先捕获。
 
+PlanSemanticFingerprint 保留 authored History default/override/inherit intent。ExecutionSemanticFingerprint 只使用每单元 effective History Enabled；effective RetentionPolicy 仍只属于 maintenance。因而 inherit ↔ explicit-same-policy 在当前 default 不变时只改变 Plan semantic，不阻止相同单元发布；若仅 effective retention 改变则走 HistoryMaintenanceRequired，只有 effective Enabled 改变才是执行关键 drift。
+
 ### 18.6 ExecutionBindingFingerprint
 
 ExecutionBindingFingerprint 是一次运行的一致性输入，至少包含：
@@ -804,7 +808,7 @@ ArchiveSpecFingerprint 至少基于 EffectiveArchiveSpec、ArchiveSemanticsVersi
 - CompressionPreset 或 Protection/SecretRevision 变化通常只改变 ArchiveSpecFingerprint 并 rebuild，不改变 output path。
 - 仅 output path inheritance 表达变化而 effective format 不变时，不产生 OutputReorganization。
 
-本节只固定 portable intent、inheritance、effective resolution、single-volume、capability 与 fingerprint 边界；不定义 JSON Schema、具体 backend 参数、Archiver 实现、SQLite schema 或 metadata carrier。TarZstd 在 Schema freeze 前仍需最小 capability sanity check。
+本节只固定 portable intent、inheritance、effective resolution、single-volume、capability 与 fingerprint 边界；不定义 JSON Schema、具体 backend 参数、Archiver 实现、SQLite schema 或 metadata carrier。SevenZip、Zip、TarZstd 均已冻结为 v1 portable Format intent；某设备/adapter 暂不能忠实实现某组合时属于 `UnsupportedArchiveCapability`，不改变文档 schema validity，也不从 v1 enum 动态移除。
 
 ## 22. External Source v1
 
@@ -853,6 +857,8 @@ declaration → local binding → no-follow observation → explicit inclusion
 
 physical external input 永远只读；不得 rename、写临时文件、改 metadata 或生成 manifest 到原路径。staging 是 run-scoped implementation detail，不进入 Plan、baseline、ArchiveVersion 或 Current；陈旧 staging 只能 cleanup/diagnostics。staging 不能位于 SourceRoot、任一 External input tree 或有效 Current/History artifact namespace，也不能被 Scanner 当输入。
 
+External observation 必须形成独立、不可变、平台无关的 `ExternalSourceSnapshot + ScanIssue[]`（或等价强类型纯数据边界），至少关联 ExternalSourceId、observed root kind、相对 entries 与原始业务 metadata。它可以复用 SourceEntry/FileSystemEntry value types 和同一 filesystem scanner primitive，但不能伪装成 BackupSource `SourceSnapshot`，也不能携带 FileInfo/Stream/Handle、physical binding 或 staging path。Application 将其按 declaration mapping 规范化为 Candidate entries 后，Planning Kernel 才与 normal entries 合流。
+
 staging implementation metadata 不能替代业务 metadata。Candidate/EntrySetFingerprint 必须使用与真正 staged payload 对应的 external observed path/kind/metadata/content state；执行 materialization 要重新验证 path、entry kind 与 metadata identity，File→Link、Directory→Junction、copy/enumeration 不完整或 observation/payload 不一致均产生 IncompleteObservation 并阻止目标单元发布。其他独立单元仍按 per-unit commit 语义运行。
 
 ### 22.5 Fingerprints、manifest 与生命周期
@@ -880,6 +886,6 @@ v1 明确不支持 optional external、glob/multi-root、external rules/`.backup
 
 Identity、Portable Path/Local Binding、Global Rules、FILE_MANAGED declaration/discovery、Protection Configuration/Secret Binding、Schedule Portability、History/Output Portability、Schema Compatibility/Unknown Fields 与 Import/Update/Clone 冲突语义 P0 已确认，Backup Plan P0 已全部冻结。
 
-Backup Plan v1 的 schema-shaping domain design 已全部完成。下一步必须先进行一次 Domain Freeze Review，横向检查 `BACKUPPLAN.md`、`BACKUPIGNORE.md`、`CHANGE-DETECTION.md`、`FILESYSTEM.md`、`PRODUCT.md` 与 `ARCHITECTURE.md` 的 fingerprint 分类、authority、required binding/readiness、override inheritance、publish 时序和领域落点，并对 TarZstd 等格式做最小 capability sanity check。
+Backup Plan v1 Domain Freeze Review 已完成，结论见 `reviews/BACKUPPLAN-v1-DOMAIN-FREEZE-REVIEW.md`。required fixes 已进入规范，当前无 schema-shaping blocker，Backup Plan v1 标记为 **Domain Frozen / Ready for JSON Schema Design**。
 
-Freeze Review 无 blocker 后才可冻结领域模型并设计 `backupplan-v1.schema.json`、Document DTO/serializer，随后进入 Persistence / SQLite。本轮不定义 JSON Schema、SQLite schema、Entity、Repository 或 migration。
+下一步可以设计 `backupplan-v1.schema.json` 与 Document DTO/serializer，随后进入 Persistence / SQLite。任何新增字段、enum/variant 或改变默认语义的需求必须遵守第 19 节 schema evolution 规则；本轮仍不创建 JSON Schema、SQLite schema、Entity、Repository 或 migration。

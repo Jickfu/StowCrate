@@ -137,6 +137,8 @@ Import 与 Register 是不同操作。Register 保持文件 authoritative，后�
 
 `*.backupplan` 必须带正整数 `schemaVersion` 并使用严格 UTF-8 JSON。已知版本采用 closed-world contract：任何层级的未知字段、未知枚举值、未知联合类型或重复字段都必须拒绝，不能忽略后继续备份；未来版本必须安全提示需要新版 StowCrate，不能降级猜测。读取旧版文档只做内存迁移，不自动改写 File-backed 文件；升级和保存为新 schemaVersion 必须是用户明确操作。文档有效性、本机 binding/readiness 与归档平台 capability 是不同状态，必须分别报告。
 
+Backup Plan v1 领域模型已经 Domain Freeze Review 确认，无 schema-shaping blocker；后续 JSON Schema 必须投影既有领域契约，不能反向把 Document DTO 或数据库结构当作产品模型。
+
 v1 不提供自动、字段级、部分或 three-way merge。Update Existing 只对相同 PlanId 做整份 portable desired configuration 替换，并在确认 semantic diff 后按稳定 ID 保留适用的本机/运行状态；新增对象需要重新绑定/首次备份，移除对象的 Current、History 与 baseline 进入 inactive recovery state，不自动删除。Clone 才递归生成全部 portable IDs，且不继承 binding、Current、History、baseline 或调度状态。Managed/File-backed authority 转换和 File-backed registration relocation 即使语义相同也必须显式确认。
 
 Portable document 只保存逻辑 Source、Archive Unit 相对路径和 External Source declaration，不保存设备绝对 SourceRoot、CurrentRoot、HistoryRoot 或 External Source 路径。这些物理位置属于按 DeviceId 隔离的 Local Binding；同一个 Plan 可在不同设备重新绑定。
@@ -253,13 +255,12 @@ Scheduler installation 是 `PlanId + DeviceId` 下的本机状态，与 Plan 配
 
 ## 8. 尚未决策或需验证
 
-- 首版精确的历史保留预设和清理算法；
 - `*.backupplan` 的 v1 JSON Schema；
 - 隐私保护恢复信息在 7z、ZIP、TAR.ZST 中的可靠承载方式；
 - 7-Zip 密码能否在不出现在命令行或进程列表的前提下可靠地自动传入；
 - `config.snapshot.db` 在 Current Backup 中的最终逻辑路径与版本结构；
 - VSS/文件系统瞬时快照、ACL、xattr 和锁定文件的后续支持边界；
-- 各格式压缩预设的最终 adapter capability 验证、大小警告默认值和历史默认值。
+- 各格式压缩预设的最终 adapter capability 验证与大小警告默认值。
 - Standard 模式采用的快速文件内容 hash 算法及版本迁移策略。
 
 本项目采用 Apache License 2.0，详见仓库根目录 `LICENSE`。

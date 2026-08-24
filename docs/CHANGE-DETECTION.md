@@ -19,11 +19,11 @@
 
 ### Observed State
 
-`SourceSnapshot + ScanIssue[]` 是 Scanner 本轮看到的临时物理事实。它不代表最终选择集合、执行成功或 baseline。
+`SourceSnapshot + ScanIssue[]` 是 Scanner 对 BackupSource 本轮看到的临时物理事实。External input 使用独立强类型 `ExternalSourceSnapshot + ScanIssue[]`（可复用相同 entry value types/scanner primitive），在 Application 按 mapping 规范化后与 normal entries 汇入 Candidate。两者都不代表最终选择集合、执行成功或 baseline。
 
 ### Candidate State
 
-Planning Kernel 根据 SourceSnapshot、BackupPlan、Archive Unit、Rules、LinkPolicy、Boundary 与 External Sources 产生每个 `PlannedArchive`，再派生用于比较的 Candidate Unit State。Candidate 表示“按本轮语义执行时应生成什么”，仍不是成功状态。
+Planning Kernel 根据 SourceSnapshot、已映射的 ExternalSourceSnapshot entries、BackupPlan、Archive Unit、Rules、LinkPolicy 与 Boundary 产生每个 `PlannedArchive`，再派生用于比较的 Candidate Unit State。Candidate 表示“按本轮语义执行时应生成什么”，仍不是成功状态。
 
 ### Committed Baseline
 
