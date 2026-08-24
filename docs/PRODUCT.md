@@ -135,7 +135,7 @@ StowCrate 支持两种互斥的 Plan authority：
 
 Import 与 Register 是不同操作。Register 保持文件 authoritative，后续运行重新解析文件；不得在 SQLite 与文件之间进行隐式双向同步。Managed 与 File-backed 可以显式转换，但 authority 或文档物理位置变化本身不得触发重新归档。
 
-`*.backupplan` 必须带正整数 `schemaVersion` 并使用严格 UTF-8 JSON。已知版本采用 closed-world contract：任何层级的未知字段、未知枚举值、未知联合类型或重复字段都必须拒绝，不能忽略后继续备份；未来版本必须安全提示需要新版 StowCrate，不能降级猜测。读取旧版文档只做内存迁移，不自动改写 File-backed 文件；升级和保存为新 schemaVersion 必须是用户明确操作。文档有效性、本机 binding/readiness 与归档平台 capability 是不同状态，必须分别报告。
+`*.backupplan` 必须带正整数 `schemaVersion` 并使用严格 UTF-8 JSON；optional `$schema` 只用于 IDE/editor discovery，不 authoritative。已知版本采用 closed-world contract：任何层级的未知字段、未知枚举值、未知联合类型或重复字段都必须拒绝，不能忽略后继续备份；未来版本必须安全提示需要新版 StowCrate，不能降级猜测。读取旧版文档只做内存迁移，不自动改写 File-backed 文件；升级和保存为新 schemaVersion 必须是用户明确操作。文档有效性、本机 binding/readiness 与归档平台 capability 是不同状态，必须分别报告。
 
 Backup Plan v1 领域模型已经 Domain Freeze Review 确认，无 schema-shaping blocker；后续 JSON Schema 必须投影既有领域契约，不能反向把 Document DTO 或数据库结构当作产品模型。
 

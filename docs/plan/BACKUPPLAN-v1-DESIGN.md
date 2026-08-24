@@ -191,7 +191,7 @@ External Source v1 已确认为 explicit supplemental input，完整规范见 `B
 9. ~~Schema compatibility、unknown fields 与新版本读取策略~~：已确定；
 10. ~~Import identity conflict / merge semantics~~：已确定。
 
-Backup Plan P0 与全部 schema-shaping domain design 已完成；Domain Freeze Review 已以 required fixes 后 PASS，v1 Domain Model 已冻结并可进入 Schema design。
+Backup Plan P0、schema-shaping domain design、Domain Freeze Review 与 Schema Design Review 均已完成；下一步可以创建并审查实际 JSON Schema。
 
 ## 12. Identity + Portable Binding 结论
 
@@ -226,13 +226,13 @@ ResolvedPlanSnapshot
 
 这些语义已经进入 `BACKUPPLAN.md` 与 `BACKUPIGNORE.md`，但仍不生成 canonical JSON 示例。
 
-## 13. 当前设计焦点：JSON Schema structure design
+## 13. 当前设计焦点：实际 JSON Schema
 
 下一项按顺序解决：
 
-1. 以 `reviews/BACKUPPLAN-v1-DOMAIN-FREEZE-REVIEW.md` 的冻结矩阵为输入；
-2. 先设计 JSON 结构与 canonical 示例，再生成 closed-world JSON Schema；
-3. Document DTO/strict reader-writer 与 semantic mapper 保持独立；
+1. 以 `plan/BACKUPPLAN-v1-SCHEMA-DESIGN.md` 与 Schema Design Review 为输入；
+2. 选择 JSON Schema draft 和正式 URI，创建 closed-world Schema；
+3. 用完整正例/反例验证后再设计 Document DTO/strict reader-writer 与 semantic mapper；
 4. 不从 Schema 直接生成或复用 SQLite Entity。
 
 ## 14. 后续产物

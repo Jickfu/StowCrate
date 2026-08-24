@@ -633,7 +633,9 @@ root overlap、output path collision、destination capability 与可用空间等
 
 ### 19.1 版本分派与严格输入
 
-每份 `*.backupplan` 必须包含权威的正整数 `schemaVersion`。它是 Document Contract Version，不是 StowCrate 软件 SemVer；缺失、非整数或小于等于零分别以 `MissingSchemaVersion` / `InvalidSchemaVersion` 拒绝。reader 只把已支持版本交给对应版本解析器；未来未知版本返回 `UnsupportedSchemaVersion`，不得尝试按最近旧版本降级读取或执行。未来可增加用于 IDE discovery 的 `$schema`，但它不取代 `schemaVersion`，其 URI 可用性也不影响 reader 分派。
+每份 `*.backupplan` 必须包含权威的正整数 `schemaVersion`。它是 Document Contract Version，不是 StowCrate 软件 SemVer；缺失、非整数或小于等于零分别以 `MissingSchemaVersion` / `InvalidSchemaVersion` 拒绝。reader 只把已支持版本交给对应版本解析器；未来未知版本返回 `UnsupportedSchemaVersion`，不得尝试按最近旧版本降级读取或执行。v1 允许 optional `$schema` URI 作为 IDE/editor discovery metadata；它不取代 `schemaVersion`，URI 不可用不影响 reader 分派，也不进入 semantic fingerprint。
+
+v1 portable document 必须显式固定 `RulesSemanticsVersion`、`ArchiveSemanticsVersion` 与 `OutputPathEncodingVersion`（Schema property shape 见 Schema Design）。它们分别固定 Plan 内规则、EffectiveArchiveSpec backend mapping 与 Current logical-output encoding 的长期含义。FingerprintFormat、scanner、External mapping、Schedule/DST、Privacy 子语义、manifest schema 和 storage binding 等版本仍属于各自 runtime/baseline/artifact 或已由 schemaVersion/archive pin 覆盖，不得为实现方便继续暴露为 portable Plan 字段。
 
 v1 只接受 UTF-8；允许读取 UTF-8 BOM，writer 默认输出无 BOM 的 UTF-8。输入必须是严格标准 JSON，不接受 comment、trailing comma、single quote、NaN 或 Infinity。property name 大小写敏感；重复 property 必须在解析阶段主动检测并以 `DuplicateProperty` 拒绝，不能采用 first-wins 或 last-wins。
 
@@ -888,4 +890,4 @@ Identity、Portable Path/Local Binding、Global Rules、FILE_MANAGED declaration
 
 Backup Plan v1 Domain Freeze Review 已完成，结论见 `reviews/BACKUPPLAN-v1-DOMAIN-FREEZE-REVIEW.md`。required fixes 已进入规范，当前无 schema-shaping blocker，Backup Plan v1 标记为 **Domain Frozen / Ready for JSON Schema Design**。
 
-下一步可以设计 `backupplan-v1.schema.json` 与 Document DTO/serializer，随后进入 Persistence / SQLite。任何新增字段、enum/variant 或改变默认语义的需求必须遵守第 19 节 schema evolution 规则；本轮仍不创建 JSON Schema、SQLite schema、Entity、Repository 或 migration。
+Schema structure design 与 review 已完成，见 `plan/BACKUPPLAN-v1-SCHEMA-DESIGN.md` 和 `reviews/BACKUPPLAN-v1-SCHEMA-DESIGN-REVIEW.md`。下一步可以创建并审查 `backupplan-v1.schema.json`，但 Document DTO/serializer/semantic mapper 与 Persistence / SQLite 仍是后续独立边界。任何新增字段、enum/variant 或改变默认语义的需求必须遵守第 19 节 schema evolution 规则；本轮仍不创建 JSON Schema、SQLite schema、Entity、Repository 或 migration。
