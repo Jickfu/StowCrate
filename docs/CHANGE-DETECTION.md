@@ -62,8 +62,11 @@ Archive Unit logical path 仍然进入 SelectionFingerprint：即使 identity �
 
 - format、compression algorithm/level、solid mode、volume size；
 - metadata preservation 与 protection mode；
-- Secret Reference ID 与 revision，绝不包含 secret value；
+- Secure protection 使用的 portable `SecretSlotId` 与当前设备 local `SecretRevision`；
+- Privacy protection semantics version；
 - manifest schema 与 archive semantics version。
+
+`SecretValue`、secret-derived verifier/hash、OS `SecretReference`/locator、Secret Store provider/implementation、`DeviceId`、Privacy 每次执行随机生成的 key/nonce/recovery material bytes 都不进入 ArchiveSpecFingerprint。`SecretRevision` 由 StowCrate 在 Set/Replace/Rebind 有效 secret 时保守递增；即使新值与旧值相同也允许额外 rebuild，不得通过持久化 secret hash 判断相等。
 
 调度、History retention、UI 状态、日志级别、CurrentRoot 和 HistoryRoot 不进入 ArchiveSpecFingerprint。输出根变化产生 Storage Relocation，而不是 Archive Rebuild。应用版本本身不进入 fingerprint；只有行为 semantics/schema version 变化才使 baseline 失效。
 
@@ -144,7 +147,7 @@ Scan / Candidate / Change Decision
 
 概念状态为 `Prepared → Verified → Published → Superseded`，失败可进入 `Failed`；只有 Published 可以作为 baseline。这些是领域/事务语义，不预先规定 SQLite schema。
 
-运行开始时捕获 `ExecutionSemanticSnapshot`，发布前再次检查。它至少包含 Managed Plan 的 PlanRevision（适用时）、PlanSemanticFingerprint，以及所有已解析外部规则源的 fingerprint。FILE_MANAGED 的 `.backupignore` 必须纳入外部规则源 fingerprint；从规则解析/扫描到发布前只要文件发生变化，即按 PlanChangedDuringRun 处理，默认不发布、不提交 baseline。这里的 reason 覆盖整个已解析执行配置，不只覆盖 `*.backupplan`。
+运行开始时捕获 `ExecutionSemanticSnapshot`，发布前再次检查。它至少包含 Managed Plan 的 PlanRevision（适用时）、PlanSemanticFingerprint、所有已解析外部规则源的 fingerprint，以及 Secure protection 实际解析的 `SecretSlotId + SecretRevision`。FILE_MANAGED 的 `.backupignore` 或 secret revision 从规则解析/规划到发布前只要发生变化，即按 PlanChangedDuringRun 处理，默认不发布、不提交 baseline。这里的 reason 覆盖整个已解析执行配置，不只覆盖 `*.backupplan`。
 
 外部规则源 fingerprint 必须基于运行实际读取的文件 bytes 和版本化解析语义确定，不能只依赖 mtime。即使一次变化解析后得到相同规则，也不得让本轮以过期的规则源观察结果发布。执行层还必须按 `FILESYSTEM.md` 重新验证关键 path/kind/metadata，防止 TOCTOU 类型替换。
 
@@ -172,7 +175,7 @@ Change Detector 位于 Core 或 Application 的纯逻辑边界，只接收 Candi
 
 ## 10. 规范测试矩阵
 
-至少覆盖：无 baseline、完全一致、增删文件、size/mtime/link target、Rules/Boundary/LinkPolicy/External Source、格式/压缩/secret revision/manifest schema、非归档设置不触发、输入顺序稳定、semantics version、invalid baseline、Standard/Strict、cache 丢失、partial unit success、失败/取消/发布前不提交、stale plan、运行中 `.backupignore` 变化、identity-only 变化不改变 SelectionFingerprint、logical path 变化会改变 SelectionFingerprint、Incomplete Observation 阻止与 IntentionalSkip 允许。
+至少覆盖：无 baseline、完全一致、增删文件、size/mtime/link target、Rules/Boundary/LinkPolicy/External Source、格式/压缩/ProtectionMode/SecretSlotId/SecretRevision/Privacy semantics/manifest schema、secret reference/provider 变化不触发、Privacy 随机材料不触发、非归档设置不触发、输入顺序稳定、semantics version、invalid baseline、Standard/Strict、cache 丢失、partial unit success、失败/取消/发布前不提交、stale plan、运行中 `.backupignore` 或 SecretRevision 变化、identity-only 变化不改变 SelectionFingerprint、logical path 变化会改变 SelectionFingerprint、Incomplete Observation 阻止与 IntentionalSkip 允许。
 
 ## 11. 与现有仓库的差异和迁移约束
 

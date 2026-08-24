@@ -52,7 +52,7 @@ StowCrate 是面向开发者和个人重要资料的**结构化归档备份工�
 - 压缩、归档保护、卷大小、历史保留和调度设置；
 - 可选外部源映射。
 
-Plan、Source、Archive Unit 与 External Source 都具有与名称和路径分离的稳定 UUID v4 identity。rename、move、Export、Import、Save As 和 Managed/File-backed 转换保持 identity；只有明确 Clone 为新 Plan 时递归生成全部新 identity。
+Plan、Source、Archive Unit、External Source 与 Secret Slot 都具有与名称和路径分离的稳定 UUID v4 identity。rename、move、Export、Import、Save As 和 Managed/File-backed 转换保持 identity；只有明确 Clone 为新 Plan 时递归生成全部新 identity，且不复制本机 Secret Binding。
 
 `SourceRoot`、`CurrentRoot` 和 `HistoryRoot` 经过绝对化、分隔符与大小写等平台规则规范化后必须两两不重叠：任意两个路径不得相等，任意一个也不得是另一个的祖先或子孙目录。该规则同时禁止 Source/输出递归、History 位于 Current 内，以及 Current 或 History 位于 Source 内。检测到冲突时必须阻止保存或执行方案并明确指出冲突路径，不能只跳过部分目录后继续。
 
@@ -173,11 +173,15 @@ Local Binding v1 可以使用 StowCrate 定义的 `${HOME}` 根变量，但不�
 
 归档保护在 UI 中明确分为：
 
-1. **无保护**：内容可直接读取；
-2. **隐私保护**：内容加密，但恢复信息随归档保存，只用于阻止预览、索引或简单扫描，明确声明不提供安全保密；
-3. **安全加密**：密码不写入归档，没有外部保存的秘密无法恢复。
+1. **无保护（None）**：不加密，不使用 Secret；
+2. **隐私保护（Privacy）**：内容经过加密或遮蔽，恢复所需材料随备份 artifact 保存，只用于阻止预览、索引、误打开或低成本扫描，明确声明不提供机密性保证；
+3. **安全加密（Secure）**：使用外部 Secret 真正加密，恢复秘密默认不随归档保存；没有独立保存的 Secret 或未来显式导出的 Recovery Package 就无法恢复。
 
-“隐私保护”的跨格式承载方式仍需原型验证，不能先把 archive comment 当作可靠协议。安全加密的秘密交给系统 Secret Store，并支持用户单独导出恢复密钥。
+Portable Plan 只声明 Protection Configuration 和 plan-scoped portable Secret Slot，不保存密码、secret-derived hash、平台 Secret Store locator、加密 blob 或恢复材料。Secure 所需 Secret 通过当前设备的显式 Local Binding 关联系统 Secret Store；Import、Register 或 Clone 不得按名称自动绑定或复制 Secret。
+
+None 与 Privacy 禁止引用用户 Secret Slot；Secure 必须引用 Secret Slot，缺少 binding 时 PlanNotReady。无头运行无法读取 Secret 时必须阻止并清晰报告，不能等待 GUI 输入，也不能降级保护模式。
+
+“隐私保护”的跨格式恢复材料承载方式仍需原型验证，不能先把 archive comment、普通 manifest、sidecar 或 extra field 固定为协议。Secure 的 Recovery Export 是未来独立、显式的安全 artifact，不属于 `*.backupplan`，也不得默认复制到 Current。
 
 ### 4.8 外部源
 
@@ -205,6 +209,7 @@ External Source 在 portable configuration 中使用稳定 ExternalSourceId、�
 - 每个归档包含版本化的 `__stowcrate__/manifest.json`，记录非秘密的来源逻辑标识、创建时间、应用版本、规则摘要、文件数量、大小、子边界和完整性信息。
 - `config.db` 是重要配置，通过一致快照备份；Current ArchiveVersion 及其 Committed Baseline 属于 `config.db` 的持久事实。`cache.db` 只保存可重建的逐文件 hash、扫描状态和平台游标，不属于灾难恢复必需数据。
 - 配置导出、清单和日志不包含明文密码、云令牌或恢复密钥。
+- 对 Secure Plan，`*.backupplan`、Current、History 和 `config.db` 快照都不保证具备解密能力；用户还必须独立保有 Secret 或未来显式导出的 Recovery Package，产品必须避免暗示“导出 Plan 等于备份密码”。
 
 ## 7. 首版范围
 

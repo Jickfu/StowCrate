@@ -32,6 +32,7 @@ StowCrate.slnx
 - `BackupPlan`、`BackupSource`、`ArchiveUnit`、`ArchiveBoundary`；
 - `RuleSet`、`BackupRule`、`RuleMode`、`RuleSource`；
 - `ArchivePlan`、`ArchiveEntry`、`ArchiveVersion`、`RetentionPolicy`；
+- `ProtectionConfiguration`、强类型 `SecretSlotId` 与 resolved `SecretRevision`，但不包含 OS SecretReference 或 SecretValue；
 - 逻辑路径、归档内路径、结果与错误类型。
 
 不得依赖 Avalonia、SQLite、7-Zip、进程调用或 OS API。
@@ -45,6 +46,7 @@ StowCrate.slnx
 - 检测变化、执行备份、发布 Current、管理 History；
 - 导入/导出 `.backupignore` 和 Backup Plan 文件（`*.backupplan`）；
 - Import Managed Plan、Register File-backed Plan，并把两种 authority 解析为统一的 immutable Plan Snapshot；
+- 管理 Secret Slot 的显式 Bind/Set/Replace/Unbind，用 local SecretRevision 维护变更语义并验证交互式/无头 readiness；
 - 智能项目识别与建议确认；
 - 恢复、验证、配置快照和任务结果查询。
 
@@ -54,7 +56,7 @@ StowCrate.slnx
 
 实现应用端口：
 
-- SQLite `config.db`、`cache.db` 与迁移；
+- SQLite `config.db`、`cache.db` 与迁移；数据库只保存 secret binding metadata、revision、provider 与 opaque reference，不保存 SecretValue 或 secret-derived verifier；
 - 物理文件系统、路径映射、staging 与原子替换；
 - no-follow `SourceScanner`、平台对象分类和文件系统边界探测；
 - `.backupignore`/`*.backupplan` 序列化；
@@ -70,7 +72,7 @@ StowCrate.slnx
 - 7-Zip/7zz 进程适配；
 - ZIP；
 - TAR.ZST 与平台元数据策略；
-- 分卷、加密、测试、哈希和能力探测。
+- 分卷、加密、测试、哈希和 `SupportsSecureEncryption` / `SupportsPrivacyProtection` 等 capability 探测。
 
 外部可执行文件的许可、版本、路径和能力必须显式管理。应用层不得拼接命令行。
 
@@ -86,7 +88,7 @@ Registered *.backupplan ─────────────┘
 
 Plan authority、registration path、local binding 与 scheduler installation state 是 Application/Infrastructure 管理信息，不进入 Core `BackupPlan`。同一 Plan 只能有一个 authoritative configuration source。不存在自动双向同步；Import 是复制为 Managed，Register 是链接到 File-backed document。
 
-Portable identity 使用强类型 UUID v4 `PlanId`、`SourceId`、`ArchiveUnitId`、`ExternalSourceId`。Application 将 portable declaration 与当前 DeviceId 下的 Local Binding 合成为 `ResolvedPlanSnapshot`；Core 不读取 DeviceId、hostname、环境变量、registration path 或数据库键。
+Portable identity 使用强类型 UUID v4 `PlanId`、`SourceId`、`ArchiveUnitId`、`ExternalSourceId`、`SecretSlotId`。Application 将 portable declaration 与当前 DeviceId 下的 Local Binding 合成为 `ResolvedPlanSnapshot`；Core 不读取 DeviceId、hostname、环境变量、registration path、OS SecretReference 或数据库键。
 
 `ResolvedPlanSnapshot` 携带 authoritative 的 pinned Global Rules Snapshot，并为 Scanner 提供已验证的 local binding。Global Rule Library 属于 Application/Infrastructure 的 authoring facility，运行时不得 live-reference 本机 library。扫描后，Application 再把 Archive Unit declarations、物理 discovery、`.backupignore` metadata/rules 与本机 registration 合成为 resolved units。Declared/Discovered origin、Plan authority 和规则文件物理路径不进入 Planning Kernel。
 
@@ -94,6 +96,7 @@ Portable identity 使用强类型 UUID v4 `PlanId`、`SourceId`、`ArchiveUnitId
 Portable Configuration              Device Local State
 PlanId / SourceId                    DeviceId / Registration
 ArchiveUnitId / ExternalSourceId  +  Source/External physical bindings
+SecretSlotId / Protection intent     Secret binding / local SecretRevision
 Logical paths / policies             CurrentRoot / HistoryRoot
                                    → validated ResolvedPlanSnapshot
 ```
@@ -198,14 +201,14 @@ cache.db   — 文件状态、哈希、扫描缓存和平台游标（可重建�
 
 Plan authority、`PlanId`、`ArchiveUnitId`、`ExternalSourceId`、`DeviceId`、Global Rule Library provenance 和 `*.backupplan` 的物理存放路径不属于 SelectionFingerprint 或 ArchiveSpecFingerprint；`SourceId`、Archive Unit logical path 与实际选择/映射语义仍属于 SelectionFingerprint。Managed 与 File-backed 解析出相同语义 Plan Snapshot 时，切换 authority 或移动注册文件不得触发 rebuild。
 
-每次运行捕获 `ExecutionSemanticSnapshot`：包含适用的 PlanRevision、PlanSemanticFingerprint 和所有已解析外部规则源 fingerprint。Publish 前重新读取并比较；`*.backupplan` 或任一 FILE_MANAGED `.backupignore` 变化时均按 PlanChangedDuringRun 处理。
+每次运行捕获 `ExecutionSemanticSnapshot`：包含适用的 PlanRevision、PlanSemanticFingerprint、所有已解析外部规则源 fingerprint，以及 Secure protection 使用的 `SecretSlotId + SecretRevision`。Publish 前重新读取并比较；`*.backupplan`、任一 FILE_MANAGED `.backupignore` 或 SecretRevision 变化时均按 PlanChangedDuringRun 处理。
 
 ## 7. SQLite 与配置恢复
 
 - 使用 schema migration 和事务；数据库 DTO 不直接充当领域对象。
 - `config.db` 的灾难恢复副本通过 SQLite Online Backup API 生成一致的 `config.snapshot.db`。
 - `cache.db` 不备份，缺失时自动重建。
-- 秘密只保存引用 ID；值位于平台 Secret Store。
+- portable configuration 只保存 SecretSlot declaration；local state 只保存 binding metadata、SecretRevision、provider 与 opaque SecretReference；SecretValue 位于平台 Secret Store。
 - `*.backupplan` 和归档 manifest 使用显式 `schemaVersion`，读取器对未知新版本安全失败并给出可操作提示。
 
 ## 8. 归档清单
@@ -225,7 +228,7 @@ manifest 不保存真实密码、密钥、token 或不必要的主机隐私信�
 
 | 能力 | Windows | macOS | Linux | 便携回退 |
 |---|---|---|---|---|
-| Secret Store | Credential Manager/DPAPI | Keychain | Secret Service/libsecret | 无明文回退；要求用户输入 |
+| Secret Store | Credential Manager/DPAPI | Keychain | Secret Service/libsecret | 无明文回退；缺少可用 Secret Store 时阻止 Secure |
 | Scheduler | Task Scheduler | launchd | systemd timer/cron | 手动/外部调用 CLI |
 | Change hint | USN Journal | FSEvents | inotify | 全量元数据扫描 |
 | Metadata | NTFS ACL/ADS | APFS xattr/ACL | POSIX/xattr/ACL | 明确警告并保存可支持子集 |
@@ -235,7 +238,9 @@ manifest 不保存真实密码、密钥、token 或不必要的主机隐私信�
 
 ## 10. 安全与可靠性
 
-- 归档密码不出现在命令行、日志、崩溃报告或进程列表；若 CLI 工具无法满足，应通过受控输入或库接口解决。
+- SecretValue、Privacy recovery material 和 secret-derived verifier 不得进入普通 manifest、`*.backupplan`、SQLite、cache、日志、异常、telemetry、crash annotations、命令行、进程环境或进程列表。Privacy 的未来专用 recovery carrier 与 Secure 的显式 Recovery Package 是独立受控 artifact，不改变普通 manifest 的非秘密职责。
+- SecretValue 只允许存在于平台 Secret Store 和执行所需的最短生命周期内存中。Archiver 只能在执行边界获得临时 Secret Material，不能获得 OS locator；若 CLI 工具无法通过受控 stdin/library/IPC 等方式满足，应更换接口，不能使用参数或环境变量传递。
+- Planning Kernel 不读取 SecretValue；Application 只向规划提供 ProtectionMode、SecretSlotId 与 SecretRevision，并负责 binding existence/availability validation。MissingSecretBinding、SecretUnavailable、SecretStoreError 必须安全阻止；headless 不得弹窗等待或降低为 None/Privacy。
 - `.backupignore`、`*.backupplan` 和源路径均视为不可信输入，防止路径穿越和归档条目逃逸。
 - 首版不跟随任何链接；默认保留链接对象及 raw target，可配置为 Skip。未知 Reparse Point 与 Unix 特殊文件不遍历且必须报告。
 - 解压/恢复前检测目标覆盖、路径穿越、磁盘空间和大小写冲突。
@@ -244,10 +249,10 @@ manifest 不保存真实密码、密钥、token 或不必要的主机隐私信�
 ## 11. 测试策略
 
 - **Core 单元测试**：规则语义、层级边界、路径规范化、ArchivePlan 稳定性。
-- **Application 测试**：变化原因、独立 baseline commit、History 切换、取消、失败补偿、预览与结果。
+- **Application 测试**：变化原因、独立 baseline commit、History 切换、取消、失败补偿、预览与结果，以及 MissingSecretBinding/SecretUnavailable/SecretStoreError、SecretRevision drift 与 headless 不降级。
 - **Infrastructure 集成测试**：SQLite migration/backup、文件锁、原子替换、调度适配。
-- **Archiving 契约测试**：每种格式的创建、测试、恢复、加密、Unicode、大文件和分卷。
-- **跨平台测试**：Windows/macOS/Linux CI，大小写、权限、链接和长路径 fixture。
+- **Archiving 契约测试**：每种格式的创建、测试、恢复、加密、Unicode、大文件和分卷；验证 protection capabilities，且 SecretValue 不出现在参数、环境、日志或诊断输出。
+- **跨平台测试**：Windows/macOS/Linux CI，大小写、权限、链接和长路径 fixture；Secret Store prototype 还必须覆盖 GUI 用户与 Task Scheduler/launchd/systemd timer/cron 的实际执行身份。
 - **故障注入测试**：写入中断、空间不足、损坏归档、进程退出、Current/History 移动失败。
 - **架构测试**：验证项目依赖方向、Core 不引用 Avalonia/SQLite、Application 不引用外层项目，以及 ViewModel 不直接引用 SQLite。
 
