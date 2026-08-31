@@ -892,7 +892,7 @@ v1 明确不支持 optional external、glob/multi-root、external rules/`.backup
 1. **`.backupignore v1` Directive 集合变化**：规范最初只允许 `@version/@mode/@case`；现在已正式加入可选 `@id`。parser 已通过兼容旧 API 的完整 parse result 返回 optional canonical lowercase UUID-v4 identity，并保留 RuleSet；解析和 identity resolution 均不修改文件。
 2. **Fingerprint 强类型与字段**：ArchiveUnitId/ExternalSourceId 已正式排除于 SelectionFingerprint，logical source/path/mapping 仍包含；当前 Core 尚未实现这些强类型 fingerprint，不得把旧聚合 string 当作 v1 durable baseline。
 3. **Baseline key 与 DeviceId**：Change Detection 的 `PlanId + ArchiveUnitId` 是 portable unit key；DeviceId 只作为本机 registration/binding/runtime namespace，不替换该 key。
-4. **实现现状**：M3 已实现 strict document runtime、frozen portable domain、semantic validation、deterministic writer、`ResolvedPlanSnapshot`、typed observation/discovery → `ResolvedArchiveUnitSet`，以及 Candidate composition + Execution Readiness pure stages。尚未实现 Candidate fingerprints/Change Decision integration、Local/Secret/Schedule/Storage Binding persistence、physical output encoding adapter、confirmed relocation workflow、Import/Update/Clone 或完整 Current/History publish。本文不授权提前实现 SQLite persistence。
+4. **实现现状**：M3 已实现 strict document runtime、frozen portable domain、device resolution/observation、Candidate/Readiness、strong fingerprints/change decision，以及 ExecutionSemanticSnapshot + ArchiveVersion/Baseline/PublishIntent durable contract。尚未实现 Local Durable State/config.db schema/repository、物理 publisher、confirmed relocation workflow、Import/Update/Clone 或完整 Current/History execution。本文不授权在 M3.9 Schema Design 前实现 SQLite persistence。
 
 ## 24. 当前未决顺序
 

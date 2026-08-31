@@ -136,6 +136,23 @@ public sealed class CandidateArchiveCompositionTests
         Assert.Contains(missingHash.Errors, error => error.Code == CandidateFingerprintErrorCode.MissingStrictContentHash);
     }
 
+    [Fact]
+    public void LocalSecretRevisionAndCapabilityAffectArchiveSpecButNotExecutionSemantic()
+    {
+        var plan = Plan(includeExternal: false);
+        var unit = Unit(UnitId, "project", RuleSource.UiManaged,
+            archive: new EffectiveArchiveSpec(PortableArchiveFormat.SevenZip, PortableCompressionPreset.Standard, new SecureProtection(SecretId)));
+        var candidate = new CandidateArchiveComposer().Compose(plan, Units([unit], Source(Entry("project/a")), External()), []).Archives[0];
+        var first = new ExecutionReadyArchive(candidate, new ResolvedArchiveCapability("cap-a"), unit.History, new SecureRevisionRequirement(SecretId, new SecretRevision(1)));
+        var second = new ExecutionReadyArchive(candidate, new ResolvedArchiveCapability("cap-b"), unit.History, new SecureRevisionRequirement(SecretId, new SecretRevision(2)));
+
+        var firstFingerprints = CandidateFingerprintCalculator.Compute(plan, first, new StorageBindingFingerprintFacts(1, "fs")).Fingerprints!;
+        var secondFingerprints = CandidateFingerprintCalculator.Compute(plan, second, new StorageBindingFingerprintFacts(1, "fs")).Fingerprints!;
+
+        Assert.NotEqual(firstFingerprints.ArchiveSpec, secondFingerprints.ArchiveSpec);
+        Assert.Equal(firstFingerprints.ExecutionSemantic, secondFingerprints.ExecutionSemantic);
+    }
+
     private static ResolvedPlanSnapshot Plan(
         PortableSemanticsPins? semantics = null,
         bool includeExternal = true,

@@ -14,6 +14,7 @@ public static class CandidateChangeEvaluator
         CandidateArchiveSet candidateSet,
         ExecutionReadyArchive? readyArchive,
         CommittedArchiveUnitBaseline? baseline,
+        CommittedOutputLayoutState? committedOutputLayout,
         StorageBindingFingerprintFacts storageFacts)
     {
         ArgumentNullException.ThrowIfNull(plan);
@@ -41,7 +42,7 @@ public static class CandidateChangeEvaluator
 
         return new CandidateChangeEvaluation(
             computed.Fingerprints,
-            ChangeDetector.Detect(computed.Fingerprints, baseline),
+            ChangeDetector.Detect(computed.Fingerprints, baseline, committedOutputLayout),
             computed.Errors);
     }
 }

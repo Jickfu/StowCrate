@@ -103,6 +103,18 @@ ResolvedPlanSnapshot
 - pure `CommittedArchiveUnitBaseline` 以 `PlanId + ArchiveUnitId` 为 identity，并拒绝 preview/incomplete candidate；
 - Change Decision 独立表达 archive rebuild 与 output reorganization，unknown encoding/semantics 按 BaselineInvalid 保守处理。
 
-## 下一项：ExecutionSemanticSnapshot + Baseline / ArchiveVersion Durable State Contract
+## 已完成：ExecutionSemanticSnapshot + Baseline / ArchiveVersion Durable State Contract
 
-把 strong fingerprints 接入 publish 前 stale guard、ArchiveVersion 与 baseline durable commit state model；仍不实现 SQLite/EF repository、Archiver、External staging/TOCTOU 或 Current/History publish。
+- `ExecutionSemanticFingerprint` 已与 local SecretRevision/resolved capability state解耦，后两者继续属于 ArchiveSpec bytes semantics或 snapshot local stale facts；
+- 新增完整 authored `PlanSemanticFingerprint`，保留 inherit/explicit intent并覆盖 Schedule/Retention，但排除 authority、binding、runtime 与 provenance；
+- `ExecutionSemanticSnapshot` 按 unit 冻结 execution/binding/rule-source/secret revision/history maintenance facts；
+- publish-time revalidator 允许 schedule/display/unrelated-unit drift，retention-only drift允许 publish但跳过 cleanup，其余 unit execution-critical drift安全阻止；
+- Core 新增 `ArchiveVersionId`、ArchiveVersion lifecycle、CurrentVersion pointer、StorageSlot/RelativeStoragePath 与独立 committed OutputLayout state；
+- Candidate 只能生成 `BaselineCandidate`；真正 baseline 只在 Published Current 的 metadata commit plan确认后产生；
+- PendingPublishIntent 冻结 Prepared → HistoryCaptured → CurrentPublished → MetadataCommitted，并要求 old Current 的 History copy/hash/publish proof；
+- crash recovery只根据 old/expected-new integrity作出 abort/resume、complete metadata或 ambiguous blocker决策；
+- output reorganization保持同一 ArchiveVersionId，post-commit retention/old-path cleanup失败只形成 maintenance out-of-sync状态。
+
+## 下一项：M3.9 Local Durable State / config.db Schema Design & Repository Contracts
+
+把已冻结的 ArchiveVersion、CurrentVersion、Baseline、PublishIntent、bindings/registrations 等状态机械映射到 SQLite 设计与 repository ports；本阶段之后才允许持久化实现，不让 EF schema 反向定义领域模型。

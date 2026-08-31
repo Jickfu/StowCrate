@@ -17,6 +17,39 @@ public sealed record CandidateFingerprintResult(CandidateArchiveFingerprints? Fi
 
 public static class CandidateFingerprintCalculator
 {
+    public static PlanSemanticFingerprint ComputePlanSemantic(PortableBackupPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        return new PlanSemanticFingerprint(CanonicalFingerprintEncodingV1.Encode("plan-semantic", writer =>
+        {
+            writer.Utf8(1, plan.Id.Value.ToString("D"));
+            writer.Utf8(2, plan.Name);
+            writer.Utf8(3, plan.Description ?? string.Empty);
+            writer.SignedNumber(4, plan.Semantics.Rules);
+            writer.SignedNumber(5, plan.Semantics.Archive);
+            writer.SignedNumber(6, plan.Semantics.OutputPathEncoding);
+            foreach (var source in plan.Sources.OrderBy(item => item.Id.Value.ToString("D"), StringComparer.Ordinal))
+                writer.Digest(10, CanonicalFingerprintEncodingV1.Encode("authored-source", nested => { nested.Utf8(1, source.Id.Value.ToString("D")); nested.Utf8(2, source.Name); nested.Utf8(3, source.SourceOutputPath.Value); }));
+            WriteRules(writer, 20, plan.GlobalRules.Rules);
+            WriteRules(writer, 21, plan.PlanRules);
+            writer.Digest(30, AuthoredArchiveSpecDigest(plan.ArchiveSpecDefault));
+            foreach (var unit in plan.ArchiveUnits.OrderBy(item => item.Id.Value.ToString("D"), StringComparer.Ordinal))
+                writer.Digest(31, AuthoredUnitDigest(unit));
+            foreach (var slot in plan.SecretSlots.OrderBy(item => item.Id.Value.ToString("D"), StringComparer.Ordinal))
+                writer.Digest(32, CanonicalFingerprintEncodingV1.Encode("secret-slot", nested => { nested.Utf8(1, slot.Id.Value.ToString("D")); nested.Utf8(2, slot.Name); }));
+            writer.SignedNumber(40, (int)plan.LinkPolicy);
+            writer.SignedNumber(41, (int)plan.ChangeDetection);
+            writer.Digest(42, AuthoredHistoryDigest(plan.HistoryDefault));
+            writer.Digest(43, ScheduleDigest(plan.Schedule));
+            foreach (var external in plan.ExternalSources.OrderBy(item => item.Id.Value.ToString("D"), StringComparer.Ordinal))
+                writer.Digest(44, CanonicalFingerprintEncodingV1.Encode("authored-external", nested =>
+                {
+                    nested.Utf8(1, external.Id.Value.ToString("D")); nested.Utf8(2, external.Name);
+                    nested.SignedNumber(3, (int)external.Kind); nested.Utf8(4, external.TargetArchiveUnitId.Value.ToString("D")); nested.Utf8(5, external.ArchiveDestination.Value);
+                }));
+        }));
+    }
+
     public static CandidateFingerprintResult Compute(
         ResolvedPlanSnapshot plan,
         ExecutionReadyArchive ready,
@@ -110,9 +143,14 @@ public static class CandidateFingerprintCalculator
         var executionSemantic = new ExecutionSemanticFingerprint(CanonicalFingerprintEncodingV1.Encode("execution-semantic", writer =>
         {
             writer.Digest(1, selection.Digest);
-            writer.Digest(2, archiveSpec.Digest);
-            writer.Digest(3, output.Digest);
-            writer.Boolean(4, unit.History is EffectiveHistoryEnabled);
+            // 这里只编码 portable/effective 语义；SecretRevision 与 resolved capability 保持为独立 local stale facts。
+            writer.SignedNumber(2, plan.Semantics.Archive);
+            writer.Digest(3, format.Digest);
+            writer.Digest(4, compression.Digest);
+            writer.Digest(5, EffectiveProtectionDigest(unit.ArchiveSpec.Protection));
+            writer.Digest(6, output.Digest);
+            writer.Boolean(7, unit.History is EffectiveHistoryEnabled);
+            writer.SignedNumber(8, archive.GeneratedMetadata.ManifestSchemaVersion);
         }));
         var binding = new ExecutionBindingFingerprint(CanonicalFingerprintEncodingV1.Encode("execution-binding", writer =>
         {
@@ -175,4 +213,78 @@ public static class CandidateFingerprintCalculator
             default: throw new InvalidOperationException("Unknown protection variant.");
         }
     }
+
+    private static Sha256Digest EffectiveProtectionDigest(AuthoredProtection protection) => CanonicalFingerprintEncodingV1.Encode("effective-protection", writer =>
+    {
+        switch (protection)
+        {
+            case NoProtection: writer.SignedNumber(1, 0); break;
+            case PrivacyProtection: writer.SignedNumber(1, 1); writer.SignedNumber(2, CandidateRuntimeSemantics.PrivacyProtectionVersion); break;
+            case SecureProtection secure: writer.SignedNumber(1, 2); writer.Utf8(3, secure.SecretSlotId.Value.ToString("D")); break;
+            default: throw new InvalidOperationException("Unknown protection variant.");
+        }
+    });
+
+    private static Sha256Digest AuthoredArchiveSpecDigest(AuthoredArchiveSpec spec) => CanonicalFingerprintEncodingV1.Encode("authored-archive-spec", writer =>
+    {
+        writer.SignedNumber(1, (int)spec.Format); writer.SignedNumber(2, (int)spec.CompressionPreset); writer.Digest(3, EffectiveProtectionDigest(spec.Protection));
+    });
+
+    private static Sha256Digest AuthoredUnitDigest(AuthoredArchiveUnit unit) => CanonicalFingerprintEncodingV1.Encode("authored-unit", writer =>
+    {
+        writer.Utf8(1, unit.Id.Value.ToString("D")); writer.Utf8(2, unit.SourceId.Value.ToString("D")); writer.Utf8(3, unit.Path.Value);
+        writer.SignedNumber(4, unit is UiManagedArchiveUnit ? 1 : 2);
+        if (unit is UiManagedArchiveUnit ui) { writer.SignedNumber(5, (int)ui.LocalRules.Mode); writer.SignedNumber(6, (int)ui.LocalRules.CaseSensitivity); WriteRules(writer, 7, ui.LocalRules.Rules); }
+        if (unit.ArchiveSpecOverride is null) writer.SignedNumber(10, 0);
+        else
+        {
+            writer.SignedNumber(10, 1);
+            writer.SignedNumber(11, unit.ArchiveSpecOverride.Format is null ? -1 : (int)unit.ArchiveSpecOverride.Format.Value);
+            writer.SignedNumber(12, unit.ArchiveSpecOverride.CompressionPreset is null ? -1 : (int)unit.ArchiveSpecOverride.CompressionPreset.Value);
+            if (unit.ArchiveSpecOverride.Protection is null) writer.SignedNumber(13, -1); else writer.Digest(14, EffectiveProtectionDigest(unit.ArchiveSpecOverride.Protection));
+        }
+        if (unit.HistoryOverride is null) writer.SignedNumber(20, 0); else writer.Digest(21, AuthoredHistoryOverrideDigest(unit.HistoryOverride));
+    });
+
+    private static Sha256Digest AuthoredHistoryDigest(AuthoredHistoryPolicy history) => CanonicalFingerprintEncodingV1.Encode("authored-history", writer =>
+    {
+        if (history is HistoryDisabled) writer.SignedNumber(1, 0);
+        else if (history is HistoryEnabled enabled) { writer.SignedNumber(1, 1); WriteRetention(writer, enabled.Retention); }
+    });
+
+    private static Sha256Digest AuthoredHistoryOverrideDigest(AuthoredHistoryOverride history) => CanonicalFingerprintEncodingV1.Encode("authored-history-override", writer =>
+    {
+        switch (history)
+        {
+            case HistoryInherit: writer.SignedNumber(1, 0); break;
+            case HistoryOverrideDisabled: writer.SignedNumber(1, 1); break;
+            case HistoryOverrideEnabled enabled: writer.SignedNumber(1, 2); WriteRetention(writer, enabled.Retention); break;
+        }
+    });
+
+    private static void WriteRetention(CanonicalFingerprintWriter writer, AuthoredRetentionPolicy retention)
+    {
+        if (retention is KeepAllRetention) writer.SignedNumber(2, 0);
+        else if (retention is KeepLastVersionsRetention keep) { writer.SignedNumber(2, 1); writer.SignedNumber(3, keep.Count); }
+    }
+
+    private static Sha256Digest ScheduleDigest(PortableScheduleIntent schedule) => CanonicalFingerprintEncodingV1.Encode("schedule", writer =>
+    {
+        if (schedule is ManualOnlySchedule) { writer.SignedNumber(1, 0); return; }
+        var automatic = (AutomaticSchedule)schedule; writer.SignedNumber(1, 1); writer.SignedNumber(2, (int)automatic.MissedRunPolicy);
+        foreach (var trigger in automatic.Triggers.Select(TriggerDigest).OrderBy(value => value.Value, StringComparer.Ordinal)) writer.Digest(3, trigger);
+    });
+
+    private static Sha256Digest TriggerDigest(PortableScheduleTrigger trigger) => CanonicalFingerprintEncodingV1.Encode("schedule-trigger", writer =>
+    {
+        switch (trigger)
+        {
+            case DailyScheduleTrigger daily: writer.SignedNumber(1, 0); writer.Utf8(2, daily.LocalTime.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture)); break;
+            case WeeklyScheduleTrigger weekly:
+                writer.SignedNumber(1, 1); writer.Utf8(2, weekly.LocalTime.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture));
+                foreach (var day in weekly.DaysOfWeek.OrderBy(day => ((int)day + 6) % 7)) writer.SignedNumber(3, (int)day);
+                break;
+            case OnStartupScheduleTrigger: writer.SignedNumber(1, 2); break;
+        }
+    });
 }

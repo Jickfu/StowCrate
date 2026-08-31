@@ -26,6 +26,8 @@ public readonly record struct ArchiveSpecFingerprint(Sha256Digest Digest);
 public readonly record struct OutputLayoutFingerprint(Sha256Digest Digest);
 public readonly record struct ExecutionSemanticFingerprint(Sha256Digest Digest);
 public readonly record struct ExecutionBindingFingerprint(Sha256Digest Digest);
+public readonly record struct PlanSemanticFingerprint(Sha256Digest Digest);
+public readonly record struct HistoryMaintenanceFingerprint(Sha256Digest Digest);
 public readonly record struct DiagnosticFingerprint(Sha256Digest Digest);
 
 public static class CanonicalFingerprintEncodingV1
@@ -109,17 +111,16 @@ public sealed record CandidateArchiveFingerprints(
 
 public sealed class CommittedArchiveUnitBaseline
 {
-    private CommittedArchiveUnitBaseline(PlanId planId, ArchiveUnitId archiveUnitId, CandidateArchiveFingerprints fingerprints)
+    internal CommittedArchiveUnitBaseline(PlanId planId, ArchiveUnitId archiveUnitId, BaselineCandidate candidate)
     {
         PlanId = planId;
         ArchiveUnitId = archiveUnitId;
-        FingerprintEncodingVersion = fingerprints.EncodingVersion;
-        Semantics = fingerprints.Semantics;
-        EntrySet = fingerprints.EntrySet;
-        Selection = fingerprints.Selection;
-        ArchiveSpec = fingerprints.ArchiveSpec;
-        OutputLayout = fingerprints.OutputLayout;
-        Components = fingerprints.Components;
+        FingerprintEncodingVersion = candidate.Fingerprints.EncodingVersion;
+        Semantics = candidate.Fingerprints.Semantics;
+        EntrySet = candidate.Fingerprints.EntrySet;
+        Selection = candidate.Fingerprints.Selection;
+        ArchiveSpec = candidate.Fingerprints.ArchiveSpec;
+        Components = candidate.Fingerprints.Components;
     }
 
     public PlanId PlanId { get; }
@@ -129,14 +130,18 @@ public sealed class CommittedArchiveUnitBaseline
     public EntrySetFingerprint EntrySet { get; }
     public SelectionFingerprint Selection { get; }
     public ArchiveSpecFingerprint ArchiveSpec { get; }
-    public OutputLayoutFingerprint OutputLayout { get; }
     public CandidateComponentFingerprints Components { get; }
+}
 
-    public static CommittedArchiveUnitBaseline FromPublishedCandidate(PlanId planId, ArchiveUnitId archiveUnitId, CandidateArchiveFingerprints fingerprints)
+public sealed class BaselineCandidate
+{
+    private BaselineCandidate(CandidateArchiveFingerprints fingerprints) => Fingerprints = fingerprints;
+    public CandidateArchiveFingerprints Fingerprints { get; }
+    public static BaselineCandidate FromCompleteCandidate(CandidateArchiveFingerprints fingerprints)
     {
         ArgumentNullException.ThrowIfNull(fingerprints);
-        if (!fingerprints.ObservationComplete) throw new InvalidOperationException("Preview-only fingerprints cannot become a committed baseline.");
-        return new CommittedArchiveUnitBaseline(planId, archiveUnitId, fingerprints);
+        if (!fingerprints.ObservationComplete) throw new InvalidOperationException("Preview-only fingerprints cannot form a baseline candidate.");
+        return new BaselineCandidate(fingerprints);
     }
 }
 
@@ -156,7 +161,10 @@ public sealed record ChangeDecision(
 
 public static class ChangeDetector
 {
-    public static ChangeDecision Detect(CandidateArchiveFingerprints candidate, CommittedArchiveUnitBaseline? baseline)
+    public static ChangeDecision Detect(
+        CandidateArchiveFingerprints candidate,
+        CommittedArchiveUnitBaseline? baseline,
+        CommittedOutputLayoutState? committedOutputLayout = null)
     {
         ArgumentNullException.ThrowIfNull(candidate);
         if (!candidate.ObservationComplete)
@@ -176,7 +184,8 @@ public static class ChangeDetector
         if (candidate.Selection != baseline.Selection && reasons.Count == 0) reasons.Add(ChangeReason.SemanticsVersionChanged);
         if (candidate.ArchiveSpec != baseline.ArchiveSpec && !reasons.Any(IsArchiveSpecReason)) reasons.Add(ChangeReason.SemanticsVersionChanged);
         var rebuild = candidate.EntrySet != baseline.EntrySet || candidate.Selection != baseline.Selection || candidate.ArchiveSpec != baseline.ArchiveSpec;
-        var reorganize = candidate.OutputLayout != baseline.OutputLayout;
+        // OutputLayout 的 committed state 与 archive content baseline 分离，由 durable Current layout 比较。
+        var reorganize = committedOutputLayout is null || candidate.OutputLayout != committedOutputLayout.Fingerprint;
         return new(
             rebuild ? ArchiveChangeStatus.RebuildRequired : ArchiveChangeStatus.Unchanged,
             reorganize ? OutputLayoutChangeStatus.ReorganizationRequired : OutputLayoutChangeStatus.Unchanged,

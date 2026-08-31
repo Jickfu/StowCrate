@@ -242,7 +242,9 @@ Backup Plan v1 Document Contract Runtime 已完成：frozen DTO、strict UTF-8/d
 
 `Candidate Fingerprints + Change Decision Integration` 已完成：六类 unit-scoped strong fingerprints、Canonical Encoding v1、component diagnostics、pure baseline/change decision 与 Standard/Strict content identity 已接入新版 Candidate。
 
-下一项推进为 **ExecutionSemanticSnapshot + Baseline / ArchiveVersion Durable State Contract**；仍不实现 Import/Update、Local Binding persistence、SQLite 或 EF。
+`ExecutionSemanticSnapshot + Baseline / ArchiveVersion Durable State Contract` 已完成：unit-scoped publish stale guard、Plan authored fingerprint、ArchiveVersion/Current/layout durable models、baseline candidate commit boundary、publish intent state machine 与 crash recovery decision 已冻结。
+
+下一项推进为 **M3.9 Local Durable State / config.db Schema Design & Repository Contracts**；届时才把 durable domain映射到 SQLite，不让 EF schema反向定义领域模型。
 
 ## 14. 后续产物
 
