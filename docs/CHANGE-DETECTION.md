@@ -192,9 +192,9 @@ PlanRevision 或 PlanSemanticFingerprint 变化时必须重新解析并计算当
 
 ## 9. 持久化边界
 
-`config.db` 保存 BackupPlan durable configuration、ArchiveVersion、CurrentVersion 引用、三类 baseline fingerprint、semantics version、PublishedAt 和必要审计。它不需要永久保存数百万条 baseline entry。
+`config.db` 保存 BackupPlan durable configuration、无 placement 的 ArchiveVersion、Current/History placement、显式关联 Current ArchiveVersionId 的 baseline、独立 OutputLayout state、可恢复 PublishIntent 和必要审计。它不需要永久保存数百万条 baseline entry。
 
-`cache.db` 可保存 FileHashCache、MetadataCache、ScanCache、PlatformCursor 和 journal state。删除 cache 后必须仅表现为性能下降。Standard 可在 metadata identity 未变时按策略复用 hash；Strict 在没有可信 journal 证明时不得复用。
+`cache.db` 可保存 FileHashCache、MetadataCache、ScanCache 和 PlatformCursor；可恢复 publish journal 必须位于 `config.db`。删除 cache 后必须仅表现为性能下降。Standard 可在 metadata identity 未变时按策略复用 hash；Strict 在没有可信 journal 证明时不得复用。
 
 Change Detector 位于 Core 或 Application 的纯逻辑边界，只接收 Candidate 与 Baseline。Application 负责从端口加载 CurrentVersion、协调比较与提交；Infrastructure 后续实现持久化端口。Change Detector 不执行 SQL，也不决定 History retention。
 
@@ -210,4 +210,4 @@ Change Detector 位于 Core 或 Application 的纯逻辑边界，只接收 Candi
 2. 当前 Core 的 Archive Unit 主要以逻辑 root 表达，尚未实现正式、稳定、可持久化的 `ArchiveUnitId`。Backup Plan v1 已确定该 identity；实现时不能临时用数据库行号或物理绝对路径代替。
 3. 旧 `ArchivePlan.Fingerprint` 聚合字符串继续只服务 M1 compatibility；M3.7 已新增 strong EntrySet/Selection/ArchiveSpec/OutputLayout/ExecutionSemantic/ExecutionBinding fingerprints 与 Canonical Fingerprint Encoding v1，旧值不得迁移或误当 v1 durable baseline。
 4. `FILESYSTEM.md` 已允许 Warning 后继续规划；本文进一步区分 IntentionalSkip 与 IncompleteObservation，用于决定能否发布。这是发布层收紧，不改变 Scanner 的 no-follow 或 issue severity 事实。
-5. 当前仓库已完成 portable External/ArchiveSpec/Secret revision readiness 与 unit-scoped Candidate fingerprints/change decision；尚未实现 ArchiveVersion durable state、Current/History 发布、relocation、Reconciliation 或 persistence repository。本文不得被用于引入临时 SQLite schema。
+5. 当前仓库已完成 portable External/ArchiveSpec/Secret revision readiness、unit-scoped Candidate fingerprints/change decision、ArchiveVersion/placement 与 recoverable journal contract，以及 M3.9 config.db v1 Schema Design/Application repository ports；尚未实现物理发布、relocation、Reconciliation 或 persistence repository。M3.10 前不得引入临时 SQLite 实现。

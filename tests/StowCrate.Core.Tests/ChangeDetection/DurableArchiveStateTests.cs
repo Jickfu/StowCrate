@@ -13,23 +13,46 @@ public sealed class DurableArchiveStateTests
     private static readonly Sha256Digest NewHash = Hash("new");
 
     [Fact]
-    public void OldCurrentMustBeCapturedToHistoryBeforeReplacement()
+    public void ArchiveVersionDoesNotOwnPlacementAndReorganizationOnlyMovesCurrent()
     {
-        var old = ArchiveVersion.Prepare(OldId, PlanId, UnitId, PortableArchiveFormat.SevenZip, new ArchiveSpecFingerprint(Hash("spec")))
-            .Verify(OldHash, 3).PublishCurrent(new RelativeStoragePath("unit.7z"), DateTimeOffset.UnixEpoch);
-        var intent = PendingPublishIntent.Prepare(PlanId, UnitId, NewId, NewHash, old);
+        var archive = Published(OldId, OldHash);
+        var current = new CurrentVersion(PlanId, UnitId, archive.Id, new("old/unit.7z"));
+        var layout = new CommittedOutputLayoutState(PlanId, UnitId, Output("old"));
 
-        Assert.Throws<InvalidOperationException>(() => intent.MarkCurrentPublished());
-        var proof = new HistoryCaptureProof(OldId, OldHash, new ArtifactLocation(StorageSlot.History, new RelativeStoragePath("history/unit.7z")));
-        Assert.Equal(PublishIntentStage.CurrentPublished, intent.MarkHistoryCaptured(proof).MarkCurrentPublished().Stage);
+        var moved = OutputReorganization.Commit(current, layout, new("new/unit.7z"), Output("new"));
+
+        Assert.Equal(OldId, archive.Id);
+        Assert.Equal(OldHash, archive.Integrity);
+        Assert.Equal(ArchiveVersionLifecycle.Published, archive.Lifecycle);
+        Assert.Equal("new/unit.7z", moved.CurrentVersion.RelativePath.Value);
+        Assert.Equal(Output("new"), moved.OutputLayout.Fingerprint);
     }
 
     [Fact]
-    public void CrashRecoveryUsesOnlyOldOrExpectedNewIntegrityAndNeverGuesses()
+    public void DurableJournalRebuildsCompleteMetadataCommitAfterRestart()
     {
-        var old = ArchiveVersion.Prepare(OldId, PlanId, UnitId, PortableArchiveFormat.Zip, new ArchiveSpecFingerprint(Hash("spec")))
-            .Verify(OldHash, 3).PublishCurrent(new RelativeStoragePath("unit.zip"), DateTimeOffset.UnixEpoch);
-        var intent = PendingPublishIntent.Prepare(PlanId, UnitId, NewId, NewHash, old);
+        var oldArchive = Published(OldId, OldHash);
+        var oldCurrent = new OldCurrentFacts(oldArchive, new(PlanId, UnitId, OldId, new("unit.7z")));
+        var baseline = BaselineCandidate.FromCompleteCandidate(Fingerprints());
+        var verified = ArchiveVersion.Prepare(NewId, PlanId, UnitId, PortableArchiveFormat.SevenZip, Spec()).Verify(NewHash, 20);
+        var journal = PendingPublishIntent.Prepare(verified, new("unit.7z"), baseline, baseline.Fingerprints.OutputLayout, oldCurrent);
+        var history = new HistoryVersionPlacement(PlanId, UnitId, OldId, new("2026/unit.7z"));
+
+        var persisted = journal.MarkHistoryCaptured(new(OldId, OldHash, history)).MarkCurrentPublished(DateTimeOffset.UnixEpoch);
+        var committed = DurableUnitMetadataCommit.ConfirmCommitted(persisted.RebuildMetadataCommitPlan());
+
+        Assert.Equal(NewId, committed.CurrentVersion.ArchiveVersionId);
+        Assert.Equal(NewId, committed.Baseline.ArchiveVersionId);
+        Assert.Equal(history, committed.HistoryPlacement);
+        Assert.Equal(PublishIntentStage.MetadataCommitted, committed.CompletedIntent.Stage);
+    }
+
+    [Fact]
+    public void CrashRecoveryUsesOnlyDurableOldOrExpectedNewIntegrity()
+    {
+        var verified = ArchiveVersion.Prepare(NewId, PlanId, UnitId, PortableArchiveFormat.SevenZip, Spec()).Verify(NewHash, 20);
+        var old = new OldCurrentFacts(Published(OldId, OldHash), new(PlanId, UnitId, OldId, new("unit.7z")));
+        var intent = PendingPublishIntent.Prepare(verified, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(Fingerprints()), Output("layout"), old);
 
         Assert.Equal(PublishRecoveryAction.AbortOrResumeOldCurrent, PublishRecoveryDecider.Decide(intent, OldHash));
         Assert.Equal(PublishRecoveryAction.CompleteMetadataCommit, PublishRecoveryDecider.Decide(intent, NewHash));
@@ -37,28 +60,20 @@ public sealed class DurableArchiveStateTests
     }
 
     [Fact]
-    public void OutputReorganizationKeepsArchiveVersionIdentity()
+    public void PublishingUnverifiedArtifactIsRejected() =>
+        Assert.Throws<InvalidOperationException>(() => ArchiveVersion.Prepare(NewId, PlanId, UnitId, PortableArchiveFormat.TarZstd, Spec()).Publish(DateTimeOffset.UnixEpoch));
+
+    private static ArchiveVersion Published(ArchiveVersionId id, Sha256Digest hash) =>
+        ArchiveVersion.Prepare(id, PlanId, UnitId, PortableArchiveFormat.SevenZip, Spec()).Verify(hash, 10).Publish(DateTimeOffset.UnixEpoch);
+
+    private static CandidateArchiveFingerprints Fingerprints()
     {
-        var current = new CurrentVersion(PlanId, UnitId, OldId, new RelativeStoragePath("old/unit.7z"));
-        var oldFingerprint = new OutputLayoutFingerprint(Hash("old-layout"));
-        var state = new CommittedOutputLayoutState(PlanId, UnitId, oldFingerprint, current.RelativePath);
-
-        var moved = OutputReorganization.Commit(current, state, new RelativeStoragePath("new/unit.7z"), new OutputLayoutFingerprint(Hash("new-layout")));
-
-        Assert.Equal(OldId, moved.CurrentVersion.ArchiveVersionId);
-        Assert.Equal("new/unit.7z", moved.CurrentVersion.RelativePath.Value);
-        Assert.NotEqual(oldFingerprint, moved.OutputLayout.Fingerprint);
+        var diagnostic = new DiagnosticFingerprint(Hash("component"));
+        return new(1, new(1, 1, 1), true, new(Hash("entry")), new(Hash("selection")), Spec(), Output("layout"),
+            new(Hash("semantic")), new(Hash("binding")), new(diagnostic, diagnostic, diagnostic, diagnostic, diagnostic, diagnostic, diagnostic, diagnostic));
     }
 
-    [Fact]
-    public void ArchiveVersionLifecycleRejectsPublishingUnverifiedArtifact()
-    {
-        var prepared = ArchiveVersion.Prepare(NewId, PlanId, UnitId, PortableArchiveFormat.TarZstd, new ArchiveSpecFingerprint(Hash("spec")));
-        Assert.Throws<InvalidOperationException>(() => prepared.PublishCurrent(new RelativeStoragePath("unit.tar.zst"), DateTimeOffset.UnixEpoch));
-        var published = prepared.Verify(NewHash, 10).PublishCurrent(new RelativeStoragePath("unit.tar.zst"), DateTimeOffset.UnixEpoch);
-        Assert.Equal(ArchiveVersionLifecycle.Published, published.Lifecycle);
-        Assert.Equal(StorageSlot.Current, published.Location!.Slot);
-    }
-
+    private static ArchiveSpecFingerprint Spec() => new(Hash("spec"));
+    private static OutputLayoutFingerprint Output(string value) => new(Hash(value));
     private static Sha256Digest Hash(string value) => CanonicalFingerprintEncodingV1.Encode("test", writer => writer.Utf8(1, value));
 }

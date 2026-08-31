@@ -91,14 +91,11 @@ public sealed class ChangeDetectorTests
     {
         var versionId = new ArchiveVersionId(Guid.Parse("cccccccc-cccc-4ccc-8ccc-cccccccccccc"));
         var integrity = Digest("artifact");
-        var archive = ArchiveVersion.Prepare(versionId, PlanId, UnitId, PortableArchiveFormat.SevenZip, fingerprints.ArchiveSpec)
-            .Verify(integrity, 10)
-            .PublishCurrent(new RelativeStoragePath("unit.7z"), DateTimeOffset.UnixEpoch);
-        var intent = PendingPublishIntent.Prepare(PlanId, UnitId, versionId, integrity, null).MarkCurrentPublished();
-        var layout = new CommittedOutputLayoutState(PlanId, UnitId, fingerprints.OutputLayout, new RelativeStoragePath("unit.7z"));
-        var plan = new DurableUnitMetadataCommitPlan(
-            intent, archive, new CurrentVersion(PlanId, UnitId, versionId, new RelativeStoragePath("unit.7z")),
-            BaselineCandidate.FromCompleteCandidate(fingerprints), layout, null);
+        var verified = ArchiveVersion.Prepare(versionId, PlanId, UnitId, PortableArchiveFormat.SevenZip, fingerprints.ArchiveSpec).Verify(integrity, 10);
+        var baseline = BaselineCandidate.FromCompleteCandidate(fingerprints);
+        var intent = PendingPublishIntent.Prepare(verified, new RelativeStoragePath("unit.7z"), baseline, fingerprints.OutputLayout, null)
+            .MarkCurrentPublished(DateTimeOffset.UnixEpoch);
+        var plan = intent.RebuildMetadataCommitPlan();
         var committed = DurableUnitMetadataCommit.ConfirmCommitted(plan);
         return (committed.Baseline, committed.OutputLayout);
     }

@@ -109,12 +109,16 @@ ResolvedPlanSnapshot
 - 新增完整 authored `PlanSemanticFingerprint`，保留 inherit/explicit intent并覆盖 Schedule/Retention，但排除 authority、binding、runtime 与 provenance；
 - `ExecutionSemanticSnapshot` 按 unit 冻结 execution/binding/rule-source/secret revision/history maintenance facts；
 - publish-time revalidator 允许 schedule/display/unrelated-unit drift，retention-only drift允许 publish但跳过 cleanup，其余 unit execution-critical drift安全阻止；
-- Core 新增 `ArchiveVersionId`、ArchiveVersion lifecycle、CurrentVersion pointer、StorageSlot/RelativeStoragePath 与独立 committed OutputLayout state；
+- Core 新增 `ArchiveVersionId`、无 placement 的 ArchiveVersion lifecycle、独立 CurrentVersion/HistoryVersionPlacement 与只含 fingerprint 的 committed OutputLayout state；
 - Candidate 只能生成 `BaselineCandidate`；真正 baseline 只在 Published Current 的 metadata commit plan确认后产生；
 - PendingPublishIntent 冻结 Prepared → HistoryCaptured → CurrentPublished → MetadataCommitted，并要求 old Current 的 History copy/hash/publish proof；
 - crash recovery只根据 old/expected-new integrity作出 abort/resume、complete metadata或 ambiguous blocker决策；
 - output reorganization保持同一 ArchiveVersionId，post-commit retention/old-path cleanup失败只形成 maintenance out-of-sync状态。
 
-## 下一项：M3.9 Local Durable State / config.db Schema Design & Repository Contracts
+## 已完成：M3.9 Local Durable State / config.db Schema Design & Repository Contracts
 
-把已冻结的 ArchiveVersion、CurrentVersion、Baseline、PublishIntent、bindings/registrations 等状态机械映射到 SQLite 设计与 repository ports；本阶段之后才允许持久化实现，不让 EF schema 反向定义领域模型。
+- 收敛 ArchiveVersion/Current/History/layout placement 单一真相，baseline 显式关联 committed ArchiveVersionId；
+- PublishIntent 保存完整 recoverable commit payload，可在重启后仅依赖 filesystem + config.db 重建 metadata commit；
+- 冻结 config.db v1 tables、stable encoding、restrict lifecycle 与 atomic transaction boundaries；
+- Application repository ports 按 aggregate consistency boundary 设计，不暴露 table CRUD；
+- Schema Design Review PASS。下一项为 **M3.10 config.db EF Core SQLite Implementation + Repository Tests**。

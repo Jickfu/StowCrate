@@ -111,10 +111,11 @@ public sealed record CandidateArchiveFingerprints(
 
 public sealed class CommittedArchiveUnitBaseline
 {
-    internal CommittedArchiveUnitBaseline(PlanId planId, ArchiveUnitId archiveUnitId, BaselineCandidate candidate)
+    internal CommittedArchiveUnitBaseline(PlanId planId, ArchiveUnitId archiveUnitId, ArchiveVersionId archiveVersionId, BaselineCandidate candidate)
     {
         PlanId = planId;
         ArchiveUnitId = archiveUnitId;
+        ArchiveVersionId = archiveVersionId;
         FingerprintEncodingVersion = candidate.Fingerprints.EncodingVersion;
         Semantics = candidate.Fingerprints.Semantics;
         EntrySet = candidate.Fingerprints.EntrySet;
@@ -125,6 +126,7 @@ public sealed class CommittedArchiveUnitBaseline
 
     public PlanId PlanId { get; }
     public ArchiveUnitId ArchiveUnitId { get; }
+    public ArchiveVersionId ArchiveVersionId { get; }
     public int FingerprintEncodingVersion { get; }
     public PortableSemanticsPins Semantics { get; }
     public EntrySetFingerprint EntrySet { get; }

@@ -610,7 +610,7 @@ ExecutionBindingFingerprint 是一次运行的一致性输入，至少包含：
 
 已有 Current/History 时，修改 root 必须进入 StorageRelocationRequired，不能先更新 binding pointer。Current relocation 对全部 Current artifacts 执行“copy/stage 到新 root → SHA-256 verify → destination 内 publish → durable commit new binding/location”；History relocation 对全部 History versions 执行同样流程。整个流程中旧 binding 保持 authoritative，旧文件只在新 binding commit 后允许显式/安全清理。
 
-v1 只支持完整 History relocation，不支持 old/new multi-store History。relocation 不生成新 ArchiveVersion、不改变 VersionId/PublishedAt、不推进 baseline。ArchiveVersion durable identity 与绝对路径分离，概念上使用 VersionId、ArchiveUnitId、StorageSlot（Current/History）、RelativeStoragePath、SHA-256、Size、PublishedAt 等；实际路径由 current binding root + RelativeStoragePath 解析。本节不固定数据库表或字段。
+v1 只支持完整 History relocation，不支持 old/new multi-store History。relocation 不生成新 ArchiveVersion、不改变 VersionId/PublishedAt、不推进 baseline。ArchiveVersion 不拥有 slot/path；CurrentVersion 与 HistoryVersionPlacement 分别保存唯一 relative placement，实际路径由对应 binding root + relative path 解析。
 
 ### 18.8 Root overlap safety
 
@@ -892,7 +892,7 @@ v1 明确不支持 optional external、glob/multi-root、external rules/`.backup
 1. **`.backupignore v1` Directive 集合变化**：规范最初只允许 `@version/@mode/@case`；现在已正式加入可选 `@id`。parser 已通过兼容旧 API 的完整 parse result 返回 optional canonical lowercase UUID-v4 identity，并保留 RuleSet；解析和 identity resolution 均不修改文件。
 2. **Fingerprint 强类型与字段**：ArchiveUnitId/ExternalSourceId 已正式排除于 SelectionFingerprint，logical source/path/mapping 仍包含；当前 Core 尚未实现这些强类型 fingerprint，不得把旧聚合 string 当作 v1 durable baseline。
 3. **Baseline key 与 DeviceId**：Change Detection 的 `PlanId + ArchiveUnitId` 是 portable unit key；DeviceId 只作为本机 registration/binding/runtime namespace，不替换该 key。
-4. **实现现状**：M3 已实现 strict document runtime、frozen portable domain、device resolution/observation、Candidate/Readiness、strong fingerprints/change decision，以及 ExecutionSemanticSnapshot + ArchiveVersion/Baseline/PublishIntent durable contract。尚未实现 Local Durable State/config.db schema/repository、物理 publisher、confirmed relocation workflow、Import/Update/Clone 或完整 Current/History execution。本文不授权在 M3.9 Schema Design 前实现 SQLite persistence。
+4. **实现现状**：M3 已实现 strict document runtime、frozen portable domain、device resolution/observation、Candidate/Readiness、strong fingerprints/change decision、ExecutionSemanticSnapshot，以及 M3.9 ArchiveVersion/placement、recoverable PublishIntent、config.db v1 Schema Design 与 Application repository ports。尚未实现 persistence repository、物理 publisher、confirmed relocation workflow、Import/Update/Clone 或完整 Current/History execution。
 
 ## 24. 当前未决顺序
 
@@ -902,4 +902,4 @@ Backup Plan v1 Domain Freeze Review 已完成，结论见 `reviews/BACKUPPLAN-v1
 
 Draft 2020-12 Schema、fixtures、自动测试与 Schema Review 已完成，见 `schemas/backupplan-v1.schema.json`（仓库根相对路径）、`plan/BACKUPPLAN-v1-SCHEMA-DESIGN.md`、`reviews/BACKUPPLAN-v1-SCHEMA-DESIGN-REVIEW.md` 和 `reviews/BACKUPPLAN-v1-SCHEMA-REVIEW.md`。Review PASS 后 Backup Plan v1 标记为 **Document Contract Frozen**。canonical `$id` 在长期稳定公开 URI 确认前保持省略，不虚构发布域名。
 
-下一步可以设计 Document DTO、strict reader/writer 与 semantic mapper/validator；Persistence / SQLite 仍是更后的独立边界。任何新增字段、enum/variant 或改变默认语义的需求必须遵守第 19 节 schema evolution 规则；Schema structural validity 不能替代 semantic、readiness 或 capability validation。
+M3.9 Schema Design Review 已 PASS，见 [`plan/CONFIG-DB-v1-SCHEMA-DESIGN.md`](plan/CONFIG-DB-v1-SCHEMA-DESIGN.md) 与 [`reviews/CONFIG-DB-v1-SCHEMA-DESIGN-REVIEW.md`](reviews/CONFIG-DB-v1-SCHEMA-DESIGN-REVIEW.md)。下一阶段为 **M3.10 config.db EF Core SQLite Implementation + Repository Tests**；实现不得让 Entity/migration 反向定义 portable domain 或绕过 strict document reader。

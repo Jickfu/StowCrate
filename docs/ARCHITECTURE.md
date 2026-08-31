@@ -130,9 +130,9 @@ Readiness 只检查当前 Device 执行 Candidate 的条件：effective History 
 
 Candidate fingerprints 使用 Core `ChangeDetection` strong types与 Canonical Fingerprint Encoding v1；durable encoding 显式写入 fingerprint kind、field ID、长度和 canonical value，不复用 M1/M2 newline string fingerprint。EntrySet/Selection/ArchiveSpec/OutputLayout/ExecutionSemantic/ExecutionBinding 均为 unit-scoped；component fingerprints 只提供 ChangeReason 诊断，top-level digest 才是 equality authority。Standard v1 使用 metadata-based observed content identity，Strict v1 要求每个 regular candidate file 的 full SHA-256；FILE_MANAGED control file始终另带 raw-byte SHA-256。
 
-`ExecutionSemanticSnapshot` 将完整 authored Plan fingerprint 与 per-unit effective execution、binding、FILE_MANAGED raw rule source、Secure revision和 History maintenance facts分层保存。publish revalidation以 unit effective facts为阻止依据，而不是整 Plan revision；retention-only drift只标记 cleanup out-of-sync。ArchiveVersion、Current pointer、content baseline与 committed OutputLayout state彼此分离，只有 Published Current 的 future atomic metadata transaction成功后才能把 BaselineCandidate提升为 Committed Baseline。
+`ExecutionSemanticSnapshot` 将完整 authored Plan fingerprint 与 per-unit effective execution、binding、FILE_MANAGED raw rule source、Secure revision和 History maintenance facts分层保存。publish revalidation以 unit effective facts为阻止依据，而不是整 Plan revision；retention-only drift只标记 cleanup out-of-sync。ArchiveVersion 不拥有 placement；CurrentVersion 与 HistoryVersionPlacement 分别是两类位置的唯一真相，content baseline 显式关联 Current 的 ArchiveVersionId，committed OutputLayout state 只保存 fingerprint。只有 Published Current 的 atomic metadata transaction成功后才能把 BaselineCandidate提升为 Committed Baseline。
 
-跨 filesystem/database 不假设原子性。每个 unit 使用 durable PublishIntent记录 Prepared、verified History capture、CurrentPublished与 MetadataCommitted；old Current必须 copy→SHA-256 verify→publish History后才可替换，不能先 move/delete。recovery只在 observed Current匹配 old或expected-new integrity时采取确定动作，否则进入 AmbiguousPublishRecovery。Retention和旧路径 cleanup位于 metadata commit之后，失败不得回滚已发布 Current。
+跨 filesystem/database 不假设原子性。每个 unit 使用 config.db durable PublishIntent记录 Prepared、verified History capture、CurrentPublished与 MetadataCommitted，并保存 new ArchiveVersion metadata、Current path、完整 BaselineCandidate、OutputLayout fingerprint、old Current facts 与 History proof；old Current必须 copy→SHA-256 verify→publish History后才可替换，不能先 move/delete。进程重启后 recovery 只依赖 filesystem + config.db，并只在 observed Current匹配 old或expected-new integrity时采取确定动作，否则进入 AmbiguousPublishRecovery。Retention和旧路径 cleanup位于 metadata commit之后，失败不得回滚已发布 Current。
 
 Raw binding expression（包括 `${HOME}`）的展开、绝对化和 physical canonicalization 属于 Infrastructure binding resolver。Application pure resolver 只接收 canonical `ResolvedPhysicalPath` facts 与 platform-aware comparison key，不调用 `Path.GetFullPath`、`Environment` 或 filesystem API。Source、CurrentRoot、External bindings 是 pre-observation required；HistoryRoot 与 SecretBinding 可以携带但不在此阶段条件阻塞。扫描后，Application 再把 prepared declarations、物理 discovery 与 `.backupignore` metadata/rules 合成为 resolved units，并在 Execution Readiness 阶段检查 effective History、Secret、capability 与最终 output collision。
 
@@ -298,7 +298,7 @@ OutputLayoutFingerprint 与 ExecutionBindingFingerprint 都不进入 EntrySet/Se
 manifest 不保存真实密码、密钥、token 或不必要的主机隐私信息。
 External Source 只记录 logical destination、kind 与必要的非秘密 provenance，不得记录 device-local physical binding path。
 
-ArchiveVersion 的 durable identity 与物理绝对路径分离：概念上记录 VersionId、ArchiveUnitId、StorageSlot（Current/History）、RelativeStoragePath、SHA-256、Size、PublishedAt 等；实际位置由当前 StorageRoot binding + relative path 解析。relocation 只改变 binding/location，不生成新 version 或推进 baseline。本段不预先规定 SQLite schema。
+ArchiveVersion 的 durable identity 与 placement 分离：只记录 VersionId、ArchiveUnitId、format/spec、SHA-256、Size、lifecycle 与 PublishedAt。CurrentVersion 独占 Current relative path，HistoryVersionPlacement 独占 History relative path；实际位置由对应 StorageRoot binding + relative path 解析。relocation 只改变 binding，Output Reorganization 只改变 CurrentVersion + OutputLayout state，均不生成 version 或推进 baseline。config.db v1 详见 [`plan/CONFIG-DB-v1-SCHEMA-DESIGN.md`](plan/CONFIG-DB-v1-SCHEMA-DESIGN.md)。
 
 ## 9. 平台抽象
 

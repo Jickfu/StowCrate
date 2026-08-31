@@ -244,7 +244,7 @@ Backup Plan v1 Document Contract Runtime 已完成：frozen DTO、strict UTF-8/d
 
 `ExecutionSemanticSnapshot + Baseline / ArchiveVersion Durable State Contract` 已完成：unit-scoped publish stale guard、Plan authored fingerprint、ArchiveVersion/Current/layout durable models、baseline candidate commit boundary、publish intent state machine 与 crash recovery decision 已冻结。
 
-下一项推进为 **M3.9 Local Durable State / config.db Schema Design & Repository Contracts**；届时才把 durable domain映射到 SQLite，不让 EF schema反向定义领域模型。
+**M3.9 Local Durable State / config.db Schema Design & Repository Contracts** 已完成并 Review PASS；下一项为 **M3.10 config.db EF Core SQLite Implementation + Repository Tests**，实现不得让 EF schema反向定义领域模型。
 
 ## 14. 后续产物
 
