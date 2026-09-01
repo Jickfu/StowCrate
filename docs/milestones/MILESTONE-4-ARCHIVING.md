@@ -1,4 +1,4 @@
-# Milestone 4 — Archive Writer & Verified Archive Artifact
+# Milestone 4 — Archive Writer & Verified Archive Artifact（COMPLETE）
 
 ## 目标
 
@@ -74,7 +74,17 @@ Privacy Recovery Envelope v1由`schemas/privacy-recovery-envelope-v1.schema.json
 
 ## 下一项
 
-**M4.4 — Archive Backend Integration Matrix + M4 Completion Review**：收敛SevenZip/ZIP/TarZstd支持矩阵、Privacy prototype结论与Verified Artifact跨格式contract tests，并决定M4是否可以COMPLETE。仍不实现Physical Publisher。
+## M4.4 — Archive Backend Integration Matrix + M4 Completion Review（COMPLETE）
+
+M4.4修复Recovery Envelope format token fail-open、TarZstd corruption taxonomy与过期Privacy diagnostic；新增Archiving backend catalog/dispatcher，按0/1/多exact match分别返回Unsupported、唯一backend或ambiguous configuration failure。
+
+最终矩阵以GitHub Actions三平台真实运行作为authority。Windows/Linux/macOS均验证bundled 7-Zip 26.02 integrity、7z/ZIP Unicode/empty-directory/mtime与真实extract；ZIP另由.NET `ZipArchive`读取。TarZstd验证PAX + Zstd标准流、checksum、corruption failure、compression mapping、metadata capability与byte reproducibility。Windows fixture发现并促成7zz console/ZIP name UTF-8参数显式冻结。完整结论见`docs/reviews/MILESTONE-4-COMPLETION-REVIEW.md`。
+
+Privacy Envelope contract已冻结但所有backend Privacy仍Unsupported；Secure同样是合法portable configuration但当前无backend支持。两者均能在写入前准确阻止，因此不阻止M4关闭。
+
+## 下一项
+
+**Physical Current/History Publisher + PublishIntent execution integration**：消费M4 `VerifiedArchiveArtifact`，实现History capture、atomic Current replace、durable PublishIntent/metadata commit与post-commit retention；不再扩展Archive Writer。
 
 ## 明确不做
 
