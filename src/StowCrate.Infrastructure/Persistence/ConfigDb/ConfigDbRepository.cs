@@ -255,8 +255,24 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
     public Task BeginPublishAsync(PendingPublishIntent intent, CancellationToken cancellationToken) => SaveIntent(intent, expectedPrevious: null, cancellationToken);
     public Task SavePublishProgressAsync(PendingPublishIntent intent, CancellationToken cancellationToken)
     {
-        var previous = intent.Stage switch { PublishIntentStage.HistoryCaptured => PublishIntentStage.Prepared, PublishIntentStage.CurrentPublished => intent.OldCurrent is null ? PublishIntentStage.Prepared : PublishIntentStage.HistoryCaptured, PublishIntentStage.MetadataCommitted => PublishIntentStage.CurrentPublished, _ => throw new ArgumentException("Progress must advance a journal stage.", nameof(intent)) };
+        var previous = intent.Stage switch { PublishIntentStage.HistoryCaptured => PublishIntentStage.Prepared, PublishIntentStage.CurrentPublished => intent.HistoryCapture is null ? PublishIntentStage.Prepared : PublishIntentStage.HistoryCaptured, PublishIntentStage.MetadataCommitted => PublishIntentStage.CurrentPublished, _ => throw new ArgumentException("Progress must advance a journal stage.", nameof(intent)) };
         return SaveIntent(intent, previous, cancellationToken);
+    }
+
+    public async Task AbortIncompletePublishAsync(PendingPublishIntent intent, PublishIntentStage expectedStage, CancellationToken cancellationToken)
+    {
+        if (expectedStage is PublishIntentStage.CurrentPublished or PublishIntentStage.MetadataCommitted)
+            throw new ArgumentException("A physically published Current cannot be aborted.", nameof(expectedStage));
+        await using var db = factory.Create(); await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        var plan = DurableCodecs.Uuid(intent.PlanId.Value); var unit = DurableCodecs.Uuid(intent.ArchiveUnitId.Value);
+        var expectedToken = DurableCodecs.Token(expectedStage);
+        if (!await db.PublishIntents.AsNoTracking().AnyAsync(x => x.PlanId == plan && x.ArchiveUnitId == unit && x.Stage == expectedToken, cancellationToken))
+            throw new LocalStateConcurrencyException("PublishIntent was not in the expected abort stage.");
+        await db.PublishIntentBaselines.Where(x => x.PlanId == plan && x.ArchiveUnitId == unit).ExecuteDeleteAsync(cancellationToken);
+        var changed = await db.PublishIntents.Where(x => x.PlanId == plan && x.ArchiveUnitId == unit && x.Stage == expectedToken)
+            .ExecuteDeleteAsync(cancellationToken);
+        if (changed != 1) throw new LocalStateConcurrencyException("PublishIntent changed during abort.");
+        await tx.CommitAsync(cancellationToken);
     }
 
     public async Task<DurableUnitMetadataCommitResult> CompleteMetadataCommitAsync(DurableUnitMetadataCommitPlan commit, CancellationToken cancellationToken)

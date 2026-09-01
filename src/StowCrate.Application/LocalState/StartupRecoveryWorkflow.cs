@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using StowCrate.Core.BackupPlans;
 using StowCrate.Core.ChangeDetection;
+using StowCrate.Application.Publishing;
 
 namespace StowCrate.Application.LocalState;
 
@@ -13,7 +14,8 @@ public enum UnitStartupRecoveryStatus { MetadataCommitCompleted, ResumeOrAbortRe
 public sealed record UnitStartupRecoveryResult(PlanId PlanId, ArchiveUnitId ArchiveUnitId, UnitStartupRecoveryStatus Status, string? Detail);
 public sealed record ConfigDatabaseStartupResult(ConfigDatabaseIdentity Identity, ImmutableArray<PlanRegistration> ActivePlans, ImmutableArray<UnitStartupRecoveryResult> UnitRecoveries);
 
-public sealed class ConfigDatabaseStartupCoordinator(IConfigDatabaseSessionOpener opener, ICurrentArtifactRecoveryProbe probe)
+public sealed class ConfigDatabaseStartupCoordinator(IConfigDatabaseSessionOpener opener, ICurrentArtifactRecoveryProbe probe,
+    IPublishIntentRecoveryCoordinator? publishRecovery = null)
 {
     public async Task<ConfigDatabaseStartupResult> StartAsync(ConfigDatabaseOpenRequest request, CancellationToken cancellationToken)
     {
@@ -25,6 +27,11 @@ public sealed class ConfigDatabaseStartupCoordinator(IConfigDatabaseSessionOpene
         foreach (var intent in intents)
         {
             var bindings = await session.Bindings.LoadAsync(intent.PlanId, cancellationToken).ConfigureAwait(false);
+            if (bindings is not null && publishRecovery is not null)
+            {
+                recoveries.Add(await publishRecovery.RecoverAsync(intent, bindings, cancellationToken).ConfigureAwait(false));
+                continue;
+            }
             if (bindings?.CurrentRoot is null)
             {
                 recoveries.Add(new(intent.PlanId, intent.ArchiveUnitId, UnitStartupRecoveryStatus.AmbiguousPublishRecovery, "CurrentRoot binding is unavailable."));

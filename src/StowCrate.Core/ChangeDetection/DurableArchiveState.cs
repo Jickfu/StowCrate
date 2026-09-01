@@ -129,7 +129,7 @@ public sealed class PendingPublishIntent
     public PendingPublishIntent MarkCurrentPublished(DateTimeOffset publishedAtUtc)
     {
         if (Stage is not (PublishIntentStage.Prepared or PublishIntentStage.HistoryCaptured)) throw new InvalidOperationException("Current publish transition is invalid.");
-        if (OldCurrent is not null && Stage is not PublishIntentStage.HistoryCaptured) throw new InvalidOperationException("Old Current must be captured to History before replacement.");
+        // History Disabled 时允许 Prepared → CurrentPublished；是否必须 capture 由 Application 的 effective policy决定。
         return With(PublishIntentStage.CurrentPublished, publishedAtUtc, HistoryCapture);
     }
 
@@ -174,7 +174,8 @@ public static class DurableUnitMetadataCommit
             || plan.PublishedArchive.ArchiveUnitId != plan.CurrentPublishedIntent.ArchiveUnitId || plan.CurrentVersion.PlanId != plan.PublishedArchive.PlanId
             || plan.CurrentVersion.ArchiveUnitId != plan.PublishedArchive.ArchiveUnitId || plan.OutputLayout.PlanId != plan.PublishedArchive.PlanId
             || plan.OutputLayout.ArchiveUnitId != plan.PublishedArchive.ArchiveUnitId
-            || (plan.CurrentPublishedIntent.OldCurrent is not null && (plan.SupersededArchive is null || plan.HistoryPlacement is null || plan.SupersededArchive.Id != plan.CurrentPublishedIntent.OldCurrent.ArchiveVersion.Id || plan.SupersededArchive.Lifecycle is not ArchiveVersionLifecycle.Superseded || plan.HistoryPlacement.ArchiveVersionId != plan.SupersededArchive.Id)))
+            || (plan.CurrentPublishedIntent.OldCurrent is not null && (plan.SupersededArchive is null || plan.SupersededArchive.Id != plan.CurrentPublishedIntent.OldCurrent.ArchiveVersion.Id || plan.SupersededArchive.Lifecycle is not ArchiveVersionLifecycle.Superseded
+                || (plan.HistoryPlacement is not null && plan.HistoryPlacement.ArchiveVersionId != plan.SupersededArchive.Id))))
             throw new InvalidOperationException("Metadata commit plan is not publish-complete.");
         return new(plan.CurrentPublishedIntent.MarkMetadataCommitted(), plan.PublishedArchive, plan.SupersededArchive, plan.HistoryPlacement,
             new(plan.PublishedArchive.PlanId, plan.PublishedArchive.ArchiveUnitId, plan.PublishedArchive.Id, plan.BaselineCandidate), plan.OutputLayout, plan.CurrentVersion);

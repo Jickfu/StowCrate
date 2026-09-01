@@ -6,7 +6,7 @@
 
 M4 已形成从 `ExecutionReadyArchive` / `ArchiveBuildRequest` 到 `VerifiedArchiveArtifact` 的完整工具无关边界。PASS 的含义不是每种 portable Protection 都已有实现，而是所有已声明 Supported 的组合都能完成真实写入和验证，Unsupported 组合会在 `.partial` 写入前准确失败。Physical Current/History Publisher、PublishIntent execution 与 baseline commit 仍未实现。
 
-三平台 authority evidence 为 GitHub Actions CI run [33537240941](https://github.com/Jickfu/StowCrate/actions/runs/33537240941)，对应代码 `e2141e18310a4f94272ced94c62e36226449d87b`：Windows x64、Linux x64、macOS x64 的 build、bundled 7-Zip 26.02 integrity probe 与全部测试均通过。此前 Windows fixture 曾真实发现7zz console listing丢失Unicode；修复后同时固定`-sccUTF-8`、UTF-8 process decoding及ZIP `-mcu=on`，不以降低fixture expectation规避问题。
+三平台 authority evidence 为 GitHub Actions CI run [33537559534](https://github.com/Jickfu/StowCrate/actions/runs/33537559534)，对应代码 `982e7df`：Windows x64、Linux x64、macOS x64 的 build、bundled 7-Zip 26.02 integrity probe 与全部测试均通过。此前 Windows fixture 曾真实发现7zz console listing丢失Unicode；修复后同时固定`-sccUTF-8`、UTF-8 process decoding及ZIP `-mcu=on`，不以降低fixture expectation规避问题。
 
 ## Backend catalog 与执行边界
 

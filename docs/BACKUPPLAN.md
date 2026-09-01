@@ -628,10 +628,12 @@ root overlap、output path collision、destination capability 与可用空间等
 | CurrentRoot binding | 不属于 Plan | ExecutionBinding | 否 |
 | effective HistoryRoot binding | 不属于 Plan | ExecutionBinding | 否 |
 | SourceRoot / required External physical binding | 不属于 Plan | ExecutionBinding | 数据变化另由 EntrySet 观察 |
-| History physical layout | 否 | 否 | 否 |
+| History physical layout v1 | 否 | 否 | 否 |
 | Archive format / compression | 是 | ExecutionSemantic | ArchiveSpec |
 
-本节只固定 portable output/history policy、local binding、publish/maintenance、relocation 和 fingerprint 边界，不定义 JSON Schema、SQLite schema/Entity、具体 OutputPathEncoding、History physical naming 或跨文件系统复制实现。
+History physical layout v1 固定为 `history-v1/<ArchiveUnitId:D>/<OldPublishedAtUtc:yyyyMMddTHHmmss.fffZ>--<OldArchiveVersionId:D><format-extension>`，UUID 使用 canonical lowercase。HistoryRoot 已是 Plan-scoped，因此路径不重复 PlanId；extension 来自旧 ArchiveVersion.Format。`HistoryVersionPlacement` 保存实际最终 relative path，未来 layout version 变化不得重命名既有 History。该内部 `HistoryLayoutSemanticsVersion = 1` 不进入 portable Plan 或 archive fingerprint。
+
+本节只固定 portable output/history policy、local binding、publish/maintenance、relocation、fingerprint 边界与 History physical layout v1；不定义 JSON Schema、SQLite schema/Entity、具体 OutputPathEncoding 或 retention 删除实现。
 
 ## 19. Schema Compatibility 与 Unknown Fields v1
 

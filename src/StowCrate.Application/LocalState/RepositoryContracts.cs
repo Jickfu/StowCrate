@@ -81,6 +81,7 @@ public interface IArchiveUnitDurableStateStore
     Task<int> CleanupCompletedPublishIntentsAsync(CancellationToken cancellationToken);
     Task BeginPublishAsync(PendingPublishIntent intent, CancellationToken cancellationToken);
     Task SavePublishProgressAsync(PendingPublishIntent intent, CancellationToken cancellationToken);
+    Task AbortIncompletePublishAsync(PendingPublishIntent intent, PublishIntentStage expectedStage, CancellationToken cancellationToken);
     Task<DurableUnitMetadataCommitResult> CompleteMetadataCommitAsync(DurableUnitMetadataCommitPlan commit, CancellationToken cancellationToken);
     Task CommitOutputReorganizationAsync(OutputReorganizationResult reorganization, CancellationToken cancellationToken);
 }

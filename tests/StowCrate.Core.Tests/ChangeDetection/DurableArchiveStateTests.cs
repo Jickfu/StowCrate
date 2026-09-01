@@ -63,6 +63,20 @@ public sealed class DurableArchiveStateTests
     public void PublishingUnverifiedArtifactIsRejected() =>
         Assert.Throws<InvalidOperationException>(() => ArchiveVersion.Prepare(NewId, PlanId, UnitId, PortableArchiveFormat.TarZstd, Spec()).Publish(DateTimeOffset.UnixEpoch));
 
+    [Fact]
+    public void HistoryDisabledReplacementCommitsWithoutHistoryPlacement()
+    {
+        var old = new OldCurrentFacts(Published(OldId, OldHash), new(PlanId, UnitId, OldId, new("unit.7z")));
+        var verified = ArchiveVersion.Prepare(NewId, PlanId, UnitId, PortableArchiveFormat.SevenZip, Spec()).Verify(NewHash, 20);
+        var intent = PendingPublishIntent.Prepare(verified, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(Fingerprints()), Output("layout"), old)
+            .MarkCurrentPublished(DateTimeOffset.UnixEpoch);
+
+        var committed = DurableUnitMetadataCommit.ConfirmCommitted(intent.RebuildMetadataCommitPlan());
+
+        Assert.Null(committed.HistoryPlacement);
+        Assert.Equal(ArchiveVersionLifecycle.Superseded, committed.SupersededArchive!.Lifecycle);
+    }
+
     private static ArchiveVersion Published(ArchiveVersionId id, Sha256Digest hash) =>
         ArchiveVersion.Prepare(id, PlanId, UnitId, PortableArchiveFormat.SevenZip, Spec()).Verify(hash, 10).Publish(DateTimeOffset.UnixEpoch);
 

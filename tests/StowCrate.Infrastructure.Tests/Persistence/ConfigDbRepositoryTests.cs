@@ -78,6 +78,20 @@ public sealed class ConfigDbRepositoryTests
         Assert.Equal(PublishIntentStage.CurrentPublished, recovered!.PublishIntent!.Stage);
     }
 
+    [Fact]
+    public async Task SafeAbortDeletesOnlyExpectedIncompleteStage()
+    {
+        await using var database = await TestDatabase.Create(); var intent = Intent();
+        await database.Repository.BeginPublishAsync(intent, CancellationToken.None);
+
+        await Assert.ThrowsAsync<LocalStateConcurrencyException>(() =>
+            database.Repository.AbortIncompletePublishAsync(intent, PublishIntentStage.HistoryCaptured, CancellationToken.None));
+        Assert.NotNull((await database.Repository.LoadAsync(PlanId, UnitId, CancellationToken.None))!.PublishIntent);
+
+        await database.Repository.AbortIncompletePublishAsync(intent, PublishIntentStage.Prepared, CancellationToken.None);
+        Assert.Null(await database.Repository.LoadAsync(PlanId, UnitId, CancellationToken.None));
+    }
+
     [Theory]
     [InlineData(MetadataCommitFaultPoint.AfterNewArchive)]
     [InlineData(MetadataCommitFaultPoint.AfterHistory)]
