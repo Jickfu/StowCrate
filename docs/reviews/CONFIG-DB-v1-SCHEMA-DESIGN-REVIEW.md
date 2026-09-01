@@ -19,11 +19,13 @@
 | Non-destructive lifecycle | PASS | 全部 FK restrict、无 cascade；removed identity 保留 inactive/runtime state |
 | Version isolation | PASS | DB schema version 与 document/portable/fingerprint versions 明确独立，future schema fail closed |
 | Scope | PASS | 未引入 package、DbContext、Entity、Migration 或 repository implementation |
+| Nullable maintenance scope | PASS | surrogate row PK 仅供 SQLite；两个 partial unique indexes 分别保证 Plan/unit scope singleton |
 
 ## Blocker disposition
 
 1. 原 `ArchiveVersion.Location`、`CommittedOutputLayoutState.CurrentRelativePath` 已移除。Current path 只存在于 `CurrentVersion`，History path 只存在于 `HistoryVersionPlacement`。
 2. `PendingPublishIntent` 已成为 self-contained durable journal，并能从 `CURRENT_PUBLISHED` state 直接重建 `DurableUnitMetadataCommitPlan`。恢复判断只需 filesystem observed integrity 与 config.db payload。
+3. M3.10 Initial migration 前复核发现 nullable `ArchiveUnitId` 不能可靠参与 singleton composite PK；已改为非领域 surrogate row key，并以 Plan-scope/unit-scope partial unique indexes修正。该修正不改变 Application consistency boundary。
 
 ## Residual implementation risks for M3.10
 
@@ -33,4 +35,4 @@
 - 必须测试 Portable Update removed identity、authority conversion 与 unregister 不 cascade runtime state。
 - 必须测试 Output Reorganization 不改变 baseline ArchiveVersionId 或 ArchiveVersion row。
 
-以上是 implementation verification，不是遗留 schema-shaping blocker。Review PASS，下一阶段为 **M3.10 config.db EF Core SQLite Implementation + Repository Tests**。
+以上 implementation verification 已在 M3.10 以真实 SQLite 测试覆盖，包括 known-vector codec、低层 schema probe、restart recovery、六个 transaction fault points、corruption fixtures、authority/unregister non-cascade 与 Output Reorganization。Review 继续 PASS，无新增 schema-shaping blocker。

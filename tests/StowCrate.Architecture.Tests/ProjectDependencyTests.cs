@@ -72,6 +72,22 @@ public sealed class ProjectDependencyTests
         }
     }
 
+    [Theory]
+    [InlineData("StowCrate.Core")]
+    [InlineData("StowCrate.Application")]
+    public void InnerProjectsDoNotLeakEfOrSqliteTypes(string projectName)
+    {
+        var projectDirectory = Path.Combine(RepositoryRoot, "src", projectName);
+        foreach (var sourcePath in Directory.GetFiles(projectDirectory, "*.cs", SearchOption.AllDirectories))
+        {
+            var source = File.ReadAllText(sourcePath);
+            Assert.DoesNotContain("Microsoft.EntityFrameworkCore", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("Microsoft.Data.Sqlite", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("DbContext", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("IQueryable", source, StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public void ApplicationPlanResolutionDoesNotCanonicalizePhysicalPathsOrUseFileSystemObjects()
     {

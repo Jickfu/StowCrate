@@ -1,6 +1,6 @@
 # config.db v1 Schema Design
 
-状态：**M3.9 Schema Design；不授权实现**
+状态：**M3.9 Schema Design Frozen；M3.10 implementation complete**
 Review：[`CONFIG-DB-v1-SCHEMA-DESIGN-REVIEW.md`](../reviews/CONFIG-DB-v1-SCHEMA-DESIGN-REVIEW.md)
 
 ## 1. 边界与版本
@@ -198,12 +198,19 @@ ScheduleInstallation(
 )
 
 MaintenanceState(
-  PlanId, ArchiveUnitId NULL, Kind TEXT, Status TEXT, Detail NULL, UpdatedAtUtcMs,
-  PRIMARY KEY(PlanId,ArchiveUnitId,Kind), FK PlanId -> PlanRegistration
+  MaintenanceStateRowId INTEGER PRIMARY KEY AUTOINCREMENT,
+  PlanId BLOB(16), ArchiveUnitId BLOB(16) NULL, Kind TEXT, Status TEXT, Detail NULL, UpdatedAtUtcMs,
+  FK PlanId -> PlanRegistration
 )
+
+UNIQUE INDEX UX_MaintenanceState_PlanScope
+  ON MaintenanceState(PlanId,Kind) WHERE ArchiveUnitId IS NULL
+UNIQUE INDEX UX_MaintenanceState_UnitScope
+  ON MaintenanceState(PlanId,ArchiveUnitId,Kind) WHERE ArchiveUnitId IS NOT NULL
 ```
 
 schedule installation 是 local reconciliation state，不进入 portable plan transaction。maintenance kinds v1 为 `HISTORY_RETENTION|OLD_CURRENT_PATH_CLEANUP|STORAGE_RELOCATION|OUTPUT_REORGANIZATION|SCHEDULE_RECONCILIATION`。Retention/cleanup 失败只能写 out-of-sync，不回滚已 durable committed Current/baseline。
+`MaintenanceStateRowId` 只为绕开 SQLite nullable composite key 不能可靠表达 Plan-scope singleton 的内部 surrogate row key，不是领域 identity，不得进入 Application port、日志关联或业务判断。两个 partial unique indexes 分别冻结 Plan-scope 与 ArchiveUnit-scope singleton。
 
 ## 4. Atomic operations
 
@@ -224,4 +231,4 @@ SQLite CHECK/FK 不能独立表达 UUID v4、RFC byte order、path grammar、Pla
 
 ## 6. M3.10 entry gate
 
-Schema Design Review 已逐项验证 blocker、durable encoding、authority、recovery completeness、atomic boundary 与 non-destructive lifecycle，结论 PASS。M3.10 才允许添加 EF Core SQLite implementation 与 repository tests；任何实现中发现的 schema-shaping change 必须先回到本文与 Review，不得由 migration/Entity 反向修改契约。
+Schema Design Review 已逐项验证 blocker、durable encoding、authority、recovery completeness、atomic boundary 与 non-destructive lifecycle，结论 PASS。M3.10 已按本文生成 Initial EF Core SQLite migration并完成 repository tests。实现前唯一 schema 修正是 MaintenanceState nullable scope blocker，已先回写本文与 Review；其余 Entity/migration 未反向修改契约。

@@ -5,6 +5,15 @@ using StowCrate.Core.ChangeDetection;
 
 namespace StowCrate.Application.LocalState;
 
+public class LocalStateRepositoryException(string message, Exception? innerException = null) : Exception(message, innerException);
+public sealed class LocalStateConcurrencyException(string message, Exception? innerException = null) : LocalStateRepositoryException(message, innerException);
+public sealed class LocalStateCorruptionException(string message, Exception? innerException = null) : LocalStateRepositoryException(message, innerException);
+public sealed class UnsupportedConfigDatabaseVersionException(int version)
+    : LocalStateRepositoryException($"Config database schema version {version} is not supported.")
+{
+    public int Version { get; } = version;
+}
+
 public enum PlanAuthority { Managed, FileBacked }
 public sealed record ConfigDatabaseIdentity(Guid DatabaseId, DeviceId DeviceId, int SchemaVersion, DateTimeOffset CreatedAtUtc);
 public sealed record PlanRegistration(PlanId PlanId, PlanAuthority Authority, string? FileDocumentPath, bool IsActive);

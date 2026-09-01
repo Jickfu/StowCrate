@@ -121,4 +121,17 @@ ResolvedPlanSnapshot
 - PublishIntent 保存完整 recoverable commit payload，可在重启后仅依赖 filesystem + config.db 重建 metadata commit；
 - 冻结 config.db v1 tables、stable encoding、restrict lifecycle 与 atomic transaction boundaries；
 - Application repository ports 按 aggregate consistency boundary 设计，不暴露 table CRUD；
-- Schema Design Review PASS。下一项为 **M3.10 config.db EF Core SQLite Implementation + Repository Tests**。
+- Schema Design Review PASS，并已作为 M3.10 implementation contract 使用。
+
+## 已完成：M3.10 config.db EF Core SQLite Implementation + Repository Tests
+
+- Initial migration 前修正 MaintenanceState nullable scope：Infrastructure surrogate row key + Plan/unit 两个 partial unique indexes，surrogate 不进入领域；
+- Infrastructure 引入 EF Core SQLite 10，Entity/configuration/mapper/context/migration 均未泄漏到 Core/Application；
+- frozen codecs覆盖 RFC/network-order UUID BLOB、digest、UTC unix-ms、boolean、stable token、NFC path 与 strict canonical UTF-8；
+- `ConfigDbOpenCoordinator` 在 writable context/migration 前执行 low-level schema probe，并为每个 connection配置 FK/WAL/FULL/busy timeout；
+- Managed authoritative payload执行 strict reader/schema/semantic/PlanId/canonical writer验证、repository SHA-256 与 expected-revision CAS；FILE_BACKED 不保留 fallback document；
+- aggregate repositories实现 binding/registration/schedule/maintenance 与 atomic Archive Unit durable state；publish progress采用 expected-stage CAS；
+- metadata commit在单一 transaction内完成 new version、old supersede、History、Current、Baseline、OutputLayout与 intent completion；
+- 真实 file-backed SQLite 测试覆盖 restart recovery、六个 fault injection rollback点、migration/durability、corruption fail-closed、non-cascade lifecycle 与 Output Reorganization isolation。
+
+下一阶段为 **config.db startup/recovery integration + Local Binding/Authority application workflows**；不直接开始 Archiver。

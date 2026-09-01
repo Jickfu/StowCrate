@@ -111,18 +111,18 @@ public sealed record CandidateArchiveFingerprints(
 
 public sealed class CommittedArchiveUnitBaseline
 {
-    internal CommittedArchiveUnitBaseline(PlanId planId, ArchiveUnitId archiveUnitId, ArchiveVersionId archiveVersionId, BaselineCandidate candidate)
+    private CommittedArchiveUnitBaseline(PlanId planId, ArchiveUnitId archiveUnitId, ArchiveVersionId archiveVersionId,
+        int fingerprintEncodingVersion, PortableSemanticsPins semantics, EntrySetFingerprint entrySet,
+        SelectionFingerprint selection, ArchiveSpecFingerprint archiveSpec, CandidateComponentFingerprints components)
     {
-        PlanId = planId;
-        ArchiveUnitId = archiveUnitId;
-        ArchiveVersionId = archiveVersionId;
-        FingerprintEncodingVersion = candidate.Fingerprints.EncodingVersion;
-        Semantics = candidate.Fingerprints.Semantics;
-        EntrySet = candidate.Fingerprints.EntrySet;
-        Selection = candidate.Fingerprints.Selection;
-        ArchiveSpec = candidate.Fingerprints.ArchiveSpec;
-        Components = candidate.Fingerprints.Components;
+        PlanId = planId; ArchiveUnitId = archiveUnitId; ArchiveVersionId = archiveVersionId;
+        FingerprintEncodingVersion = fingerprintEncodingVersion; Semantics = semantics; EntrySet = entrySet;
+        Selection = selection; ArchiveSpec = archiveSpec; Components = components;
     }
+
+    internal CommittedArchiveUnitBaseline(PlanId planId, ArchiveUnitId archiveUnitId, ArchiveVersionId archiveVersionId, BaselineCandidate candidate)
+        : this(planId, archiveUnitId, archiveVersionId, candidate.Fingerprints.EncodingVersion, candidate.Fingerprints.Semantics,
+            candidate.Fingerprints.EntrySet, candidate.Fingerprints.Selection, candidate.Fingerprints.ArchiveSpec, candidate.Fingerprints.Components) { }
 
     public PlanId PlanId { get; }
     public ArchiveUnitId ArchiveUnitId { get; }
@@ -133,6 +133,17 @@ public sealed class CommittedArchiveUnitBaseline
     public SelectionFingerprint Selection { get; }
     public ArchiveSpecFingerprint ArchiveSpec { get; }
     public CandidateComponentFingerprints Components { get; }
+
+    public static CommittedArchiveUnitBaseline Restore(
+        PlanId planId, ArchiveUnitId archiveUnitId, ArchiveVersionId archiveVersionId, int fingerprintEncodingVersion,
+        PortableSemanticsPins semantics, EntrySetFingerprint entrySet, SelectionFingerprint selection,
+        ArchiveSpecFingerprint archiveSpec, CandidateComponentFingerprints components)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(fingerprintEncodingVersion, 1);
+        ArgumentNullException.ThrowIfNull(semantics);
+        ArgumentNullException.ThrowIfNull(components);
+        return new(planId, archiveUnitId, archiveVersionId, fingerprintEncodingVersion, semantics, entrySet, selection, archiveSpec, components);
+    }
 }
 
 public sealed class BaselineCandidate

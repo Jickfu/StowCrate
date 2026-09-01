@@ -279,6 +279,10 @@ OutputLayoutFingerprint 与 ExecutionBindingFingerprint 都不进入 EntrySet/Se
 ## 7. SQLite 与配置恢复
 
 - 使用 schema migration 和事务；数据库 DTO 不直接充当领域对象。
+- `ConfigDbOpenCoordinator` 对 existing database 必须先以 read-only low-level SQLite probe 验证独立 `DatabaseMetadata.SchemaVersion`，通过后才创建 writable EF context 或运行 migration；`__EFMigrationsHistory` 不替代业务 schema version。
+- 每个 config.db connection 启用 foreign keys、WAL、`synchronous=FULL` 与 busy timeout；future/invalid/corrupt schema fail closed。
+- EF Entity、configuration、mapper、migration 与 repository implementation 只位于 Infrastructure；Core/Application 不引用 EF、SQLite、`DbContext`、Entity 或 `IQueryable`。
+- repository 按 Application aggregate ports 实现。Archive Unit metadata commit 使用单一 transaction；publish stage transition 使用 expected-stage CAS；数据库异常转换为 StowCrate repository/concurrency/corruption error。
 - `config.db` 的灾难恢复副本通过 SQLite Online Backup API 生成一致的 `config.snapshot.db`。
 - `cache.db` 不备份，缺失时自动重建。
 - portable configuration 只保存 SecretSlot declaration；local state 只保存 binding metadata、SecretRevision、provider 与 opaque SecretReference；SecretValue 位于平台 Secret Store。

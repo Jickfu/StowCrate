@@ -104,6 +104,19 @@ public sealed class PendingPublishIntent
         return new(newArchive, currentPath, baseline, layout, oldCurrent, PublishIntentStage.Prepared, null, null);
     }
 
+    public static PendingPublishIntent Restore(ArchiveVersion newArchive, RelativeStoragePath currentPath, BaselineCandidate baseline,
+        OutputLayoutFingerprint layout, OldCurrentFacts? oldCurrent, PublishIntentStage stage,
+        DateTimeOffset? currentPublishedAtUtc, HistoryCaptureProof? historyCapture)
+    {
+        var intent = Prepare(newArchive, currentPath, baseline, layout, oldCurrent);
+        if (stage is PublishIntentStage.Prepared) return intent;
+        if (historyCapture is not null) intent = intent.MarkHistoryCaptured(historyCapture);
+        if (stage is PublishIntentStage.HistoryCaptured) return intent;
+        if (currentPublishedAtUtc is null) throw new InvalidOperationException("Published journal stage requires a UTC timestamp.");
+        intent = intent.MarkCurrentPublished(currentPublishedAtUtc.Value);
+        return stage is PublishIntentStage.MetadataCommitted ? intent.MarkMetadataCommitted() : intent;
+    }
+
     public PendingPublishIntent MarkHistoryCaptured(HistoryCaptureProof proof)
     {
         if (Stage is not PublishIntentStage.Prepared) throw new InvalidOperationException("History capture transition requires Prepared intent.");
