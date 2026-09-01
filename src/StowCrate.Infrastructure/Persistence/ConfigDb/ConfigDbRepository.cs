@@ -52,6 +52,31 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
         catch (Exception exception) { throw Translate(exception, "Plan registration is corrupt."); }
     }
 
+    public async Task<ImmutableArray<PlanRegistration>> ListRegisteredAsync(bool activeOnly, CancellationToken cancellationToken)
+    {
+        await using var db = factory.Create();
+        try
+        {
+            var query = db.PlanRegistrations.AsNoTracking();
+            if (activeOnly) query = query.Where(x => x.IsActive == 1);
+            var rows = await query.OrderBy(x => x.PlanId).ToListAsync(cancellationToken);
+            return [.. rows.Select(x => new PlanRegistration(new(DurableCodecs.Uuid(x.PlanId)), DurableCodecs.Authority(x.Authority), x.FileDocumentPath, DurableCodecs.Boolean(x.IsActive)))];
+        }
+        catch (Exception exception) { throw Translate(exception, "Plan registrations could not be listed."); }
+    }
+
+    public async Task SetActiveAsync(PlanId planId, bool isActive, CancellationToken cancellationToken)
+    {
+        await using var db = factory.Create(); var id = DurableCodecs.Uuid(planId.Value);
+        try
+        {
+            var changed = await db.PlanRegistrations.Where(x => x.PlanId == id)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.IsActive, DurableCodecs.Boolean(isActive)), cancellationToken);
+            if (changed != 1) throw new LocalStateConcurrencyException("Plan registration does not exist.");
+        }
+        catch (Exception exception) { throw Translate(exception, "Plan activation state could not be changed."); }
+    }
+
     public async Task<ManagedPlanDocument> SaveManagedAsync(PlanRegistration registration, ReadOnlyMemory<byte> canonicalUtf8Payload, long? expectedRevision, CancellationToken cancellationToken)
     {
         if (registration.Authority is not PlanAuthority.Managed || registration.FileDocumentPath is not null) throw new ArgumentException("Managed registration is invalid.", nameof(registration));
@@ -88,11 +113,13 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
         catch (Exception exception) { throw Translate(exception, "File-backed registration could not be saved."); }
     }
 
-    public async Task<DevicePlanLocalBindings?> LoadAsync(PlanId planId, DeviceId deviceId, CancellationToken cancellationToken)
+    public async Task<DevicePlanLocalBindings?> LoadAsync(PlanId planId, CancellationToken cancellationToken)
     {
         await using var db = factory.Create(); var id = DurableCodecs.Uuid(planId.Value);
         try
         {
+            var metadata = await db.DatabaseMetadata.AsNoTracking().SingleAsync(cancellationToken);
+            var deviceId = new DeviceId(DurableCodecs.Uuid(metadata.DeviceId));
             var sources = await db.SourceLocalBindings.AsNoTracking().Where(x => x.PlanId == id).ToListAsync(cancellationToken);
             var external = await db.ExternalLocalBindings.AsNoTracking().Where(x => x.PlanId == id).ToListAsync(cancellationToken);
             var roots = await db.OutputRootLocalBindings.AsNoTracking().Where(x => x.PlanId == id).ToListAsync(cancellationToken);
@@ -112,15 +139,17 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
         await using var db = factory.Create(); await using var tx = await db.Database.BeginTransactionAsync(cancellationToken); var plan = DurableCodecs.Uuid(bindings.PlanId.Value);
         try
         {
+            var metadata = await db.DatabaseMetadata.AsNoTracking().SingleAsync(cancellationToken);
+            if (DurableCodecs.Uuid(metadata.DeviceId) != bindings.DeviceId.Value) throw new LocalStateCorruptionException("Binding aggregate DeviceId differs from config database identity.");
             await UpsertBindings(db, plan, bindings, cancellationToken); await db.SaveChangesAsync(cancellationToken); await tx.CommitAsync(cancellationToken);
         }
         catch (Exception exception) { throw Translate(exception, "Local binding aggregate could not be saved."); }
     }
 
-    public async Task<ImmutableArray<DevicePlanLocalBindings>> ListActiveRootFactsAsync(DeviceId deviceId, CancellationToken cancellationToken)
+    public async Task<ImmutableArray<DevicePlanLocalBindings>> ListActiveRootFactsAsync(CancellationToken cancellationToken)
     {
         await using var db = factory.Create(); var ids = await db.PlanRegistrations.AsNoTracking().Where(x => x.IsActive == 1).Select(x => x.PlanId).ToListAsync(cancellationToken); var result = ImmutableArray.CreateBuilder<DevicePlanLocalBindings>();
-        foreach (var id in ids) { var loaded = await LoadAsync(new(DurableCodecs.Uuid(id)), deviceId, cancellationToken); if (loaded is not null) result.Add(loaded); } return result.ToImmutable();
+        foreach (var id in ids) { var loaded = await LoadAsync(new(DurableCodecs.Uuid(id)), cancellationToken); if (loaded is not null) result.Add(loaded); } return result.ToImmutable();
     }
 
     async Task<ImmutableArray<FileManagedArchiveUnitRegistration>> IFileManagedArchiveUnitRegistrationStore.ListAsync(PlanId planId, CancellationToken cancellationToken)
@@ -155,6 +184,25 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
                 baseline is null ? null : MapBaseline(baseline), layout is null ? null : new(planId, archiveUnitId, new(DurableCodecs.Digest(layout.OutputLayoutFingerprint))), intent);
         }
         catch (Exception exception) { throw Translate(exception, "Archive Unit durable state is corrupt."); }
+    }
+
+    public async Task<ImmutableArray<PendingPublishIntent>> ListIncompletePublishIntentsAsync(CancellationToken cancellationToken)
+    {
+        await using var db = factory.Create();
+        try
+        {
+            var keys = await db.PublishIntents.AsNoTracking().Where(x => x.Stage != "METADATA_COMMITTED")
+                .Select(x => new { x.PlanId, x.ArchiveUnitId }).ToListAsync(cancellationToken);
+            var result = ImmutableArray.CreateBuilder<PendingPublishIntent>(keys.Count);
+            foreach (var key in keys)
+            {
+                var intent = await LoadIntent(db, new(DurableCodecs.Uuid(key.PlanId)), new(DurableCodecs.Uuid(key.ArchiveUnitId)), cancellationToken);
+                if (intent is null) throw new LocalStateCorruptionException("Incomplete PublishIntent disappeared during startup query.");
+                result.Add(intent);
+            }
+            return result.ToImmutable();
+        }
+        catch (Exception exception) { throw Translate(exception, "Incomplete PublishIntents could not be listed."); }
     }
 
     public Task BeginPublishAsync(PendingPublishIntent intent, CancellationToken cancellationToken) => SaveIntent(intent, expectedPrevious: null, cancellationToken);

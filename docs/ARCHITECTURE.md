@@ -283,6 +283,9 @@ OutputLayoutFingerprint 与 ExecutionBindingFingerprint 都不进入 EntrySet/Se
 - 每个 config.db connection 启用 foreign keys、WAL、`synchronous=FULL` 与 busy timeout；future/invalid/corrupt schema fail closed。
 - EF Entity、configuration、mapper、migration 与 repository implementation 只位于 Infrastructure；Core/Application 不引用 EF、SQLite、`DbContext`、Entity 或 `IQueryable`。
 - repository 按 Application aggregate ports 实现。Archive Unit metadata commit 使用单一 transaction；publish stage transition 使用 expected-stage CAS；数据库异常转换为 StowCrate repository/concurrency/corruption error。
+- Application startup coordinator 先打开并冻结 `DatabaseMetadata` 的 database/device identity，再通过高层 query ports发现 active Plan 与 incomplete PublishIntent。每个 unit 独立执行 filesystem integrity probe与 recovery decision：expected-new 自动重建并提交 durable metadata；observed-old 与 ambiguous 均保留 journal，ambiguous 只隔离该 unit。数据库 corruption/unsupported version仍是整个 local state 的 fatal error。
+- `DatabaseMetadata.DeviceId` 是本机唯一 identity 来源；binding repository 不接受调用方指定 DeviceId。Local Binding 保存先由 Infrastructure 生成 canonical physical path/comparison key，再由 Application 共享的 `DeviceBindingSafetyValidator` 检查同 Plan root overlap 与跨 active Plan writable collision；安全但缺少 required root 的 aggregate 可以保存，readiness 后续报告 PlanNotReady。
+- Managed/File-backed authority 由统一 Application workflow 编排。Infrastructure document-source port封装 strict reader、schema、semantic mapper与 deterministic writer；Application 只接收 portable domain。File-backed 每次从注册文件读取且绝不 fallback，authority conversion必须显式进行，activation 不改写 document revision。
 - `config.db` 的灾难恢复副本通过 SQLite Online Backup API 生成一致的 `config.snapshot.db`。
 - `cache.db` 不备份，缺失时自动重建。
 - portable configuration 只保存 SecretSlot declaration；local state 只保存 binding metadata、SecretRevision、provider 与 opaque SecretReference；SecretValue 位于平台 Secret Store。

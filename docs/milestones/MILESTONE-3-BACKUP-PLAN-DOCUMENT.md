@@ -134,4 +134,15 @@ ResolvedPlanSnapshot
 - metadata commit在单一 transaction内完成 new version、old supersede、History、Current、Baseline、OutputLayout与 intent completion；
 - 真实 file-backed SQLite 测试覆盖 restart recovery、六个 fault injection rollback点、migration/durability、corruption fail-closed、non-cascade lifecycle 与 Output Reorganization isolation。
 
-下一阶段为 **config.db startup/recovery integration + Local Binding/Authority application workflows**；不直接开始 Archiver。
+## 已完成：M3.11 config.db Startup/Recovery Integration + Local Binding/Authority Application Workflows
+
+- startup query ports 可发现 active registrations 与 incomplete PublishIntent，不暴露 table DTO、`DbSet` 或 `IQueryable`；
+- `DatabaseMetadata.DeviceId` 成为本机唯一 identity 来源，binding repository 不再接受调用方伪造的 DeviceId；
+- Application startup coordinator 打开数据库、冻结 identity、逐 unit 探测 Current 并分类恢复；expected-new 自动重建并原子提交 metadata，old/ambiguous 均保留 journal，歧义只隔离对应 unit；
+- Infrastructure filesystem recovery probe 由 CurrentRoot 与 journal relative path 计算实际 artifact integrity，恢复不依赖 Candidate、scanner、cache 或进程内状态；
+- Managed 与 File-backed 通过统一 authoritative Plan workflow 加载；strict document runtime 隐藏在 Infrastructure document-source port 后，普通保存不得静默切换 authority，File-backed 无数据库 fallback；
+- activation/deactivation 与 portable revision 分离，unregister/authority conversion 不级联删除 runtime state；
+- Local Binding workflow 复用共享 `DeviceBindingSafetyValidator`，先规范化物理路径，再验证同 Plan root safety 与跨 active Plan writable collision；安全但不完整的 binding 可以 durable 保存；
+- 真实 file-backed SQLite 集成测试覆盖关闭/重开、自动恢复、歧义隔离、authority/no-fallback/non-cascade、single-device identity 与 binding safety。
+
+下一阶段优先在 **Secret Binding workflow + Config DB backup/recovery/maintenance integration** 与 **Physical Current/History Publisher Contract** 之间选择；不自动进入 Archiver。

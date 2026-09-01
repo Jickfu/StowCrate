@@ -30,8 +30,10 @@ public interface IConfigDatabaseIdentityStore
 public interface IPlanRegistrationStore
 {
     Task<RegisteredPlanState?> LoadAsync(PlanId planId, CancellationToken cancellationToken);
+    Task<ImmutableArray<PlanRegistration>> ListRegisteredAsync(bool activeOnly, CancellationToken cancellationToken);
     Task<ManagedPlanDocument> SaveManagedAsync(PlanRegistration registration, ReadOnlyMemory<byte> canonicalUtf8Payload, long? expectedRevision, CancellationToken cancellationToken);
     Task SaveFileBackedAsync(PlanRegistration registration, CancellationToken cancellationToken);
+    Task SetActiveAsync(PlanId planId, bool isActive, CancellationToken cancellationToken);
 }
 
 public sealed record SourceLocalBinding(SourceId SourceId, string CanonicalPath, string ComparisonKey, bool IsActive);
@@ -44,9 +46,9 @@ public sealed record DevicePlanLocalBindings(PlanId PlanId, DeviceId DeviceId, I
 
 public interface IDevicePlanBindingStore
 {
-    Task<DevicePlanLocalBindings?> LoadAsync(PlanId planId, DeviceId deviceId, CancellationToken cancellationToken);
+    Task<DevicePlanLocalBindings?> LoadAsync(PlanId planId, CancellationToken cancellationToken);
     Task SaveValidatedAggregateAsync(DevicePlanLocalBindings bindings, CancellationToken cancellationToken);
-    Task<ImmutableArray<DevicePlanLocalBindings>> ListActiveRootFactsAsync(DeviceId deviceId, CancellationToken cancellationToken);
+    Task<ImmutableArray<DevicePlanLocalBindings>> ListActiveRootFactsAsync(CancellationToken cancellationToken);
 }
 
 public sealed record FileManagedArchiveUnitRegistration(PlanId PlanId, SourceId SourceId, ArchiveUnitId ArchiveUnitId,
@@ -66,10 +68,23 @@ public sealed record ArchiveUnitDurableState(ArchiveVersion? CurrentArchive, Cur
 public interface IArchiveUnitDurableStateStore
 {
     Task<ArchiveUnitDurableState?> LoadAsync(PlanId planId, ArchiveUnitId archiveUnitId, CancellationToken cancellationToken);
+    Task<ImmutableArray<PendingPublishIntent>> ListIncompletePublishIntentsAsync(CancellationToken cancellationToken);
     Task BeginPublishAsync(PendingPublishIntent intent, CancellationToken cancellationToken);
     Task SavePublishProgressAsync(PendingPublishIntent intent, CancellationToken cancellationToken);
     Task<DurableUnitMetadataCommitResult> CompleteMetadataCommitAsync(DurableUnitMetadataCommitPlan commit, CancellationToken cancellationToken);
     Task CommitOutputReorganizationAsync(OutputReorganizationResult reorganization, CancellationToken cancellationToken);
+}
+
+public sealed record ConfigDatabaseOpenRequest(string DatabasePath, Guid? NewDatabaseId = null, DeviceId? NewDeviceId = null);
+public sealed record ConfigDatabaseSession(
+    ConfigDatabaseIdentity Identity,
+    IPlanRegistrationStore Plans,
+    IDevicePlanBindingStore Bindings,
+    IArchiveUnitDurableStateStore ArchiveUnits);
+
+public interface IConfigDatabaseSessionOpener
+{
+    Task<ConfigDatabaseSession> OpenAsync(ConfigDatabaseOpenRequest request, CancellationToken cancellationToken);
 }
 
 public enum ScheduleInstallationStatus { NotInstalled, Installed, OutOfSync, Error }

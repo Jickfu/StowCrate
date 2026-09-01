@@ -892,7 +892,7 @@ v1 明确不支持 optional external、glob/multi-root、external rules/`.backup
 1. **`.backupignore v1` Directive 集合变化**：规范最初只允许 `@version/@mode/@case`；现在已正式加入可选 `@id`。parser 已通过兼容旧 API 的完整 parse result 返回 optional canonical lowercase UUID-v4 identity，并保留 RuleSet；解析和 identity resolution 均不修改文件。
 2. **Fingerprint 强类型与字段**：ArchiveUnitId/ExternalSourceId 已正式排除于 SelectionFingerprint，logical source/path/mapping 仍包含；当前 Core 尚未实现这些强类型 fingerprint，不得把旧聚合 string 当作 v1 durable baseline。
 3. **Baseline key 与 DeviceId**：Change Detection 的 `PlanId + ArchiveUnitId` 是 portable unit key；DeviceId 只作为本机 registration/binding/runtime namespace，不替换该 key。
-4. **实现现状**：M3 已实现 strict document runtime、frozen portable domain、device resolution/observation、Candidate/Readiness、strong fingerprints/change decision、ExecutionSemanticSnapshot、M3.9 config.db schema/ports，以及 M3.10 EF Core SQLite migration/repositories/recovery tests。尚未实现物理 publisher、confirmed relocation workflow、Import/Update/Clone 或完整 Current/History application workflow。
+4. **实现现状**：M3 已实现 strict document runtime、frozen portable domain、device resolution/observation、Candidate/Readiness、strong fingerprints/change decision、ExecutionSemanticSnapshot、M3.9 config.db schema/ports、M3.10 EF Core SQLite migration/repositories，以及 M3.11 startup recovery、统一 authority 与 Local Binding application workflows。尚未实现物理 publisher、confirmed relocation、SecretValue transaction 或完整 Current/History application workflow。
 
 ## 24. 当前未决顺序
 
@@ -902,4 +902,4 @@ Backup Plan v1 Domain Freeze Review 已完成，结论见 `reviews/BACKUPPLAN-v1
 
 Draft 2020-12 Schema、fixtures、自动测试与 Schema Review 已完成，见 `schemas/backupplan-v1.schema.json`（仓库根相对路径）、`plan/BACKUPPLAN-v1-SCHEMA-DESIGN.md`、`reviews/BACKUPPLAN-v1-SCHEMA-DESIGN-REVIEW.md` 和 `reviews/BACKUPPLAN-v1-SCHEMA-REVIEW.md`。Review PASS 后 Backup Plan v1 标记为 **Document Contract Frozen**。canonical `$id` 在长期稳定公开 URI 确认前保持省略，不虚构发布域名。
 
-M3.9 Schema Design Review 已 PASS，M3.10 persistence implementation/tests 已完成且无 model/migration drift。下一阶段为 **config.db startup/recovery integration + Local Binding/Authority application workflows**；不得直接跳到 Archiver。
+M3.9 Schema Design Review 已 PASS，M3.10 persistence implementation/tests 已完成且无 model/migration drift，M3.11 startup/recovery、authority 与 Local Binding workflows 已完成。下一阶段优先推进 **Secret Binding workflow + Config DB backup/recovery/maintenance integration** 或 **Physical Current/History Publisher Contract**；不得自动跳到 Archiver。
