@@ -7,6 +7,7 @@ using StowCrate.Archiving.SevenZip;
 using StowCrate.Core.BackupPlans;
 using StowCrate.Core.Filesystem;
 using StowCrate.Core.Paths;
+using System.IO.Compression;
 
 namespace StowCrate.Archiving.Tests;
 
@@ -72,6 +73,14 @@ public sealed class SevenZipBackendTests : IDisposable
             Assert.Contains(verification.Entries, x => x.Path.Value == "你好.txt" && x.Kind == FileSystemEntryKind.File);
             Assert.Contains(verification.Entries, x => x.Path.Value == "空目录" && x.Kind == FileSystemEntryKind.Directory);
             Assert.Contains(verification.Entries, x => x.Path.Value == "__stowcrate__/manifest.json");
+            if (format is PortableArchiveFormat.Zip)
+            {
+                using var zip = ZipFile.OpenRead(workspace.PartialArtifactPath);
+                var payloadEntry = zip.Entries.Single(entry => entry.FullName.Replace('\\', '/').TrimStart('.', '/') == "你好.txt");
+                Assert.Contains(zip.Entries, entry => entry.FullName.Replace('\\', '/').TrimStart('.', '/') == "__stowcrate__/manifest.json");
+                using var independent = new StreamReader(payloadEntry.Open());
+                Assert.Equal("payload", await independent.ReadToEndAsync());
+            }
             var extracted = Path.Combine(root, "extracted"); var type = format is PortableArchiveFormat.SevenZip ? "-t7z" : "-tzip";
             var extraction = await runner.RunAsync(new(locator.ExecutablePath, null, ["x", type, "-y", "-bd", "-bb0", "-o" + extracted, workspace.PartialArtifactPath], null), CancellationToken.None);
             Assert.Equal(0, extraction.ExitCode); Assert.True(Directory.Exists(Path.Combine(extracted, "空目录")));

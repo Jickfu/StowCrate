@@ -51,7 +51,13 @@ public sealed class PrivacyRecoveryEnvelopeV1Codec : IPrivacyRecoveryEnvelopeCod
             if (root.GetProperty("schemaVersion").GetInt32() != SchemaVersion
                 || root.GetProperty("privacySemanticsVersion").GetInt32() != PrivacySemanticsVersion
                 || root.GetProperty("carrierSemanticsVersion").GetInt32() != CarrierSemanticsVersion) throw new FormatException("Unsupported recovery envelope semantics.");
-            var format = Enum.Parse<PortableArchiveFormat>(root.GetProperty("archiveFormat").GetString()!, false);
+            var format = root.GetProperty("archiveFormat").GetString() switch
+            {
+                "SevenZip" => PortableArchiveFormat.SevenZip,
+                "Zip" => PortableArchiveFormat.Zip,
+                "TarZstd" => PortableArchiveFormat.TarZstd,
+                _ => throw new FormatException("Unknown recovery archiveFormat token.")
+            };
             var encoding = root.GetProperty("recoveryMaterialEncoding").GetString()!;
             if (encoding != Encoding) throw new FormatException("Unsupported recovery material encoding.");
             var material = root.GetProperty("recoveryMaterial").GetString()!;

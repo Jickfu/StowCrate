@@ -78,12 +78,12 @@ public sealed class Bundled7ZipCapabilityResolver(Bundled7ZipProbeResult probe) 
         var spec = requirements.ArchiveSpec;
         if (!probe.IsAvailable) return new(null, probe.Failure ?? "Bundled 7-Zip is unavailable.");
         if (spec.Format is not (PortableArchiveFormat.SevenZip or PortableArchiveFormat.Zip)) return new(null, "Bundled 7-Zip M4.2 supports only SevenZip and ZIP.");
-        if (spec.Protection is PrivacyProtection) return new(null, "Privacy recovery envelope is not frozen.");
+        if (spec.Protection is PrivacyProtection) return new(null, "Privacy is unsupported: the SevenZip/ZIP mixed-encryption carrier has not passed the complete Windows/Linux/macOS evidence matrix.");
         if (spec.Protection is SecureProtection) return new(null, "Secure is unsupported: redirected-stdin password transport was not reliable in the 7-Zip 26.02 spike.");
         if (requirements.RequiresSymbolicLinks) return new(null, "Symbolic-link fidelity has not passed the cross-platform backend matrix.");
         var metadata = new ArchiveMetadataFeatures(true, StowCrate.Core.Filesystem.SourceMetadata.None);
         if (!metadata.Satisfies(requirements.RequiredMetadataFeatures)) return new(null, "Required metadata features have not passed the cross-platform backend matrix.");
-        var semantics = $"7zip/{Bundled7ZipDescriptor.Version};archive={archiveSemanticsVersion};format={spec.Format};preset={SevenZipArgumentMapping.Level(spec.CompressionPreset)};protection=None;links=none;mtime=true;metadataFlags=none;volume=single;secret={Bundled7ZipDescriptor.SecretTransportSemantics}";
+        var semantics = $"7zip/{Bundled7ZipDescriptor.Version};archive={archiveSemanticsVersion};format={spec.Format};preset={SevenZipArgumentMapping.Level(spec.CompressionPreset)};method={(spec.Format is PortableArchiveFormat.SevenZip ? "lzma2-solid" : spec.CompressionPreset is PortableCompressionPreset.Store ? "copy" : "deflate")};zipNames={(spec.Format is PortableArchiveFormat.Zip ? "utf8" : "n/a")};protection=None;links=none;mtime=true;metadataFlags=none;volume=single;secret={Bundled7ZipDescriptor.SecretTransportSemantics}";
         return new(new(spec.Format, spec.CompressionPreset, spec.Protection, ArchiveLinkSemantics.NoLinks,
             metadata, true, semantics), null);
     }

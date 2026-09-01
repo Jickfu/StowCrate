@@ -73,6 +73,67 @@ public sealed class TarZstdBackendTests
         Assert.False(codec.ReadAndValidate(System.Text.Encoding.UTF8.GetBytes("{\"schemaVersion\":1,\"extra\":true}")).IsValid);
     }
 
+    [Theory]
+    [InlineData("Unknown")]
+    [InlineData("0")]
+    [InlineData("sevenzip")]
+    [InlineData("SEVENZIP")]
+    public void RecoveryEnvelopeRejectsUnknownNumericAndCaseVariantFormats(string format)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes($"{{\"schemaVersion\":1,\"privacySemanticsVersion\":1,\"carrierSemanticsVersion\":1,\"archiveFormat\":\"{format}\",\"recoveryMaterialEncoding\":\"base64url-no-padding\",\"recoveryMaterial\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}}");
+        Assert.False(new PrivacyRecoveryEnvelopeV1Codec().ReadAndValidate(bytes).IsValid);
+    }
+
+    [Theory]
+    [InlineData("{\"schemaVersion\":1,\"schemaVersion\":1,\"privacySemanticsVersion\":1,\"carrierSemanticsVersion\":1,\"archiveFormat\":\"Zip\",\"recoveryMaterialEncoding\":\"base64url-no-padding\",\"recoveryMaterial\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}")]
+    [InlineData("{\"schemaVersion\":1}")]
+    [InlineData("{\"schemaVersion\":2,\"privacySemanticsVersion\":1,\"carrierSemanticsVersion\":1,\"archiveFormat\":\"Zip\",\"recoveryMaterialEncoding\":\"base64url-no-padding\",\"recoveryMaterial\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}")]
+    public void RecoveryEnvelopeRejectsDuplicateMissingAndFutureSemantics(string json) =>
+        Assert.False(new PrivacyRecoveryEnvelopeV1Codec().ReadAndValidate(System.Text.Encoding.UTF8.GetBytes(json)).IsValid);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CorruptOrTruncatedZstdIsFormatFailure(bool truncate)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "stowcrate-corrupt-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "bad.partial");
+            await File.WriteAllBytesAsync(path, truncate ? [0x28, 0xb5, 0x2f, 0xfd] : [1, 2, 3, 4, 5, 6]);
+            var spec = new EffectiveArchiveSpec(PortableArchiveFormat.TarZstd, PortableCompressionPreset.Standard, new NoProtection());
+            var capability = new TarZstdCapabilityResolver().Resolve(new(spec, false, ArchiveMetadataFeatures.None), 1).Capability!;
+            var result = await new TarZstdArchiveArtifactVerifier().VerifyAsync(new(path, new("__stowcrate__/manifest.json"), null, spec, capability, null), default);
+            Assert.False(result.FormatTestPassed);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task NoneArtifactIsByteReproducibleForIdenticalMaterializedInput()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "stowcrate-repro-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var staging = Path.Combine(root, "staging"); Directory.CreateDirectory(Path.Combine(staging, "__stowcrate__"));
+            var manifest = Path.Combine(staging, "__stowcrate__", "manifest.json"); await File.WriteAllTextAsync(manifest, "{}");
+            var payload = Path.Combine(staging, "payload.txt"); await File.WriteAllTextAsync(payload, "stable");
+            var entries = new[] { new MaterializedArchiveEntry(new("__stowcrate__/manifest.json"), FileSystemEntryKind.File, manifest, DateTimeOffset.UnixEpoch), new MaterializedArchiveEntry(new("payload.txt"), FileSystemEntryKind.File, payload, DateTimeOffset.UnixEpoch) };
+            var spec = new EffectiveArchiveSpec(PortableArchiveFormat.TarZstd, PortableCompressionPreset.Standard, new NoProtection());
+            var capability = new TarZstdCapabilityResolver().Resolve(new(spec, false, new(true, SourceMetadata.None)), 1).Capability!;
+            var paths = new[] { Path.Combine(root, "one.partial"), Path.Combine(root, "two.partial") };
+            foreach (var path in paths)
+            {
+                var workspace = new TestWorkspace(staging, path);
+                await new TarZstdArchiveFormatWriter().WriteAsync(new(new(workspace, entries), spec, capability, null), default);
+            }
+            Assert.Equal(await File.ReadAllBytesAsync(paths[0]), await File.ReadAllBytesAsync(paths[1]));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private sealed class TestWorkspace(string stagingRoot, string partial) : IArchiveBuildWorkspace
     {
         public string StagingRoot { get; } = stagingRoot;

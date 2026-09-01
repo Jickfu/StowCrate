@@ -139,10 +139,16 @@ public sealed class TarZstdArchiveArtifactVerifier : IArchiveArtifactVerifier
                 else if (entry.DataStream is not null) await entry.DataStream.CopyToAsync(Stream.Null, cancellationToken).ConfigureAwait(false);
             }
         }
-        catch (InvalidDataException) { return new(false, [], ReadOnlyMemory<byte>.Empty, default, -1); }
+        catch (Exception ex) when (IsArchiveCorruption(ex))
+        {
+            return new(false, [], ReadOnlyMemory<byte>.Empty, default, -1);
+        }
 
         await using var artifact = File.OpenRead(request.PartialArtifactPath);
         var hash = new Sha256Digest(Convert.ToHexStringLower(await SHA256.HashDataAsync(artifact, cancellationToken).ConfigureAwait(false)));
         return new(true, entries.OrderBy(x => x.Path.Value, StringComparer.Ordinal).ToImmutableArray(), manifest ?? [], hash, artifact.Length, recovery);
     }
+
+    private static bool IsArchiveCorruption(Exception exception) => exception is
+        InvalidDataException or EndOfStreamException or IOException or ZstdException;
 }

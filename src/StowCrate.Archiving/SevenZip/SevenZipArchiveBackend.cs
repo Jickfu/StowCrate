@@ -23,7 +23,11 @@ public static class SevenZipArgumentMapping
         if (spec.Protection is not NoProtection) throw new NotSupportedException("This backend instance exposes only proven None protection.");
         var arguments = new List<string> { "a", spec.Format is PortableArchiveFormat.SevenZip ? "-t7z" : "-tzip", $"-mx={Level(spec.CompressionPreset)}", "-bd", "-bb0", "-y" };
         if (spec.Format is PortableArchiveFormat.SevenZip) { arguments.Add("-m0=lzma2"); arguments.Add("-ms=on"); }
-        else if (spec.Format is PortableArchiveFormat.Zip) arguments.Add(spec.CompressionPreset is PortableCompressionPreset.Store ? "-mm=Copy" : "-mm=Deflate");
+        else if (spec.Format is PortableArchiveFormat.Zip)
+        {
+            arguments.Add(spec.CompressionPreset is PortableCompressionPreset.Store ? "-mm=Copy" : "-mm=Deflate");
+            arguments.Add("-mcu=on");
+        }
         else throw new NotSupportedException("TarZstd is not a 7-Zip M4.2 packing backend.");
         arguments.Add("-scsUTF-8"); arguments.Add(archivePath); arguments.Add(input);
         return [.. arguments];
