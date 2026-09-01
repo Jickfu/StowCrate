@@ -286,7 +286,12 @@ OutputLayoutFingerprint 与 ExecutionBindingFingerprint 都不进入 EntrySet/Se
 - Application startup coordinator 先打开并冻结 `DatabaseMetadata` 的 database/device identity，再通过高层 query ports发现 active Plan 与 incomplete PublishIntent。每个 unit 独立执行 filesystem integrity probe与 recovery decision：expected-new 自动重建并提交 durable metadata；observed-old 与 ambiguous 均保留 journal，ambiguous 只隔离该 unit。数据库 corruption/unsupported version仍是整个 local state 的 fatal error。
 - `DatabaseMetadata.DeviceId` 是本机唯一 identity 来源；binding repository 不接受调用方指定 DeviceId。Local Binding 保存先由 Infrastructure 生成 canonical physical path/comparison key，再由 Application 共享的 `DeviceBindingSafetyValidator` 检查同 Plan root overlap 与跨 active Plan writable collision；安全但缺少 required root 的 aggregate 可以保存，readiness 后续报告 PlanNotReady。
 - Managed/File-backed authority 由统一 Application workflow 编排。Infrastructure document-source port封装 strict reader、schema、semantic mapper与 deterministic writer；Application 只接收 portable domain。File-backed 每次从注册文件读取且绝不 fallback，authority conversion必须显式进行，activation 不改写 document revision。
-- `config.db` 的灾难恢复副本通过 SQLite Online Backup API 生成一致的 `config.snapshot.db`。
+- path/storage bindings 与 SecretBinding metadata 使用独立 aggregate/port，禁止保存路径时携带 stale SecretRevision/locator。执行解析前才将 active SecretRevision组合为 local facts；material availability另由 Secret Store probe判断。
+- Secret Set/Replace/Rebind 使用 copy-on-write：先在平台 Secret Store创建新 locator，再以 expected-revision CAS切换 config.db metadata并递增 revision，commit后 best-effort删除旧 locator。CAS失败时旧 binding保持有效，新 locator仅是可清理 orphan。Unbind先 durable deactivate，再删除 material；禁止原地覆盖 active locator。
+- Secret material只经 disposable/zeroizable transient lease流动，不进入 portable model、长期 Application snapshot、fingerprint、SQLite、日志或异常。无头执行只能读取 durable active binding，不得以临时 prompt绕过。
+- `config.db` 的灾难恢复副本通过 SQLite Online Backup API 写入 temporary database，验证 DatabaseMetadata/schema与 `integrity_check` 后 atomic replace为 `config.snapshot.db`；禁止复制 live DB/WAL/SHM。
+- 损坏启动只报告 validated snapshot candidate，不自动覆盖。显式恢复保留原损坏 database及 sidecars，以 Online Backup重建目标，并重新通过正常 open coordinator。
+- maintenance只允许 durability-critical snapshot/diagnostics与 completed PublishIntent cleanup；incomplete journal、artifact runtime state及 baseline不得被清理。
 - `cache.db` 不备份，缺失时自动重建。
 - portable configuration 只保存 SecretSlot declaration；local state 只保存 binding metadata、SecretRevision、provider 与 opaque SecretReference；SecretValue 位于平台 Secret Store。
 - `*.backupplan` 和归档 manifest 使用显式 `schemaVersion`，读取器对未知新版本安全失败并给出可操作提示。

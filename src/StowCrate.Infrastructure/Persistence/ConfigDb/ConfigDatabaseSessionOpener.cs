@@ -10,6 +10,6 @@ public sealed class ConfigDatabaseSessionOpener : IConfigDatabaseSessionOpener
             request.DatabasePath, request.NewDatabaseId, request.NewDeviceId, cancellationToken).ConfigureAwait(false);
         var identity = await repository.LoadAsync(cancellationToken).ConfigureAwait(false)
             ?? throw new LocalStateCorruptionException("Opened config database has no database/device identity.");
-        return new(identity, repository, repository, repository);
+        return new(identity, repository, repository, repository, repository);
     }
 }

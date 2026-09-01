@@ -145,4 +145,18 @@ ResolvedPlanSnapshot
 - Local Binding workflow 复用共享 `DeviceBindingSafetyValidator`，先规范化物理路径，再验证同 Plan root safety 与跨 active Plan writable collision；安全但不完整的 binding 可以 durable 保存；
 - 真实 file-backed SQLite 集成测试覆盖关闭/重开、自动恢复、歧义隔离、authority/no-fallback/non-cascade、single-device identity 与 binding safety。
 
-下一阶段优先在 **Secret Binding workflow + Config DB backup/recovery/maintenance integration** 与 **Physical Current/History Publisher Contract** 之间选择；不自动进入 Archiver。
+## 已完成：M3.12 Secret Binding Workflow + config.db Snapshot/Recovery Maintenance
+
+- path/storage binding 与 SecretBinding metadata 拆为独立 aggregate/port；普通 binding save 不再携带或重写 SecretRevision/locator，解析执行快照前才组合 active revision facts；
+- `ISecretBindingMetadataStore` 以 expected-revision CAS 实现 Set=1、Replace/Rebind=revision+1 与 durable deactivate，最终 revision 只能由 repository 推进；
+- platform-neutral Secret Store port 仅通过 disposable/zeroizable transient lease接触 material，并提供 availability probe与无头读取；SecretValue、hash、verifier或 derived digest均不持久化；
+- Set/Replace/Rebind 使用 create new locator → DB CAS switch → best-effort delete old 的 copy-on-write顺序；Unbind先 durable deactivate，再删除 material；
+- fault-injection测试覆盖 create后DB失败、DB commit后中断、old delete失败与 stale CAS，active metadata始终只指向已成功创建的 material；
+- `config.db` snapshot 使用 SQLite Online Backup API写入同目录 temporary database，经 DatabaseMetadata/schema与 `PRAGMA integrity_check` 验证后 atomic replace；
+- recovery只报告 validated snapshot candidate；显式 restore保留原损坏 database/WAL/SHM，再以 Online Backup恢复并重新经过正常 open coordinator；
+- durability maintenance仅清理 `METADATA_COMMITTED` journal，保留 incomplete journal及全部 ArchiveVersion/Current/History/Baseline runtime state；
+- config.db v1 schema、Initial migration与 frozen durable encoding均保持不变。
+
+## Milestone 3 状态：COMPLETE
+
+M3 Completion Review 结论为 **PASS**，见 [`../reviews/MILESTONE-3-COMPLETION-REVIEW.md`](../reviews/MILESTONE-3-COMPLETION-REVIEW.md)。下一阶段正式进入 [`MILESTONE-4-ARCHIVING.md`](MILESTONE-4-ARCHIVING.md) 的 Archive Writer / capability / manifest / `.partial` / archive verification；不先实现 Physical Current/History Publisher。

@@ -16,7 +16,7 @@ public sealed class ConfigDbOpenCoordinator
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         var fullPath = Path.GetFullPath(databasePath);
         var exists = File.Exists(fullPath);
-        if (exists) await ProbeExistingAsync(fullPath, cancellationToken).ConfigureAwait(false);
+        if (exists) await ValidateExistingAsync(fullPath, runIntegrityCheck: false, cancellationToken).ConfigureAwait(false);
         else if (newDatabaseId is null || newDeviceId is null) throw new ArgumentException("New config database requires database and device identities.");
 
         var factory = new ConfigDbContextFactory(fullPath);
@@ -43,22 +43,38 @@ public sealed class ConfigDbOpenCoordinator
         return new ConfigDbRepository(factory);
     }
 
-    private static async Task ProbeExistingAsync(string path, CancellationToken cancellationToken)
+    public static async Task<ConfigDatabaseIntegrityDiagnostic> ValidateExistingAsync(string path, bool runIntegrityCheck, CancellationToken cancellationToken = default)
     {
+        path = Path.GetFullPath(path);
         var builder = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false };
         try
         {
             await using var connection = new SqliteConnection(builder.ConnectionString);
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
             await using var command = connection.CreateCommand();
+            // 必须先独立判定 schema version，future database不得被旧应用继续猜测列布局。
             command.CommandText = "SELECT SchemaVersion FROM DatabaseMetadata WHERE SingletonKey=1";
-            var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-            if (value is not long version || version < 1) throw new LocalStateCorruptionException("DatabaseMetadata.SchemaVersion is missing or invalid.");
+            var versionValue = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+            if (versionValue is not long version || version < 1) throw new LocalStateCorruptionException("DatabaseMetadata.SchemaVersion is missing or invalid.");
             if (version > SupportedSchemaVersion) throw new UnsupportedConfigDatabaseVersionException(checked((int)version));
             if (version != SupportedSchemaVersion) throw new LocalStateCorruptionException($"Config database schema version {version} requires an explicit supported migration path.");
+
+            command.CommandText = "SELECT DatabaseId,DeviceId,CreatedAtUtcMs FROM DatabaseMetadata WHERE SingletonKey=1";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) throw new LocalStateCorruptionException("DatabaseMetadata is missing.");
+            var identity = new ConfigDatabaseIdentity(DurableCodecs.Uuid((byte[])reader.GetValue(0)), new(DurableCodecs.Uuid((byte[])reader.GetValue(1))),
+                checked((int)version), DurableCodecs.Utc(reader.GetInt64(2)));
+            await reader.DisposeAsync().ConfigureAwait(false);
+            if (!runIntegrityCheck) return new(path, identity, true, "Metadata probe passed.");
+            command.CommandText = "PRAGMA integrity_check";
+            var integrity = Convert.ToString(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture) ?? "missing result";
+            if (!string.Equals(integrity, "ok", StringComparison.OrdinalIgnoreCase)) throw new LocalStateCorruptionException("SQLite integrity check failed.");
+            return new(path, identity, true, "SQLite integrity_check passed.");
         }
         catch (LocalStateRepositoryException) { throw; }
         catch (SqliteException exception) { throw new LocalStateCorruptionException("Config database metadata probe failed.", exception); }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException or OverflowException or InvalidCastException)
+        { throw new LocalStateCorruptionException("Config database metadata is corrupt.", exception); }
     }
 }
 

@@ -12,8 +12,7 @@ public interface ILocalPhysicalPathResolver
 public sealed record SourceBindingInput(SourceId SourceId, string Path, bool IsActive = true);
 public sealed record ExternalBindingInput(ExternalSourceId ExternalSourceId, string Path, bool IsActive = true);
 public sealed record LocalBindingSaveRequest(PlanId PlanId, ImmutableArray<SourceBindingInput> Sources,
-    string? CurrentRoot, string? HistoryRoot, ImmutableArray<ExternalBindingInput> ExternalSources,
-    ImmutableArray<SecretBindingMetadata> ExistingSecretMetadata);
+    string? CurrentRoot, string? HistoryRoot, ImmutableArray<ExternalBindingInput> ExternalSources);
 public sealed class LocalBindingValidationException(IReadOnlyList<PlanResolutionIssue> issues) : Exception("Local binding configuration is unsafe or invalid.") { public IReadOnlyList<PlanResolutionIssue> Issues { get; } = issues; }
 
 public sealed class LocalBindingWorkflow(ConfigDatabaseIdentity identity, IDevicePlanBindingStore store, ILocalPhysicalPathResolver paths)
@@ -42,8 +41,7 @@ public sealed class LocalBindingWorkflow(ConfigDatabaseIdentity identity, IDevic
             [.. sources.Select(x => new SourceLocalBinding(x.Input.SourceId, x.Path.CanonicalPath, x.Path.ComparisonKey, x.Input.IsActive))],
             current is null ? null : new(current.CanonicalPath, current.ComparisonKey, true),
             history is null ? null : new(history.CanonicalPath, history.ComparisonKey, true),
-            [.. external.Select(x => new ExternalLocalBinding(x.Input.ExternalSourceId, x.Path.CanonicalPath, x.Path.ComparisonKey, x.Input.IsActive))],
-            request.ExistingSecretMetadata);
+            [.. external.Select(x => new ExternalLocalBinding(x.Input.ExternalSourceId, x.Path.CanonicalPath, x.Path.ComparisonKey, x.Input.IsActive))]);
         await store.SaveValidatedAggregateAsync(aggregate, cancellationToken).ConfigureAwait(false);
         return aggregate;
     }
@@ -57,13 +55,10 @@ public sealed class LocalBindingWorkflow(ConfigDatabaseIdentity identity, IDevic
     {
         AddDuplicates(request.Sources.Select(x => x.SourceId), "Source", issues);
         AddDuplicates(request.ExternalSources.Select(x => x.ExternalSourceId), "ExternalSource", issues);
-        AddDuplicates(request.ExistingSecretMetadata.Select(x => x.SecretSlotId), "SecretSlot", issues);
         var sourceIds = plan.Sources.Select(x => x.Id).ToHashSet();
         foreach (var source in request.Sources.Where(x => !sourceIds.Contains(x.SourceId))) issues.Add(new(PlanResolutionIssueCode.BindingPlanMismatch, "Source binding references an identity outside the Plan.", source.SourceId.Value.ToString("D")));
         var externalIds = plan.ExternalSources.Select(x => x.Id).ToHashSet();
         foreach (var item in request.ExternalSources.Where(x => !externalIds.Contains(x.ExternalSourceId))) issues.Add(new(PlanResolutionIssueCode.BindingPlanMismatch, "External binding references an identity outside the Plan.", item.ExternalSourceId.Value.ToString("D")));
-        var secretIds = plan.SecretSlots.Select(x => x.Id).ToHashSet();
-        foreach (var item in request.ExistingSecretMetadata.Where(x => !secretIds.Contains(x.SecretSlotId))) issues.Add(new(PlanResolutionIssueCode.BindingPlanMismatch, "Secret metadata references an identity outside the Plan.", item.SecretSlotId.Value.ToString("D")));
     }
 
     private static void AddDuplicates<T>(IEnumerable<T> values, string kind, List<PlanResolutionIssue> issues) where T : notnull

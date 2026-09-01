@@ -15,7 +15,7 @@ internal interface IMetadataCommitFaultInjector { void ThrowIfRequested(Metadata
 internal sealed class NoMetadataCommitFaultInjector : IMetadataCommitFaultInjector { public static NoMetadataCommitFaultInjector Instance { get; } = new(); public void ThrowIfRequested(MetadataCommitFaultPoint point) { } }
 
 public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegistrationStore, IDevicePlanBindingStore,
-    IFileManagedArchiveUnitRegistrationStore, IArchiveUnitDurableStateStore, IScheduleInstallationStore, IMaintenanceStateStore
+    ISecretBindingMetadataStore, IFileManagedArchiveUnitRegistrationStore, IArchiveUnitDurableStateStore, IScheduleInstallationStore, IMaintenanceStateStore
 {
     private readonly ConfigDbContextFactory factory;
     private readonly IMetadataCommitFaultInjector faultInjector;
@@ -123,13 +123,11 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
             var sources = await db.SourceLocalBindings.AsNoTracking().Where(x => x.PlanId == id).ToListAsync(cancellationToken);
             var external = await db.ExternalLocalBindings.AsNoTracking().Where(x => x.PlanId == id).ToListAsync(cancellationToken);
             var roots = await db.OutputRootLocalBindings.AsNoTracking().Where(x => x.PlanId == id).ToListAsync(cancellationToken);
-            var secrets = await db.SecretBindings.AsNoTracking().Where(x => x.PlanId == id).ToListAsync(cancellationToken);
-            if (sources.Count + external.Count + roots.Count + secrets.Count == 0) return null;
+            if (sources.Count + external.Count + roots.Count == 0) return null;
             OutputRootLocalBinding? Root(string token) { var x = roots.SingleOrDefault(root => root.RootKind == token); return x is null ? null : new(x.CanonicalPath, x.ComparisonKey, DurableCodecs.Boolean(x.IsActive)); }
             return new(planId, deviceId,
                 [.. sources.Select(x => new SourceLocalBinding(new(DurableCodecs.Uuid(x.SourceId)), x.CanonicalPath, x.ComparisonKey, DurableCodecs.Boolean(x.IsActive)))], Root("CURRENT"), Root("HISTORY"),
-                [.. external.Select(x => new ExternalLocalBinding(new(DurableCodecs.Uuid(x.ExternalSourceId)), x.CanonicalPath, x.ComparisonKey, DurableCodecs.Boolean(x.IsActive)))],
-                [.. secrets.Select(x => new SecretBindingMetadata(new(DurableCodecs.Uuid(x.SecretSlotId)), x.ProviderToken, x.OpaqueReference, new(x.SecretRevision), DurableCodecs.Boolean(x.IsActive)))]);
+                [.. external.Select(x => new ExternalLocalBinding(new(DurableCodecs.Uuid(x.ExternalSourceId)), x.CanonicalPath, x.ComparisonKey, DurableCodecs.Boolean(x.IsActive)))]);
         }
         catch (Exception exception) { throw Translate(exception, "Local bindings are corrupt."); }
     }
@@ -150,6 +148,40 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
     {
         await using var db = factory.Create(); var ids = await db.PlanRegistrations.AsNoTracking().Where(x => x.IsActive == 1).Select(x => x.PlanId).ToListAsync(cancellationToken); var result = ImmutableArray.CreateBuilder<DevicePlanLocalBindings>();
         foreach (var id in ids) { var loaded = await LoadAsync(new(DurableCodecs.Uuid(id)), cancellationToken); if (loaded is not null) result.Add(loaded); } return result.ToImmutable();
+    }
+
+    async Task<ImmutableArray<SecretBindingMetadata>> ISecretBindingMetadataStore.LoadAsync(PlanId planId, CancellationToken cancellationToken)
+    {
+        await using var db = factory.Create(); var id = DurableCodecs.Uuid(planId.Value);
+        try
+        {
+            var rows = await db.SecretBindings.AsNoTracking().Where(x => x.PlanId == id).OrderBy(x => x.SecretSlotId).ToListAsync(cancellationToken);
+            return [.. rows.Select(MapSecret)];
+        }
+        catch (Exception exception) { throw Translate(exception, "Secret binding metadata is corrupt."); }
+    }
+
+    public Task<SecretBindingMetadata> BindAsync(PlanId planId, SecretSlotId slotId, string providerToken, string opaqueReference, CancellationToken cancellationToken)
+        => SwitchSecretAsync(planId, slotId, null, providerToken, opaqueReference, requireActive: null, cancellationToken);
+
+    public Task<SecretBindingMetadata> ReplaceAsync(PlanId planId, SecretSlotId slotId, SecretRevision expectedRevision, string providerToken, string opaqueReference, CancellationToken cancellationToken)
+        => SwitchSecretAsync(planId, slotId, expectedRevision, providerToken, opaqueReference, requireActive: true, cancellationToken, requireSameProvider: true);
+
+    public Task<SecretBindingMetadata> RebindAsync(PlanId planId, SecretSlotId slotId, SecretRevision expectedRevision, string providerToken, string opaqueReference, CancellationToken cancellationToken)
+        => SwitchSecretAsync(planId, slotId, expectedRevision, providerToken, opaqueReference, requireActive: null, cancellationToken);
+
+    public async Task<SecretBindingMetadata> DeactivateAsync(PlanId planId, SecretSlotId slotId, SecretRevision expectedRevision, CancellationToken cancellationToken)
+    {
+        await using var db = factory.Create(); var plan = DurableCodecs.Uuid(planId.Value); var slot = DurableCodecs.Uuid(slotId.Value);
+        try
+        {
+            var changed = await db.SecretBindings.Where(x => x.PlanId == plan && x.SecretSlotId == slot && x.SecretRevision == expectedRevision.Value && x.IsActive == 1)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.IsActive, 0L), cancellationToken);
+            if (changed != 1) throw new LocalStateConcurrencyException("Secret binding deactivate CAS failed.");
+            var row = await db.SecretBindings.AsNoTracking().SingleAsync(x => x.PlanId == plan && x.SecretSlotId == slot, cancellationToken);
+            return MapSecret(row);
+        }
+        catch (Exception exception) { throw Translate(exception, "Secret binding could not be deactivated."); }
     }
 
     async Task<ImmutableArray<FileManagedArchiveUnitRegistration>> IFileManagedArchiveUnitRegistrationStore.ListAsync(PlanId planId, CancellationToken cancellationToken)
@@ -203,6 +235,21 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
             return result.ToImmutable();
         }
         catch (Exception exception) { throw Translate(exception, "Incomplete PublishIntents could not be listed."); }
+    }
+
+    public async Task<int> CleanupCompletedPublishIntentsAsync(CancellationToken cancellationToken)
+    {
+        await using var db = factory.Create(); await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var completed = await db.PublishIntents.AsNoTracking().Where(x => x.Stage == "METADATA_COMMITTED")
+                .Select(x => new { x.PlanId, x.ArchiveUnitId }).ToListAsync(cancellationToken);
+            foreach (var key in completed)
+                await db.PublishIntentBaselines.Where(x => x.PlanId == key.PlanId && x.ArchiveUnitId == key.ArchiveUnitId).ExecuteDeleteAsync(cancellationToken);
+            var deleted = await db.PublishIntents.Where(x => x.Stage == "METADATA_COMMITTED").ExecuteDeleteAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken); return deleted;
+        }
+        catch (Exception exception) { throw Translate(exception, "Completed PublishIntents could not be cleaned up."); }
     }
 
     public Task BeginPublishAsync(PendingPublishIntent intent, CancellationToken cancellationToken) => SaveIntent(intent, expectedPrevious: null, cancellationToken);
@@ -332,8 +379,38 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
         var sources = await db.SourceLocalBindings.Where(x => x.PlanId == plan).ToListAsync(token); foreach (var row in sources) row.IsActive = 0; foreach (var item in value.Sources) { var id = DurableCodecs.Uuid(item.SourceId.Value); var row = sources.SingleOrDefault(x => x.SourceId.SequenceEqual(id)); if (row is null) { row = new() { PlanId = plan, SourceId = id }; db.SourceLocalBindings.Add(row); } row.CanonicalPath = item.CanonicalPath; row.ComparisonKey = item.ComparisonKey; row.IsActive = DurableCodecs.Boolean(item.IsActive); }
         var external = await db.ExternalLocalBindings.Where(x => x.PlanId == plan).ToListAsync(token); foreach (var row in external) row.IsActive = 0; foreach (var item in value.ExternalSources) { var id = DurableCodecs.Uuid(item.ExternalSourceId.Value); var row = external.SingleOrDefault(x => x.ExternalSourceId.SequenceEqual(id)); if (row is null) { row = new() { PlanId = plan, ExternalSourceId = id }; db.ExternalLocalBindings.Add(row); } row.CanonicalPath = item.CanonicalPath; row.ComparisonKey = item.ComparisonKey; row.IsActive = DurableCodecs.Boolean(item.IsActive); }
         var roots = await db.OutputRootLocalBindings.Where(x => x.PlanId == plan).ToListAsync(token); foreach (var row in roots) row.IsActive = 0; void Root(string kind, OutputRootLocalBinding? item) { if (item is null) return; var row = roots.SingleOrDefault(x => x.RootKind == kind); if (row is null) { row = new() { PlanId = plan, RootKind = kind }; db.OutputRootLocalBindings.Add(row); } row.CanonicalPath = item.CanonicalPath; row.ComparisonKey = item.ComparisonKey; row.IsActive = DurableCodecs.Boolean(item.IsActive); } Root("CURRENT", value.CurrentRoot); Root("HISTORY", value.HistoryRoot);
-        var secrets = await db.SecretBindings.Where(x => x.PlanId == plan).ToListAsync(token); foreach (var row in secrets) row.IsActive = 0; foreach (var item in value.Secrets) { var id = DurableCodecs.Uuid(item.SecretSlotId.Value); var row = secrets.SingleOrDefault(x => x.SecretSlotId.SequenceEqual(id)); if (row is null) { row = new() { PlanId = plan, SecretSlotId = id }; db.SecretBindings.Add(row); } row.ProviderToken = item.ProviderToken; row.OpaqueReference = item.OpaqueReference; row.SecretRevision = item.Revision.Value; row.IsActive = DurableCodecs.Boolean(item.IsActive); }
     }
+
+    private async Task<SecretBindingMetadata> SwitchSecretAsync(PlanId planId, SecretSlotId slotId, SecretRevision? expectedRevision,
+        string providerToken, string opaqueReference, bool? requireActive, CancellationToken cancellationToken, bool requireSameProvider = false)
+    {
+        if (string.IsNullOrWhiteSpace(providerToken) || string.IsNullOrWhiteSpace(opaqueReference)) throw new ArgumentException("Secret locator metadata is required.");
+        await using var db = factory.Create(); await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var plan = DurableCodecs.Uuid(planId.Value); var slot = DurableCodecs.Uuid(slotId.Value);
+        try
+        {
+            var row = await db.SecretBindings.SingleOrDefaultAsync(x => x.PlanId == plan && x.SecretSlotId == slot, cancellationToken);
+            if (expectedRevision is null)
+            {
+                if (row is not null) throw new LocalStateConcurrencyException("Secret binding already exists; use Replace or Rebind.");
+                row = new() { PlanId = plan, SecretSlotId = slot, SecretRevision = 1 }; db.SecretBindings.Add(row);
+            }
+            else
+            {
+                if (row is null || row.SecretRevision != expectedRevision.Value.Value || (requireActive is not null && DurableCodecs.Boolean(row.IsActive) != requireActive.Value))
+                    throw new LocalStateConcurrencyException("Secret binding revision/state CAS failed.");
+                if (requireSameProvider && !string.Equals(row.ProviderToken, providerToken, StringComparison.Ordinal))
+                    throw new LocalStateConcurrencyException("Replace cannot change the Secret Store provider; use Rebind.");
+                row.SecretRevision = checked(row.SecretRevision + 1);
+            }
+            row.ProviderToken = providerToken; row.OpaqueReference = opaqueReference; row.IsActive = 1;
+            await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return MapSecret(row);
+        }
+        catch (Exception exception) { throw Translate(exception, "Secret binding CAS switch failed."); }
+    }
+
+    private static SecretBindingMetadata MapSecret(SecretBindingEntity row) => new(new(DurableCodecs.Uuid(row.SecretSlotId)), row.ProviderToken,
+        row.OpaqueReference, new(row.SecretRevision), DurableCodecs.Boolean(row.IsActive));
 
     private static async Task SaveAsync(ConfigDbContext db, string message, CancellationToken token) { try { await db.SaveChangesAsync(token); } catch (Exception exception) { throw Translate(exception, message); } }
     private static Exception Translate(Exception exception, string message) => exception switch { LocalStateRepositoryException => exception, DbUpdateConcurrencyException => new LocalStateConcurrencyException(message, exception), DbUpdateException => new LocalStateRepositoryException(message, exception), Microsoft.Data.Sqlite.SqliteException => new LocalStateRepositoryException(message, exception), InvalidOperationException or ArgumentException or OverflowException => new LocalStateCorruptionException(message, exception), _ => exception };

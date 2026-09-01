@@ -41,14 +41,23 @@ public sealed record ExternalLocalBinding(ExternalSourceId ExternalSourceId, str
 public sealed record OutputRootLocalBinding(string CanonicalPath, string ComparisonKey, bool IsActive);
 public sealed record SecretBindingMetadata(SecretSlotId SecretSlotId, string ProviderToken, string OpaqueReference, SecretRevision Revision, bool IsActive);
 public sealed record DevicePlanLocalBindings(PlanId PlanId, DeviceId DeviceId, ImmutableArray<SourceLocalBinding> Sources,
-    OutputRootLocalBinding? CurrentRoot, OutputRootLocalBinding? HistoryRoot, ImmutableArray<ExternalLocalBinding> ExternalSources,
-    ImmutableArray<SecretBindingMetadata> Secrets);
+    OutputRootLocalBinding? CurrentRoot, OutputRootLocalBinding? HistoryRoot, ImmutableArray<ExternalLocalBinding> ExternalSources);
 
 public interface IDevicePlanBindingStore
 {
     Task<DevicePlanLocalBindings?> LoadAsync(PlanId planId, CancellationToken cancellationToken);
     Task SaveValidatedAggregateAsync(DevicePlanLocalBindings bindings, CancellationToken cancellationToken);
     Task<ImmutableArray<DevicePlanLocalBindings>> ListActiveRootFactsAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>Secret metadata 与 path/storage bindings 是不同 consistency boundary。</summary>
+public interface ISecretBindingMetadataStore
+{
+    Task<ImmutableArray<SecretBindingMetadata>> LoadAsync(PlanId planId, CancellationToken cancellationToken);
+    Task<SecretBindingMetadata> BindAsync(PlanId planId, SecretSlotId slotId, string providerToken, string opaqueReference, CancellationToken cancellationToken);
+    Task<SecretBindingMetadata> ReplaceAsync(PlanId planId, SecretSlotId slotId, SecretRevision expectedRevision, string providerToken, string opaqueReference, CancellationToken cancellationToken);
+    Task<SecretBindingMetadata> RebindAsync(PlanId planId, SecretSlotId slotId, SecretRevision expectedRevision, string providerToken, string opaqueReference, CancellationToken cancellationToken);
+    Task<SecretBindingMetadata> DeactivateAsync(PlanId planId, SecretSlotId slotId, SecretRevision expectedRevision, CancellationToken cancellationToken);
 }
 
 public sealed record FileManagedArchiveUnitRegistration(PlanId PlanId, SourceId SourceId, ArchiveUnitId ArchiveUnitId,
@@ -69,6 +78,7 @@ public interface IArchiveUnitDurableStateStore
 {
     Task<ArchiveUnitDurableState?> LoadAsync(PlanId planId, ArchiveUnitId archiveUnitId, CancellationToken cancellationToken);
     Task<ImmutableArray<PendingPublishIntent>> ListIncompletePublishIntentsAsync(CancellationToken cancellationToken);
+    Task<int> CleanupCompletedPublishIntentsAsync(CancellationToken cancellationToken);
     Task BeginPublishAsync(PendingPublishIntent intent, CancellationToken cancellationToken);
     Task SavePublishProgressAsync(PendingPublishIntent intent, CancellationToken cancellationToken);
     Task<DurableUnitMetadataCommitResult> CompleteMetadataCommitAsync(DurableUnitMetadataCommitPlan commit, CancellationToken cancellationToken);
@@ -80,6 +90,7 @@ public sealed record ConfigDatabaseSession(
     ConfigDatabaseIdentity Identity,
     IPlanRegistrationStore Plans,
     IDevicePlanBindingStore Bindings,
+    ISecretBindingMetadataStore Secrets,
     IArchiveUnitDurableStateStore ArchiveUnits);
 
 public interface IConfigDatabaseSessionOpener

@@ -22,7 +22,7 @@ public sealed class ConfigDbWorkflowIntegrationTests
         var payload = "published-current"u8.ToArray();
         await File.WriteAllBytesAsync(Path.Combine(currentRoot, "unit.7z"), payload);
         var identity = (await database.Repository.LoadAsync(CancellationToken.None))!;
-        await database.Repository.SaveValidatedAggregateAsync(new(plan.Id, identity.DeviceId, [], new(currentRoot, Key(currentRoot), true), null, [], []), CancellationToken.None);
+        await database.Repository.SaveValidatedAggregateAsync(new(plan.Id, identity.DeviceId, [], new(currentRoot, Key(currentRoot), true), null, []), CancellationToken.None);
         var prepared = Intent(plan.Id, unit.Id, new(Guid.NewGuid()), Sha256Digest.Hash(payload));
         await database.Repository.BeginPublishAsync(prepared, CancellationToken.None);
         await database.Repository.SavePublishProgressAsync(prepared.MarkCurrentPublished(DateTimeOffset.UnixEpoch), CancellationToken.None);
@@ -46,7 +46,7 @@ public sealed class ConfigDbWorkflowIntegrationTests
         var currentRoot = Directory.CreateDirectory(Path.Combine(database.DirectoryPath, "ambiguous-current")).FullName;
         await File.WriteAllTextAsync(Path.Combine(currentRoot, "unit.7z"), "unexpected");
         var identity = (await database.Repository.LoadAsync(CancellationToken.None))!;
-        await database.Repository.SaveValidatedAggregateAsync(new(plan.Id, identity.DeviceId, [], new(currentRoot, Key(currentRoot), true), null, [], []), CancellationToken.None);
+        await database.Repository.SaveValidatedAggregateAsync(new(plan.Id, identity.DeviceId, [], new(currentRoot, Key(currentRoot), true), null, []), CancellationToken.None);
         var prepared = Intent(plan.Id, unit.Id, new(Guid.NewGuid()), Sha256Digest.Hash("expected"u8));
         await database.Repository.BeginPublishAsync(prepared, CancellationToken.None);
         await database.Repository.SavePublishProgressAsync(prepared.MarkCurrentPublished(DateTimeOffset.UnixEpoch), CancellationToken.None);
@@ -69,7 +69,7 @@ public sealed class ConfigDbWorkflowIntegrationTests
     {
         await using var database = await WorkflowDatabase.Create(); var (plan, unit) = await database.RegisterFixturePlan();
         var root = Directory.CreateDirectory(Path.Combine(database.DirectoryPath, "old-current")).FullName; var oldBytes = "old-current"u8.ToArray(); await File.WriteAllBytesAsync(Path.Combine(root, "unit.7z"), oldBytes);
-        var identity = (await database.Repository.LoadAsync(CancellationToken.None))!; await database.Repository.SaveValidatedAggregateAsync(new(plan.Id, identity.DeviceId, [], new(root, Key(root), true), null, [], []), CancellationToken.None);
+        var identity = (await database.Repository.LoadAsync(CancellationToken.None))!; await database.Repository.SaveValidatedAggregateAsync(new(plan.Id, identity.DeviceId, [], new(root, Key(root), true), null, []), CancellationToken.None);
         var oldIntent = Intent(plan.Id, unit.Id, new(Guid.NewGuid()), Sha256Digest.Hash(oldBytes)); await database.Repository.BeginPublishAsync(oldIntent, CancellationToken.None); var oldPublished = oldIntent.MarkCurrentPublished(DateTimeOffset.UnixEpoch); await database.Repository.SavePublishProgressAsync(oldPublished, CancellationToken.None); await database.Repository.CompleteMetadataCommitAsync(oldPublished.RebuildMetadataCommitPlan(), CancellationToken.None);
         var oldState = (await database.Repository.LoadAsync(plan.Id, unit.Id, CancellationToken.None))!;
         var fingerprints = Fingerprints(); var nextArchive = ArchiveVersion.Prepare(new(Guid.NewGuid()), plan.Id, unit.Id, PortableArchiveFormat.SevenZip, fingerprints.ArchiveSpec).Verify(Sha256Digest.Hash("new"u8), 3);
@@ -138,11 +138,11 @@ public sealed class ConfigDbWorkflowIntegrationTests
         var identity = (await database.Repository.LoadAsync(CancellationToken.None))!;
         var sourcePath = Directory.CreateDirectory(Path.Combine(database.DirectoryPath, "source")).FullName;
         var workflow = new LocalBindingWorkflow(identity, database.Repository, new LocalPhysicalPathResolver());
-        var incomplete = await workflow.SaveAsync(plan, new(plan.Id, [new(plan.Sources[0].Id, sourcePath)], null, null, [], []), CancellationToken.None);
+        var incomplete = await workflow.SaveAsync(plan, new(plan.Id, [new(plan.Sources[0].Id, sourcePath)], null, null, []), CancellationToken.None);
         Assert.Null(incomplete.CurrentRoot);
         Assert.Null((await database.Repository.LoadAsync(plan.Id, CancellationToken.None))!.CurrentRoot);
 
-        var unsafeRequest = new LocalBindingSaveRequest(plan.Id, [new(plan.Sources[0].Id, sourcePath)], Path.Combine(sourcePath, "output"), null, [], []);
+        var unsafeRequest = new LocalBindingSaveRequest(plan.Id, [new(plan.Sources[0].Id, sourcePath)], Path.Combine(sourcePath, "output"), null, []);
         await Assert.ThrowsAsync<LocalBindingValidationException>(() => workflow.SaveAsync(plan, unsafeRequest, CancellationToken.None));
         var persisted = await database.Repository.LoadAsync(plan.Id, CancellationToken.None);
         Assert.Null(persisted!.CurrentRoot);
@@ -162,8 +162,8 @@ public sealed class ConfigDbWorkflowIntegrationTests
         var sourceA = Directory.CreateDirectory(Path.Combine(database.DirectoryPath, "source-a")).FullName;
         var sourceB = Directory.CreateDirectory(Path.Combine(database.DirectoryPath, "source-b")).FullName;
         var workflow = new LocalBindingWorkflow(identity, database.Repository, new LocalPhysicalPathResolver());
-        await workflow.SaveAsync(planA, new(planA.Id, [new(planA.Sources[0].Id, sourceA)], shared, null, [], []), CancellationToken.None);
-        var error = await Assert.ThrowsAsync<LocalBindingValidationException>(() => workflow.SaveAsync(planB, new(planB.Id, [new(planB.Sources[0].Id, sourceB)], Path.Combine(shared, "child"), null, [], []), CancellationToken.None));
+        await workflow.SaveAsync(planA, new(planA.Id, [new(planA.Sources[0].Id, sourceA)], shared, null, []), CancellationToken.None);
+        var error = await Assert.ThrowsAsync<LocalBindingValidationException>(() => workflow.SaveAsync(planB, new(planB.Id, [new(planB.Sources[0].Id, sourceB)], Path.Combine(shared, "child"), null, []), CancellationToken.None));
         Assert.Contains(error.Issues, issue => issue.Code == PlanResolutionIssueCode.ActivePlanRootConflict);
     }
 
