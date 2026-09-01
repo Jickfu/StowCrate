@@ -142,7 +142,7 @@ M4 的单元构建入口正式命名为 `ArchiveBuildRequest`，其中复用现�
 
 `VerifiedArchiveArtifact` 只关联 lifecycle 为 Verified 的 Core `ArchiveVersion` 和仍属 runtime 的 `.partial` handle。它不是 durable placement，不创建 `CurrentVersion`/`HistoryVersionPlacement`，不进入 PublishIntent，也不推进 Committed Baseline。Manifest v1 是独立 closed-world deterministic UTF-8 contract，描述 normal/external payload但不自列，且禁止 physical binding、Device/storage root、Secret、staging和process数据。
 
-Archive capability validation分为portable EffectiveArchiveSpec与Candidate-derived `ArchiveCapabilityRequirements`。后者至少表达payload是否实际含symbolic link以及PortableBasic/Posix metadata fidelity需求；adapter只有同时满足两者才能进入Readiness/Build。M4.2 bundled 7-Zip 26.02 adapter只声明SevenZip/ZIP + None + no-links + PortableBasic + single-volume，Privacy、Secure、TarZstd、symbolic-link与Posix metadata均明确Unsupported。
+Archive capability validation分为portable EffectiveArchiveSpec与Candidate-derived `ArchiveCapabilityRequirements`。后者显式表达payload是否含symbolic link、是否需要UTC mtime，以及`SourceMetadata`中ReadOnly/Hidden/Executable的required flag mask；adapter必须满足required flags ⊆ preserved flags才能进入Readiness/Build，不得用含混的“POSIX”名称宣称未观察的mode、uid/gid、xattr或ACL。SevenZip/ZIP当前只声明fixture已证明的mtime；TarZstd由managed PAX + Zstd backend按RID声明mtime与实际flag/link矩阵。
 
 bundled executable由RID descriptor定位，并同时校验official package与executable SHA-256、26.02 version和必要format；禁止搜索或fallback到system PATH。进程调用只在Archiving内使用structured ArgumentList，取消时终止整个process tree并等待退出。Secure material若未来被支持，writer/verifier必须共享同一build-scoped lease；当前26.02 redirected-stdin spike未能证明verification可靠性，因此没有任何Secure capability或不安全fallback。
 

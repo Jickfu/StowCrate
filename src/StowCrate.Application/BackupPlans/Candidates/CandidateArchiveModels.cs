@@ -26,7 +26,10 @@ public sealed record CandidateArchiveEntry(
 public sealed record GeneratedMetadataPlan(
     RelativePath ManifestPath,
     int ArchiveSemanticsVersion,
-    int ManifestSchemaVersion);
+    int ManifestSchemaVersion,
+    RelativePath? RecoveryEnvelopePath = null,
+    int? RecoveryEnvelopeSchemaVersion = null,
+    int? PrivacyCarrierSemanticsVersion = null);
 
 public sealed class CandidateArchive
 {

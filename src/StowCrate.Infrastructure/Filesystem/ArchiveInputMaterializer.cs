@@ -15,7 +15,7 @@ public sealed class ArchiveInputMaterializer : IArchiveInputMaterializer
     {
         this.workspaces = workspaces; this.fileSystem = fileSystem ?? new SystemPhysicalFileSystem();
     }
-    public async Task<MaterializedArchiveInput> MaterializeAsync(ArchiveBuildRequest request, ReadOnlyMemory<byte> manifestBytes, CancellationToken cancellationToken)
+    public async Task<MaterializedArchiveInput> MaterializeAsync(ArchiveBuildRequest request, ArchiveGeneratedContent generatedContent, CancellationToken cancellationToken)
     {
         var workspace = await workspaces.CreateAsync(request, cancellationToken).ConfigureAwait(false);
         try
@@ -28,7 +28,11 @@ public sealed class ArchiveInputMaterializer : IArchiveInputMaterializer
                 if (entry.OwnerKind is CandidateEntryOwnerKind.Generated)
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(staged)!);
-                    await File.WriteAllBytesAsync(staged, manifestBytes, cancellationToken).ConfigureAwait(false);
+                    var bytes = entry.ArchivePath == request.Archive.Candidate.GeneratedMetadata.ManifestPath
+                        ? generatedContent.ManifestBytes
+                        : request.Archive.Candidate.GeneratedMetadata.RecoveryEnvelopePath is { } recoveryPath && entry.ArchivePath == recoveryPath && generatedContent.RecoveryEnvelopeBytes is { } recovery
+                            ? recovery : throw new ArchiveMaterializationException(ArchiveBuildFailureCode.MaterializationFailed, "Generated archive content is missing.", entry.ArchivePath);
+                    await File.WriteAllBytesAsync(staged, bytes, cancellationToken).ConfigureAwait(false);
                     result.Add(new(entry.ArchivePath, FileSystemEntryKind.File, staged));
                     continue;
                 }
@@ -36,8 +40,8 @@ public sealed class ArchiveInputMaterializer : IArchiveInputMaterializer
                 var source = entry.OwnerKind is CandidateEntryOwnerKind.Normal
                     ? SafeCombine(binding.PhysicalRoot, entry.ObservedPath!.Value.Value)
                     : entry.ObservedPath!.Value.IsRoot ? binding.PhysicalRoot : SafeCombine(binding.PhysicalRoot, entry.ObservedPath.Value.Value);
-                await MaterializeEntryAsync(entry, source, staged, request.Archive.Capability.MetadataSemantics, cancellationToken).ConfigureAwait(false);
-                result.Add(new(entry.ArchivePath, entry.Kind, staged));
+                await MaterializeEntryAsync(entry, source, staged, request.Archive.Capability.MetadataFeatures, cancellationToken).ConfigureAwait(false);
+                result.Add(new(entry.ArchivePath, entry.Kind, staged, entry.LastWriteTimeUtc, entry.MetadataFlags, entry.Link));
             }
             // 子项创建会改变父目录 mtime；全部 materialize 后按深度逆序再次投影并验证 staging metadata。
             foreach (var entry in request.Archive.Candidate.Entries.Where(x => x.OwnerKind is not CandidateEntryOwnerKind.Generated)
@@ -45,7 +49,7 @@ public sealed class ArchiveInputMaterializer : IArchiveInputMaterializer
             {
                 var staged = result.Single(x => x.ArchivePath == entry.ArchivePath).StagedPath;
                 ApplyMetadata(entry, staged);
-                Validate(entry, fileSystem.Inspect(staged), request.Archive.Capability.MetadataSemantics);
+                Validate(entry, fileSystem.Inspect(staged), request.Archive.Capability.MetadataFeatures);
             }
             return new(workspace, result);
         }
@@ -57,10 +61,10 @@ public sealed class ArchiveInputMaterializer : IArchiveInputMaterializer
         }
     }
 
-    private async Task MaterializeEntryAsync(CandidateArchiveEntry expected, string source, string staged, ArchiveMetadataSemantics metadataSemantics, CancellationToken token)
+    private async Task MaterializeEntryAsync(CandidateArchiveEntry expected, string source, string staged, ArchiveMetadataFeatures metadataFeatures, CancellationToken token)
     {
         var before = fileSystem.Inspect(source);
-        Validate(expected, before, metadataSemantics);
+        Validate(expected, before, metadataFeatures);
         Directory.CreateDirectory(Path.GetDirectoryName(staged)!);
         switch (expected.Kind)
         {
@@ -79,9 +83,9 @@ public sealed class ArchiveInputMaterializer : IArchiveInputMaterializer
         }
         ApplyMetadata(expected, staged);
         var after = fileSystem.Inspect(source);
-        Validate(expected, after, metadataSemantics);
+        Validate(expected, after, metadataFeatures);
         var stagedObservation = fileSystem.Inspect(staged);
-        Validate(expected, stagedObservation, metadataSemantics);
+        Validate(expected, stagedObservation, metadataFeatures);
         if (expected.Kind is FileSystemEntryKind.File)
         {
             var stagedLength = new FileInfo(staged).Length;
@@ -113,13 +117,13 @@ public sealed class ArchiveInputMaterializer : IArchiveInputMaterializer
         }
     }
 
-    private static void Validate(CandidateArchiveEntry expected, PhysicalFileSystemEntry actual, ArchiveMetadataSemantics semantics)
+    private static void Validate(CandidateArchiveEntry expected, PhysicalFileSystemEntry actual, ArchiveMetadataFeatures features)
     {
         if (actual.Kind != expected.Kind || actual.Length != expected.Length
             || (expected.Kind is not FileSystemEntryKind.Link && actual.LastWriteTimeUtc?.ToUniversalTime() != expected.LastWriteTimeUtc?.ToUniversalTime())
             || actual.MetadataFlags != expected.MetadataFlags || !StringComparer.Ordinal.Equals(actual.LinkTarget, expected.Link?.Target)
             || (expected.Link is not null && actual.LinkKind != expected.Link.Kind))
-            Drift(expected, $"Input kind/size/UTC mtime/metadata/link identity drifted under {semantics} semantics.");
+            Drift(expected, $"Input kind/size/UTC mtime/metadata/link identity drifted under mtime={features.PreservesMtime}, flags={features.PreservedFlags} semantics.");
     }
 
     private static ArchiveInputBinding ResolveBinding(ArchiveBuildRequest request, CandidateArchiveEntry entry) => request.InputBindings.SingleOrDefault(x =>

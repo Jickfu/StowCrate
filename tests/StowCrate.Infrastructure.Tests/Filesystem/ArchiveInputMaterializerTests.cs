@@ -28,7 +28,7 @@ public sealed class ArchiveInputMaterializerTests : IDisposable
         var mapped = PhysicalEntry("external/data.bin", CandidateEntryOwnerKind.External, null, ExternalId, new("data.bin"), Path.Combine(external.FullName, "data.bin"));
         var request = Request([normal, mapped], source.FullName, external.FullName);
 
-        var result = await Materializer().MaterializeAsync(request, "{}"u8.ToArray(), CancellationToken.None);
+        var result = await Materializer().MaterializeAsync(request, new("{}"u8.ToArray()), CancellationToken.None);
 
         Assert.Equal(["__stowcrate__/manifest.json", "external/data.bin", "normal.txt"], result.Entries.Select(x => x.ArchivePath.Value));
         Assert.DoesNotContain(result.Entries, x => x.ArchivePath.Value.Contains("child", StringComparison.Ordinal));
@@ -55,7 +55,7 @@ public sealed class ArchiveInputMaterializerTests : IDisposable
             _ => entry with { RawFileSha256 = new(new string('0', 64)) }
         };
 
-        var error = await Assert.ThrowsAsync<ArchiveMaterializationException>(() => Materializer(mode).MaterializeAsync(Request([entry], source.FullName, Path.Combine(root, mode, "external")), "{}"u8.ToArray(), CancellationToken.None));
+        var error = await Assert.ThrowsAsync<ArchiveMaterializationException>(() => Materializer(mode).MaterializeAsync(Request([entry], source.FullName, Path.Combine(root, mode, "external")), new("{}"u8.ToArray()), CancellationToken.None));
         Assert.Equal(ArchiveBuildFailureCode.InputChangedDuringMaterialization, error.Code);
     }
 
@@ -69,7 +69,7 @@ public sealed class ArchiveInputMaterializerTests : IDisposable
         var observed = new SystemPhysicalFileSystem().Inspect(path);
         var entry = new CandidateArchiveEntry(new("tool.sh"), observed.Kind, CandidateEntryOwnerKind.Normal, SourceId, null, new("project/tool.sh"),
             observed.Length, observed.LastWriteTimeUtc, ObservedContentIdentity.MetadataV1, null, null, observed.MetadataFlags);
-        var result = await Materializer("metadata").MaterializeAsync(Request([entry], source.FullName, Path.Combine(root, "metadata", "external")), "{}"u8.ToArray(), CancellationToken.None);
+        var result = await Materializer("metadata").MaterializeAsync(Request([entry], source.FullName, Path.Combine(root, "metadata", "external")), new("{}"u8.ToArray()), CancellationToken.None);
         var staged = new SystemPhysicalFileSystem().Inspect(result.Entries.Single(x => x.ArchivePath.Value == "tool.sh").StagedPath);
         Assert.Equal(observed.LastWriteTimeUtc, staged.LastWriteTimeUtc); Assert.Equal(observed.MetadataFlags, staged.MetadataFlags);
         await result.Workspace.CleanupAsync(false, CancellationToken.None);
@@ -87,7 +87,7 @@ public sealed class ArchiveInputMaterializerTests : IDisposable
         var link = new LinkInfo(observed.LinkKind!.Value, observed.LinkTarget!, LinkTargetScope.Unresolved, true);
         var entry = new CandidateArchiveEntry(new("missing-link"), observed.Kind, CandidateEntryOwnerKind.Normal, SourceId, null, new("project/missing-link"),
             observed.Length, observed.LastWriteTimeUtc, ObservedContentIdentity.MetadataV1, null, link, observed.MetadataFlags);
-        var result = await Materializer("dangling").MaterializeAsync(Request([entry], source.FullName, Path.Combine(root, "dangling", "external")), "{}"u8.ToArray(), CancellationToken.None);
+        var result = await Materializer("dangling").MaterializeAsync(Request([entry], source.FullName, Path.Combine(root, "dangling", "external")), new("{}"u8.ToArray()), CancellationToken.None);
         var staged = new SystemPhysicalFileSystem().Inspect(result.Entries.Single(x => x.ArchivePath.Value == "missing-link").StagedPath);
         Assert.Equal(FileSystemEntryKind.Link, staged.Kind); Assert.Equal("does-not-exist", staged.LinkTarget);
         await result.Workspace.CleanupAsync(false, CancellationToken.None);
@@ -101,7 +101,7 @@ public sealed class ArchiveInputMaterializerTests : IDisposable
         var unit = new ResolvedArchiveUnit(UnitId, SourceId, new("project"), RuleSource.UiManaged, new(), new([], [], new(), CaseSensitivity.Sensitive), spec, new EffectiveHistoryDisabled(), null, null, []);
         var entries = payload.Append(new CandidateArchiveEntry(new("__stowcrate__/manifest.json"), FileSystemEntryKind.File, CandidateEntryOwnerKind.Generated, null, null, null, 0, null, ObservedContentIdentity.MetadataV1, null, null, SourceMetadata.None));
         var candidate = new CandidateArchive(unit, new("out/project.zip"), entries, new(new("__stowcrate__/manifest.json"), 1, 1), [new LogicalPath("project/child")]);
-        var capability = new ResolvedArchiveCapability(spec.Format, spec.CompressionPreset, spec.Protection, ArchiveLinkSemantics.PreserveSymbolicLinks, ArchiveMetadataSemantics.PortableBasic, true, "test");
+        var capability = new ResolvedArchiveCapability(spec.Format, spec.CompressionPreset, spec.Protection, ArchiveLinkSemantics.PreserveSymbolicLinks, new ArchiveMetadataFeatures(true, SourceMetadata.ReadOnly | SourceMetadata.Hidden | SourceMetadata.Executable), true, "test");
         return new(PlanId, new(candidate, capability, unit.History, null), new(Guid.NewGuid()), new(new(new string('1', 64))),
             [new(CandidateEntryOwnerKind.Normal, SourceId, null, sourceRoot), new(CandidateEntryOwnerKind.External, null, ExternalId, externalRoot)]);
     }

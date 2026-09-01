@@ -220,5 +220,5 @@ public sealed class CandidateArchiveCompositionTests
     }
 
     private static ResolvedArchiveCapability Capability(EffectiveArchiveSpec spec, string semantics) =>
-        new(spec.Format, spec.CompressionPreset, spec.Protection, ArchiveLinkSemantics.PreserveSymbolicLinks, ArchiveMetadataSemantics.PortableBasic, true, semantics);
+        new(spec.Format, spec.CompressionPreset, spec.Protection, ArchiveLinkSemantics.PreserveSymbolicLinks, new ArchiveMetadataFeatures(true, SourceMetadata.ReadOnly | SourceMetadata.Hidden | SourceMetadata.Executable), true, semantics);
 }

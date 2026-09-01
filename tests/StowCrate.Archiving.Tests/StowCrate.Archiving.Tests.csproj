@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <Content Include="..\..\schemas\archive-manifest-v1.schema.json" Link="schemas\archive-manifest-v1.schema.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\schemas\privacy-recovery-envelope-v1.schema.json" Link="schemas\privacy-recovery-envelope-v1.schema.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

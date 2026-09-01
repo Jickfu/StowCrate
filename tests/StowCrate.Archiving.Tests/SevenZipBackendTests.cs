@@ -64,10 +64,10 @@ public sealed class SevenZipBackendTests : IDisposable
             var workspace = new Workspace(staging, Path.Combine(root, "artifact.partial"));
             var input = new MaterializedArchiveInput(workspace, [new(new("你好.txt"), FileSystemEntryKind.File, Path.Combine(staging, "你好.txt")),
                 new(new("空目录"), FileSystemEntryKind.Directory, Path.Combine(staging, "空目录")), new(new("__stowcrate__/manifest.json"), FileSystemEntryKind.File, Path.Combine(staging, "__stowcrate__", "manifest.json"))]);
-            var spec = new EffectiveArchiveSpec(format, preset, new NoProtection()); var capability = new ResolvedArchiveCapability(format, preset, spec.Protection, ArchiveLinkSemantics.NoLinks, ArchiveMetadataSemantics.PortableBasic, true, "integration");
+            var spec = new EffectiveArchiveSpec(format, preset, new NoProtection()); var capability = new ResolvedArchiveCapability(format, preset, spec.Protection, ArchiveLinkSemantics.NoLinks, new ArchiveMetadataFeatures(true, SourceMetadata.None), true, "integration");
             await new SevenZipArchiveFormatWriter(locator.ExecutablePath, runner).WriteAsync(new(input, spec, capability, null), CancellationToken.None);
             var verification = await new SevenZipArchiveArtifactVerifier(locator.ExecutablePath, runner).VerifyAsync(new(workspace.PartialArtifactPath,
-                new("__stowcrate__/manifest.json"), spec, capability, null), CancellationToken.None);
+                new("__stowcrate__/manifest.json"), null, spec, capability, null), CancellationToken.None);
             Assert.True(verification.FormatTestPassed); Assert.Equal(manifestBytes, verification.ManifestBytes.ToArray());
             Assert.Contains(verification.Entries, x => x.Path.Value == "你好.txt" && x.Kind == FileSystemEntryKind.File);
             Assert.Contains(verification.Entries, x => x.Path.Value == "空目录" && x.Kind == FileSystemEntryKind.Directory);
@@ -78,7 +78,7 @@ public sealed class SevenZipBackendTests : IDisposable
             Assert.InRange(File.GetLastWriteTimeUtc(Path.Combine(extracted, "你好.txt")), expectedMtime.AddSeconds(-2), expectedMtime.AddSeconds(2));
             var bytes = await File.ReadAllBytesAsync(workspace.PartialArtifactPath); bytes[^1] ^= 0xff; await File.WriteAllBytesAsync(workspace.PartialArtifactPath, bytes);
             var corrupted = await new SevenZipArchiveArtifactVerifier(locator.ExecutablePath, runner).VerifyAsync(new(workspace.PartialArtifactPath,
-                new("__stowcrate__/manifest.json"), spec, capability, null), CancellationToken.None);
+                new("__stowcrate__/manifest.json"), null, spec, capability, null), CancellationToken.None);
             Assert.False(corrupted.FormatTestPassed);
         }
     }
@@ -97,13 +97,14 @@ public sealed class SevenZipBackendTests : IDisposable
     {
         var available = new Bundled7ZipProbeResult(true, "runtime", null, "26.02"); var resolver = new Bundled7ZipCapabilityResolver(available);
         var none = new EffectiveArchiveSpec(PortableArchiveFormat.SevenZip, PortableCompressionPreset.Standard, new NoProtection());
-        Assert.True(resolver.Resolve(new(none, false, ArchiveMetadataSemantics.PortableBasic), 1).IsSupported);
-        Assert.False(resolver.Resolve(new(none, true, ArchiveMetadataSemantics.PortableBasic), 1).IsSupported);
-        Assert.False(resolver.Resolve(new(none, false, ArchiveMetadataSemantics.Posix), 1).IsSupported);
-        Assert.False(resolver.Resolve(new(none with { Protection = new PrivacyProtection() }, false, ArchiveMetadataSemantics.PortableBasic), 1).IsSupported);
+        var mtime = new ArchiveMetadataFeatures(true, SourceMetadata.None);
+        Assert.True(resolver.Resolve(new(none, false, mtime), 1).IsSupported);
+        Assert.False(resolver.Resolve(new(none, true, mtime), 1).IsSupported);
+        Assert.False(resolver.Resolve(new(none, false, new(true, SourceMetadata.Executable)), 1).IsSupported);
+        Assert.False(resolver.Resolve(new(none with { Protection = new PrivacyProtection() }, false, mtime), 1).IsSupported);
         var slot = new SecretSlotId(Guid.Parse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
-        Assert.False(resolver.Resolve(new(none with { Protection = new SecureProtection(slot) }, false, ArchiveMetadataSemantics.PortableBasic), 1).IsSupported);
-        Assert.False(resolver.Resolve(new(none with { Format = PortableArchiveFormat.TarZstd }, false, ArchiveMetadataSemantics.PortableBasic), 1).IsSupported);
+        Assert.False(resolver.Resolve(new(none with { Protection = new SecureProtection(slot) }, false, mtime), 1).IsSupported);
+        Assert.False(resolver.Resolve(new(none with { Format = PortableArchiveFormat.TarZstd }, false, mtime), 1).IsSupported);
     }
 
     [Fact]

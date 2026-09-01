@@ -19,6 +19,7 @@ public sealed class CandidateArchiveComposer : ICandidateArchiveComposer
 {
     private const string ReservedNamespace = "__stowcrate__";
     private static readonly RelativePath ManifestPath = new("__stowcrate__/manifest.json");
+    private static readonly RelativePath RecoveryPath = new("__stowcrate__/recovery.json");
 
     public CandidateArchiveSet Compose(
         ResolvedPlanSnapshot plan,
@@ -79,13 +80,23 @@ public sealed class CandidateArchiveComposer : ICandidateArchiveComposer
                 null,
                 null,
                 SourceMetadata.None));
+            if (unit.ArchiveSpec.Protection is PrivacyProtection)
+            {
+                entries.Add(new CandidateArchiveEntry(
+                    RecoveryPath, FileSystemEntryKind.File, CandidateEntryOwnerKind.Generated,
+                    null, null, null, 0, null, ObservedContentIdentity.MetadataV1,
+                    null, null, SourceMetadata.None));
+            }
             ValidateOwnership(unit.ArchiveUnitId, entries, issues);
             var sourceBinding = plan.Sources.Single(item => item.SourceId == unit.SourceId);
             archives.Add(new CandidateArchive(
                 unit,
                 OutputPath(sourceBinding.SourceOutputPath, unit.Root, unit.ArchiveSpec.Format, plan.Semantics.OutputPathEncoding),
                 entries,
-                new GeneratedMetadataPlan(ManifestPath, plan.Semantics.Archive, CandidateRuntimeSemantics.ManifestSchemaVersion),
+                new GeneratedMetadataPlan(ManifestPath, plan.Semantics.Archive, CandidateRuntimeSemantics.ManifestSchemaVersion,
+                    unit.ArchiveSpec.Protection is PrivacyProtection ? RecoveryPath : null,
+                    unit.ArchiveSpec.Protection is PrivacyProtection ? 1 : null,
+                    unit.ArchiveSpec.Protection is PrivacyProtection ? 1 : null),
                 resolvedUnits.Units.Where(candidate => candidate.ParentArchiveUnitId == unit.ArchiveUnitId).Select(candidate => candidate.Root)));
         }
 

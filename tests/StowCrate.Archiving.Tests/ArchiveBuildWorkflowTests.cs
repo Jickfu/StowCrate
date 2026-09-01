@@ -22,7 +22,7 @@ public sealed class ArchiveBuildWorkflowTests
         var fixture = new Fixture();
         var result = await fixture.BuildAsync();
 
-        Assert.True(result.Succeeded);
+        Assert.True(result.Succeeded, string.Join(" | ", result.Diagnostics.Select(x => $"{x.Code}: {x.Message}")));
         Assert.Equal(ArchiveVersionLifecycle.Verified, result.Artifact!.ArchiveVersion.Lifecycle);
         Assert.Equal("aaa", result.Artifact.ArchiveVersion.Integrity!.Value.Value[..3]);
         Assert.DoesNotContain(result.Artifact.Manifest.Entries, x => x.Path.Value == "__stowcrate__/manifest.json");
@@ -139,7 +139,7 @@ public sealed class ArchiveBuildWorkflowTests
                 new CandidateArchiveEntry(new("__stowcrate__/manifest.json"), FileSystemEntryKind.File, CandidateEntryOwnerKind.Generated, null, null, null, 0, null, ObservedContentIdentity.MetadataV1, null, null, SourceMetadata.None)
             };
             var candidate = new CandidateArchive(unit, new("out/project.zip"), payload, new(new("__stowcrate__/manifest.json"), 1, 1), [new LogicalPath("project/child")]);
-            var capability = new ResolvedArchiveCapability(spec.Format, spec.CompressionPreset, spec.Protection, ArchiveLinkSemantics.PreserveSymbolicLinks, ArchiveMetadataSemantics.PortableBasic, true, "fake-v1");
+            var capability = new ResolvedArchiveCapability(spec.Format, spec.CompressionPreset, spec.Protection, ArchiveLinkSemantics.PreserveSymbolicLinks, new ArchiveMetadataFeatures(true, SourceMetadata.ReadOnly | SourceMetadata.Hidden | SourceMetadata.Executable), true, "fake-v1");
             var ready = new ExecutionReadyArchive(candidate, capability, unit.History, secure ? new(Secret, new(1)) : null);
             Request = new(Plan, ready, new(Guid.Parse("55555555-5555-4555-8555-555555555555")), new ArchiveSpecFingerprint(new(new string('2', 64))),
                 [new(CandidateEntryOwnerKind.Normal, Source, null, "/source"), new(CandidateEntryOwnerKind.External, null, External, "/external")]);
@@ -161,11 +161,11 @@ public sealed class ArchiveBuildWorkflowTests
     private sealed class FakeMaterializer(Fixture fixture) : IArchiveInputMaterializer
     {
         public ReadOnlyMemory<byte> Manifest { get; private set; }
-        public Task<MaterializedArchiveInput> MaterializeAsync(ArchiveBuildRequest request, ReadOnlyMemory<byte> manifestBytes, CancellationToken token)
+        public Task<MaterializedArchiveInput> MaterializeAsync(ArchiveBuildRequest request, ArchiveGeneratedContent generatedContent, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
             if (fixture.Failure == "materialization") { fixture.Workspace.CleanupAsync(false, CancellationToken.None).GetAwaiter().GetResult(); throw new ArchiveMaterializationException(ArchiveBuildFailureCode.InputChangedDuringMaterialization, "drift"); }
-            Manifest = manifestBytes.ToArray();
+            Manifest = generatedContent.ManifestBytes.ToArray();
             return Task.FromResult(new MaterializedArchiveInput(fixture.Workspace, request.Archive.Candidate.Entries.Select(x => new MaterializedArchiveEntry(x.ArchivePath, x.Kind, "/staging/" + x.ArchivePath.Value))));
         }
     }

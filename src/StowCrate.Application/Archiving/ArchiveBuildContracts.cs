@@ -49,7 +49,13 @@ public interface IArchiveBuildWorkspaceFactory
     Task<IArchiveBuildWorkspace> CreateAsync(ArchiveBuildRequest request, CancellationToken cancellationToken);
 }
 
-public sealed record MaterializedArchiveEntry(RelativePath ArchivePath, FileSystemEntryKind Kind, string StagedPath);
+public sealed record MaterializedArchiveEntry(
+    RelativePath ArchivePath,
+    FileSystemEntryKind Kind,
+    string StagedPath,
+    DateTimeOffset? LastWriteTimeUtc = null,
+    SourceMetadata MetadataFlags = SourceMetadata.None,
+    LinkInfo? Link = null);
 
 public sealed class MaterializedArchiveInput
 {
@@ -70,8 +76,10 @@ public sealed class ArchiveMaterializationException(ArchiveBuildFailureCode code
 
 public interface IArchiveInputMaterializer
 {
-    Task<MaterializedArchiveInput> MaterializeAsync(ArchiveBuildRequest request, ReadOnlyMemory<byte> manifestBytes, CancellationToken cancellationToken);
+    Task<MaterializedArchiveInput> MaterializeAsync(ArchiveBuildRequest request, ArchiveGeneratedContent generatedContent, CancellationToken cancellationToken);
 }
+
+public sealed record ArchiveGeneratedContent(ReadOnlyMemory<byte> ManifestBytes, ReadOnlyMemory<byte>? RecoveryEnvelopeBytes = null);
 
 public sealed record ArchiveWriteRequest(
     MaterializedArchiveInput Input,
@@ -82,6 +90,7 @@ public sealed record ArchiveWriteRequest(
 public sealed record ArchiveVerificationRequest(
     string PartialArtifactPath,
     RelativePath ManifestPath,
+    RelativePath? RecoveryEnvelopePath,
     EffectiveArchiveSpec ArchiveSpec,
     ResolvedArchiveCapability Capability,
     SecretMaterialLease? SecretLease);
@@ -97,7 +106,8 @@ public sealed record ArchiveArtifactVerification(
     ImmutableArray<ArchiveArtifactEntry> Entries,
     ReadOnlyMemory<byte> ManifestBytes,
     Sha256Digest Sha256,
-    long Length);
+    long Length,
+    ReadOnlyMemory<byte>? RecoveryEnvelopeBytes = null);
 
 public interface IArchiveArtifactVerifier
 {
@@ -108,6 +118,25 @@ public interface IArchiveManifestCodec
 {
     ReadOnlyMemory<byte> Write(ArchiveBuildRequest request);
     ArchiveManifestValidationResult ReadAndValidate(ReadOnlyMemory<byte> bytes);
+}
+
+public sealed record PrivacyRecoveryEnvelopeV1(
+    int SchemaVersion,
+    int PrivacySemanticsVersion,
+    int CarrierSemanticsVersion,
+    PortableArchiveFormat ArchiveFormat,
+    string RecoveryMaterialEncoding,
+    string RecoveryMaterial);
+
+public sealed record PrivacyRecoveryEnvelopeValidationResult(PrivacyRecoveryEnvelopeV1? Envelope, ImmutableArray<ArchiveBuildDiagnostic> Diagnostics)
+{
+    public bool IsValid => Envelope is not null && Diagnostics.IsEmpty;
+}
+
+public interface IPrivacyRecoveryEnvelopeCodec
+{
+    ReadOnlyMemory<byte> Create(PortableArchiveFormat archiveFormat);
+    PrivacyRecoveryEnvelopeValidationResult ReadAndValidate(ReadOnlyMemory<byte> bytes);
 }
 
 public interface IArchiveSecretLeaseProvider

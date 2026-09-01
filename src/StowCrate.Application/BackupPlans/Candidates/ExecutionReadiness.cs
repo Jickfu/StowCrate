@@ -6,19 +6,31 @@ using StowCrate.Core.Paths;
 namespace StowCrate.Application.BackupPlans.Candidates;
 
 public enum ArchiveLinkSemantics { NoLinks, PreserveSymbolicLinks }
-public enum ArchiveMetadataSemantics { PortableBasic, Posix }
+public sealed record ArchiveMetadataFeatures(bool PreservesMtime, StowCrate.Core.Filesystem.SourceMetadata PreservedFlags)
+{
+    public static ArchiveMetadataFeatures None { get; } = new(false, StowCrate.Core.Filesystem.SourceMetadata.None);
+
+    public bool Satisfies(ArchiveMetadataFeatures required) =>
+        (!required.PreservesMtime || PreservesMtime)
+        && (required.PreservedFlags & ~PreservedFlags) == StowCrate.Core.Filesystem.SourceMetadata.None;
+}
 public sealed record ArchiveCapabilityRequirements(
     EffectiveArchiveSpec ArchiveSpec,
     bool RequiresSymbolicLinks,
-    ArchiveMetadataSemantics RequiredMetadataSemantics)
+    ArchiveMetadataFeatures RequiredMetadataFeatures)
 {
     public static ArchiveCapabilityRequirements From(CandidateArchive archive)
     {
         var payload = archive.Entries.Where(entry => entry.OwnerKind is not CandidateEntryOwnerKind.Generated);
+        const StowCrate.Core.Filesystem.SourceMetadata portableMask =
+            StowCrate.Core.Filesystem.SourceMetadata.ReadOnly
+            | StowCrate.Core.Filesystem.SourceMetadata.Hidden
+            | StowCrate.Core.Filesystem.SourceMetadata.Executable;
+        var requiredFlags = payload.Aggregate(StowCrate.Core.Filesystem.SourceMetadata.None,
+            (current, entry) => current | (entry.MetadataFlags & portableMask));
         return new(archive.Unit.ArchiveSpec,
             payload.Any(entry => entry.Kind is StowCrate.Core.Filesystem.FileSystemEntryKind.Link),
-            payload.Any(entry => entry.MetadataFlags.HasFlag(StowCrate.Core.Filesystem.SourceMetadata.Executable))
-                ? ArchiveMetadataSemantics.Posix : ArchiveMetadataSemantics.PortableBasic);
+            new ArchiveMetadataFeatures(payload.Any(entry => entry.LastWriteTimeUtc is not null), requiredFlags));
     }
 }
 
@@ -26,27 +38,27 @@ public sealed record ArchiveCapabilityRequirements(
 public sealed record ResolvedArchiveCapability
 {
     public ResolvedArchiveCapability(PortableArchiveFormat format, PortableCompressionPreset compressionPreset,
-        AuthoredProtection protection, ArchiveLinkSemantics linkSemantics, ArchiveMetadataSemantics metadataSemantics,
+        AuthoredProtection protection, ArchiveLinkSemantics linkSemantics, ArchiveMetadataFeatures metadataFeatures,
         bool isSingleVolume, string capabilitySemantics)
     {
         ArgumentNullException.ThrowIfNull(protection);
         if (!isSingleVolume) throw new ArgumentException("Archive capability v1 must be single-volume.", nameof(isSingleVolume));
         ArgumentException.ThrowIfNullOrWhiteSpace(capabilitySemantics);
         Format = format; CompressionPreset = compressionPreset; Protection = protection; LinkSemantics = linkSemantics;
-        MetadataSemantics = metadataSemantics; IsSingleVolume = isSingleVolume; CapabilitySemantics = capabilitySemantics;
+        MetadataFeatures = metadataFeatures ?? throw new ArgumentNullException(nameof(metadataFeatures)); IsSingleVolume = isSingleVolume; CapabilitySemantics = capabilitySemantics;
     }
     public PortableArchiveFormat Format { get; }
     public PortableCompressionPreset CompressionPreset { get; }
     public AuthoredProtection Protection { get; }
     public ArchiveLinkSemantics LinkSemantics { get; }
-    public ArchiveMetadataSemantics MetadataSemantics { get; }
+    public ArchiveMetadataFeatures MetadataFeatures { get; }
     public bool IsSingleVolume { get; }
     public string CapabilitySemantics { get; }
     public bool ExactlyMatches(EffectiveArchiveSpec spec) =>
         Format == spec.Format && CompressionPreset == spec.CompressionPreset && Protection == spec.Protection;
     public bool Satisfies(ArchiveCapabilityRequirements requirements) => ExactlyMatches(requirements.ArchiveSpec)
         && (!requirements.RequiresSymbolicLinks || LinkSemantics is ArchiveLinkSemantics.PreserveSymbolicLinks)
-        && (requirements.RequiredMetadataSemantics is ArchiveMetadataSemantics.PortableBasic || MetadataSemantics is ArchiveMetadataSemantics.Posix);
+        && MetadataFeatures.Satisfies(requirements.RequiredMetadataFeatures);
 }
 
 public sealed record ArchiveCapabilityResolution(

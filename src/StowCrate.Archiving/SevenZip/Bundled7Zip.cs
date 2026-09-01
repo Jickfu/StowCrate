@@ -81,9 +81,10 @@ public sealed class Bundled7ZipCapabilityResolver(Bundled7ZipProbeResult probe) 
         if (spec.Protection is PrivacyProtection) return new(null, "Privacy recovery envelope is not frozen.");
         if (spec.Protection is SecureProtection) return new(null, "Secure is unsupported: redirected-stdin password transport was not reliable in the 7-Zip 26.02 spike.");
         if (requirements.RequiresSymbolicLinks) return new(null, "Symbolic-link fidelity has not passed the cross-platform backend matrix.");
-        if (requirements.RequiredMetadataSemantics is ArchiveMetadataSemantics.Posix) return new(null, "POSIX metadata fidelity has not passed the cross-platform backend matrix.");
-        var semantics = $"7zip/{Bundled7ZipDescriptor.Version};archive={archiveSemanticsVersion};format={spec.Format};preset={SevenZipArgumentMapping.Level(spec.CompressionPreset)};protection=None;links=none;metadata=portable-basic;volume=single;secret={Bundled7ZipDescriptor.SecretTransportSemantics}";
+        var metadata = new ArchiveMetadataFeatures(true, StowCrate.Core.Filesystem.SourceMetadata.None);
+        if (!metadata.Satisfies(requirements.RequiredMetadataFeatures)) return new(null, "Required metadata features have not passed the cross-platform backend matrix.");
+        var semantics = $"7zip/{Bundled7ZipDescriptor.Version};archive={archiveSemanticsVersion};format={spec.Format};preset={SevenZipArgumentMapping.Level(spec.CompressionPreset)};protection=None;links=none;mtime=true;metadataFlags=none;volume=single;secret={Bundled7ZipDescriptor.SecretTransportSemantics}";
         return new(new(spec.Format, spec.CompressionPreset, spec.Protection, ArchiveLinkSemantics.NoLinks,
-            ArchiveMetadataSemantics.PortableBasic, true, semantics), null);
+            metadata, true, semantics), null);
     }
 }

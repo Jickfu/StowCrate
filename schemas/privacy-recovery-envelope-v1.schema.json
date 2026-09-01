@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "privacySemanticsVersion", "carrierSemanticsVersion", "archiveFormat", "recoveryMaterialEncoding", "recoveryMaterial"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "privacySemanticsVersion": { "const": 1 },
+    "carrierSemanticsVersion": { "const": 1 },
+    "archiveFormat": { "enum": ["SevenZip", "Zip", "TarZstd"] },
+    "recoveryMaterialEncoding": { "const": "base64url-no-padding" },
+    "recoveryMaterial": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" }
+  }
+}

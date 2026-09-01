@@ -58,9 +58,23 @@ Secure stdin spike的结论是 **Unsupported**：当前Windows 26.02 official co
 
 Privacy继续Unsupported；TarZstd不由此resolver声明；symbolic-link与POSIX metadata组合在跨平台create/list/extract fidelity matrix完成前Unsupported。None + no-links + PortableBasic metadata是M4.2唯一已声明的真实backend capability。CI在Windows/Linux/macOS获取并验证对应26.02官方资产，再运行format contract tests；第三方notice与upstream License.txt进入release acquisition要求。
 
+## M4.3 — Privacy Recovery Envelope + TarZstd Backend + Cross-format Metadata/Link Fidelity（COMPLETE）
+
+metadata requirement/capability已由误导性的PortableBasic/Posix二分收敛为feature contract：UTC mtime独立表达，ReadOnly、Hidden、Executable使用required/preserved `SourceMetadata` flag mask并按required ⊆ preserved判定。现有SevenZip/ZIP只声明已由真实fixture证明的mtime，不再因格式名称隐式宣称完整POSIX fidelity。
+
+TarZstd None v1使用.NET 10 `System.Formats.Tar` PAX writer/reader与固定`ZstdSharp.Port 0.8.8`（upstream zstd 1.5.7）直接流式处理`.partial`，不调用system tar/zstd，也不生成中间tar。mapping固定为Fast=1、Standard=6、Extreme=19，Store明确Unsupported；frame content checksum显式开启。PAX条目按archive path ordinal写入，uid/gid固定为0、user/group name固定为空，不继承host identity；writer只读取materialized staging。verifier以Zstd decompression stream和TarReader读取到EOF，收集实际path/kind并读取唯一manifest，最终hash/length仍针对原tar.zst bytes。
+
+Privacy Recovery Envelope v1由`schemas/privacy-recovery-envelope-v1.schema.json`冻结为closed-world deterministic JSON结构，固定路径为`__stowcrate__/recovery.json`。每轮以crypto RNG生成32 bytes并编码成无padding base64url ASCII；它不属于SecretStore/SecretSlot/SecretRevision或普通manifest，也不得进入日志/diagnostics。Privacy Candidate的generated entry set为manifest加recovery envelope，随机material不进入EntrySetFingerprint或ArchiveSpecFingerprint；privacy/carrier semantics version进入generated plan与capability语义。Privacy仍明确不提供机密性保证。
+
+7z/ZIP mixed-encryption未达到可声明capability的三平台完整证据门槛：公开recovery entry、stdin ASCII material加密payload/manifest、无password第三方读取recovery、携material完成test/list/read/extract及archived bytes一致性必须同时通过。禁止`-pRecoveryKey` argv fallback；在矩阵完成前SevenZip/ZIP Privacy继续Unsupported。TarZstd Privacy明确Unsupported，不使用skippable frame或私有wrapper。
+
+最终保守矩阵：SevenZip/ZIP None支持mtime，不声明metadata flags或symbolic links；TarZstd None全RID支持mtime和ReadOnly，Linux/macOS另支持Executable与symbolic links，Windows不声明Executable/link；Hidden以及junction/mount point/other link均Unsupported。未来只有create → verify → private extract → no-follow re-observation fixture在目标RID通过后才能扩大矩阵，禁止silent loss。
+
+本项未实现Physical Current/History Publisher、Secure native backend或M3 config.db durable schema。
+
 ## 下一项
 
-**M4.3 — Privacy Recovery Envelope + TarZstd Backend + Cross-format Metadata/Link Fidelity**。仍不实现 Physical Current/History Publisher。
+**M4.4 — Archive Backend Integration Matrix + M4 Completion Review**：收敛SevenZip/ZIP/TarZstd支持矩阵、Privacy prototype结论与Verified Artifact跨格式contract tests，并决定M4是否可以COMPLETE。仍不实现Physical Publisher。
 
 ## 明确不做
 
