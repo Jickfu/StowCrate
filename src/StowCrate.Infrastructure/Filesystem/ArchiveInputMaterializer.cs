@@ -7,8 +7,14 @@ using StowCrate.Core.Filesystem;
 namespace StowCrate.Infrastructure.Filesystem;
 
 /// <summary>将已观察输入重新 no-follow 验证并复制到 private staging；writer 此后只接触 staging。</summary>
-public sealed class ArchiveInputMaterializer(IArchiveBuildWorkspaceFactory workspaces) : IArchiveInputMaterializer
+public sealed class ArchiveInputMaterializer : IArchiveInputMaterializer
 {
+    private readonly IArchiveBuildWorkspaceFactory workspaces;
+    private readonly IPhysicalFileSystem fileSystem;
+    public ArchiveInputMaterializer(IArchiveBuildWorkspaceFactory workspaces, IPhysicalFileSystem? fileSystem = null)
+    {
+        this.workspaces = workspaces; this.fileSystem = fileSystem ?? new SystemPhysicalFileSystem();
+    }
     public async Task<MaterializedArchiveInput> MaterializeAsync(ArchiveBuildRequest request, ReadOnlyMemory<byte> manifestBytes, CancellationToken cancellationToken)
     {
         var workspace = await workspaces.CreateAsync(request, cancellationToken).ConfigureAwait(false);
@@ -33,6 +39,14 @@ public sealed class ArchiveInputMaterializer(IArchiveBuildWorkspaceFactory works
                 await MaterializeEntryAsync(entry, source, staged, request.Archive.Capability.MetadataSemantics, cancellationToken).ConfigureAwait(false);
                 result.Add(new(entry.ArchivePath, entry.Kind, staged));
             }
+            // 子项创建会改变父目录 mtime；全部 materialize 后按深度逆序再次投影并验证 staging metadata。
+            foreach (var entry in request.Archive.Candidate.Entries.Where(x => x.OwnerKind is not CandidateEntryOwnerKind.Generated)
+                         .OrderByDescending(x => x.ArchivePath.Value.Count(character => character == '/')))
+            {
+                var staged = result.Single(x => x.ArchivePath == entry.ArchivePath).StagedPath;
+                ApplyMetadata(entry, staged);
+                Validate(entry, fileSystem.Inspect(staged), request.Archive.Capability.MetadataSemantics);
+            }
             return new(workspace, result);
         }
         catch
@@ -43,9 +57,9 @@ public sealed class ArchiveInputMaterializer(IArchiveBuildWorkspaceFactory works
         }
     }
 
-    private static async Task MaterializeEntryAsync(CandidateArchiveEntry expected, string source, string staged, ArchiveMetadataSemantics metadataSemantics, CancellationToken token)
+    private async Task MaterializeEntryAsync(CandidateArchiveEntry expected, string source, string staged, ArchiveMetadataSemantics metadataSemantics, CancellationToken token)
     {
-        var before = Observe(source);
+        var before = fileSystem.Inspect(source);
         Validate(expected, before, metadataSemantics);
         Directory.CreateDirectory(Path.GetDirectoryName(staged)!);
         switch (expected.Kind)
@@ -58,12 +72,16 @@ public sealed class ArchiveInputMaterializer(IArchiveBuildWorkspaceFactory works
                 break;
             case FileSystemEntryKind.Link:
                 if (expected.Link is null) Drift(expected, "Candidate link identity is missing.");
-                if (before.IsDirectory) Directory.CreateSymbolicLink(staged, expected.Link!.Target); else File.CreateSymbolicLink(staged, expected.Link!.Target);
+                if (expected.Link!.Kind is not LinkKind.SymbolicLink) Drift(expected, "Only symbolic links can be faithfully staged by this portable materializer.");
+                if (before.LinkTargetIsDirectory) Directory.CreateSymbolicLink(staged, expected.Link.Target); else File.CreateSymbolicLink(staged, expected.Link.Target);
                 break;
             default: Drift(expected, "Special objects cannot be materialized."); break;
         }
-        var after = Observe(source);
+        ApplyMetadata(expected, staged);
+        var after = fileSystem.Inspect(source);
         Validate(expected, after, metadataSemantics);
+        var stagedObservation = fileSystem.Inspect(staged);
+        Validate(expected, stagedObservation, metadataSemantics);
         if (expected.Kind is FileSystemEntryKind.File)
         {
             var stagedLength = new FileInfo(staged).Length;
@@ -78,26 +96,29 @@ public sealed class ArchiveInputMaterializer(IArchiveBuildWorkspaceFactory works
         }
     }
 
-    private static ObservedPhysical Observe(string path)
+    private static void ApplyMetadata(CandidateArchiveEntry expected, string staged)
     {
-        if (!File.Exists(path) && !Directory.Exists(path)) throw new ArchiveMaterializationException(ArchiveBuildFailureCode.InputChangedDuringMaterialization, "Candidate input no longer exists.");
-        var attributes = File.GetAttributes(path);
-        var isLink = attributes.HasFlag(FileAttributes.ReparsePoint);
-        var isDirectory = attributes.HasFlag(FileAttributes.Directory);
-        var kind = isLink ? FileSystemEntryKind.Link : isDirectory ? FileSystemEntryKind.Directory : FileSystemEntryKind.File;
-        var info = isDirectory ? (FileSystemInfo)new DirectoryInfo(path) : new FileInfo(path);
-        string? target = isLink ? info.LinkTarget : null;
-        var metadata = SourceMetadata.None;
-        if (attributes.HasFlag(FileAttributes.ReadOnly)) metadata |= SourceMetadata.ReadOnly;
-        if (attributes.HasFlag(FileAttributes.Hidden)) metadata |= SourceMetadata.Hidden;
-        if (!OperatingSystem.IsWindows() && !isLink && (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0) metadata |= SourceMetadata.Executable;
-        return new(kind, isDirectory, kind is FileSystemEntryKind.File ? ((FileInfo)info).Length : 0, info.LastWriteTimeUtc, metadata, target);
+        if (expected.Kind is FileSystemEntryKind.Link) return;
+        if (expected.LastWriteTimeUtc is { } mtime) File.SetLastWriteTimeUtc(staged, mtime.UtcDateTime);
+        var attributes = File.GetAttributes(staged);
+        attributes = expected.MetadataFlags.HasFlag(SourceMetadata.ReadOnly) ? attributes | FileAttributes.ReadOnly : attributes & ~FileAttributes.ReadOnly;
+        attributes = expected.MetadataFlags.HasFlag(SourceMetadata.Hidden) ? attributes | FileAttributes.Hidden : attributes & ~FileAttributes.Hidden;
+        File.SetAttributes(staged, attributes);
+        if (!OperatingSystem.IsWindows())
+        {
+            var mode = File.GetUnixFileMode(staged);
+            const UnixFileMode execute = UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute;
+            mode = expected.MetadataFlags.HasFlag(SourceMetadata.Executable) ? mode | execute : mode & ~execute;
+            File.SetUnixFileMode(staged, mode);
+        }
     }
 
-    private static void Validate(CandidateArchiveEntry expected, ObservedPhysical actual, ArchiveMetadataSemantics semantics)
+    private static void Validate(CandidateArchiveEntry expected, PhysicalFileSystemEntry actual, ArchiveMetadataSemantics semantics)
     {
-        if (actual.Kind != expected.Kind || actual.Length != expected.Length || new DateTimeOffset(actual.LastWriteTimeUtc, TimeSpan.Zero) != expected.LastWriteTimeUtc?.ToUniversalTime()
-            || actual.Metadata != expected.MetadataFlags || !StringComparer.Ordinal.Equals(actual.LinkTarget, expected.Link?.Target))
+        if (actual.Kind != expected.Kind || actual.Length != expected.Length
+            || (expected.Kind is not FileSystemEntryKind.Link && actual.LastWriteTimeUtc?.ToUniversalTime() != expected.LastWriteTimeUtc?.ToUniversalTime())
+            || actual.MetadataFlags != expected.MetadataFlags || !StringComparer.Ordinal.Equals(actual.LinkTarget, expected.Link?.Target)
+            || (expected.Link is not null && actual.LinkKind != expected.Link.Kind))
             Drift(expected, $"Input kind/size/UTC mtime/metadata/link identity drifted under {semantics} semantics.");
     }
 
@@ -113,5 +134,4 @@ public sealed class ArchiveInputMaterializer(IArchiveBuildWorkspaceFactory works
     }
     private static async Task<Sha256Digest> HashAsync(string path, CancellationToken token) { await using var stream = File.OpenRead(path); return new(Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, token).ConfigureAwait(false))); }
     private static void Drift(CandidateArchiveEntry entry, string message) => throw new ArchiveMaterializationException(ArchiveBuildFailureCode.InputChangedDuringMaterialization, message, entry.ArchivePath);
-    private sealed record ObservedPhysical(FileSystemEntryKind Kind, bool IsDirectory, long Length, DateTime LastWriteTimeUtc, SourceMetadata Metadata, string? LinkTarget);
 }

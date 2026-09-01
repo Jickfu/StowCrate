@@ -142,6 +142,10 @@ M4 的单元构建入口正式命名为 `ArchiveBuildRequest`，其中复用现�
 
 `VerifiedArchiveArtifact` 只关联 lifecycle 为 Verified 的 Core `ArchiveVersion` 和仍属 runtime 的 `.partial` handle。它不是 durable placement，不创建 `CurrentVersion`/`HistoryVersionPlacement`，不进入 PublishIntent，也不推进 Committed Baseline。Manifest v1 是独立 closed-world deterministic UTF-8 contract，描述 normal/external payload但不自列，且禁止 physical binding、Device/storage root、Secret、staging和process数据。
 
+Archive capability validation分为portable EffectiveArchiveSpec与Candidate-derived `ArchiveCapabilityRequirements`。后者至少表达payload是否实际含symbolic link以及PortableBasic/Posix metadata fidelity需求；adapter只有同时满足两者才能进入Readiness/Build。M4.2 bundled 7-Zip 26.02 adapter只声明SevenZip/ZIP + None + no-links + PortableBasic + single-volume，Privacy、Secure、TarZstd、symbolic-link与Posix metadata均明确Unsupported。
+
+bundled executable由RID descriptor定位，并同时校验official package与executable SHA-256、26.02 version和必要format；禁止搜索或fallback到system PATH。进程调用只在Archiving内使用structured ArgumentList，取消时终止整个process tree并等待退出。Secure material若未来被支持，writer/verifier必须共享同一build-scoped lease；当前26.02 redirected-stdin spike未能证明verification可靠性，因此没有任何Secure capability或不安全fallback。
+
 `ExternalSourceSnapshot` 是不可变、平台无关的 observation boundary，关联 ExternalSourceId、root kind、relative entries 与原始业务 metadata/ScanIssue，不包含 physical binding、staging path、FileInfo、Stream 或 Handle。Infrastructure 可以复用 SourceScanner 的底层 no-follow enumeration primitive；Application 负责 ArchiveDestination mapping，Planning Kernel 只接收规范化后的 Candidate entry facts。
 
 ```text

@@ -23,8 +23,8 @@ public sealed class ArchiveBuildWorkflow(
         var preservePartial = false;
         try
         {
-            if (!request.Archive.Capability.ExactlyMatches(request.Archive.Candidate.Unit.ArchiveSpec))
-                return await CompleteAsync(Failure(ArchiveBuildFailureCode.UnsupportedArchiveCapability, "Resolved capability does not exactly match the effective ArchiveSpec."), false).ConfigureAwait(false);
+            if (!request.Archive.Capability.Satisfies(ArchiveCapabilityRequirements.From(request.Archive.Candidate)))
+                return await CompleteAsync(Failure(ArchiveBuildFailureCode.UnsupportedArchiveCapability, "Resolved capability does not satisfy the Candidate archive requirements."), false).ConfigureAwait(false);
 
             var manifestBytes = manifestCodec.Write(request);
             input = await materializer.MaterializeAsync(request, manifestBytes, cancellationToken).ConfigureAwait(false);
@@ -42,9 +42,9 @@ public sealed class ArchiveBuildWorkflow(
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception ex) { return await CompleteAsync(Failure(ArchiveBuildFailureCode.WriterFailed, SafeMessage("Archive writer failed.", ex)), false).ConfigureAwait(false); }
-            finally { secret?.Dispose(); secret = null; }
-
-            var verification = await verifier.VerifyAsync(input.Workspace.PartialArtifactPath, request.Archive.Candidate.GeneratedMetadata.ManifestPath, cancellationToken).ConfigureAwait(false);
+            var verification = await verifier.VerifyAsync(new(input.Workspace.PartialArtifactPath,
+                request.Archive.Candidate.GeneratedMetadata.ManifestPath, request.Archive.Candidate.Unit.ArchiveSpec,
+                request.Archive.Capability, secret), cancellationToken).ConfigureAwait(false);
             if (!verification.FormatTestPassed) return await CompleteAsync(Failure(ArchiveBuildFailureCode.FormatTestFailed, "Archive format-level test failed."), false).ConfigureAwait(false);
             if (!EntrySetMatches(request.Archive.Candidate, verification.Entries)) return await CompleteAsync(Failure(ArchiveBuildFailureCode.EntrySetMismatch, "Archive entry path/kind set differs from Candidate payload plus manifest."), false).ConfigureAwait(false);
 

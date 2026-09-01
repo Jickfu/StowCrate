@@ -71,9 +71,20 @@ public sealed class ArchiveBuildWorkflowTests
         var fixture = new Fixture(secure: true);
         var result = await fixture.BuildAsync();
         Assert.True(result.Succeeded);
+        Assert.Same(fixture.SecretProvider.Lease, fixture.Verifier.ObservedSecret);
         Assert.NotNull(fixture.Writer.SecretMemory);
         Assert.True(MemoryMarshal.TryGetArray(fixture.Writer.SecretMemory!.Value, out var segment));
         Assert.All(segment.Array!, value => Assert.Equal(0, value));
+        Assert.Throws<ObjectDisposedException>(() => _ = fixture.SecretProvider.Lease!.Material);
+    }
+
+    [Fact]
+    public async Task CancellationDuringSecureVerificationStillDisposesAndZeroizesLease()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var fixture = new Fixture(secure: true) { Failure = "cancel-verifier", CancellationSource = cancellation };
+        var result = await fixture.BuildAsync(cancellation.Token);
+        Assert.Contains(result.Diagnostics, x => x.Code == ArchiveBuildFailureCode.Cancelled);
         Assert.Throws<ObjectDisposedException>(() => _ = fixture.SecretProvider.Lease!.Material);
     }
 
@@ -135,6 +146,7 @@ public sealed class ArchiveBuildWorkflowTests
             Materializer = new(this); Verifier = new(this); Writer = new(this); SecretProvider = new();
         }
         public string? Failure { get; set; }
+        public CancellationTokenSource? CancellationSource { get; set; }
         public ArchiveBuildRequest Request { get; }
         public FakeWorkspace Workspace { get; } = new();
         public FakeMaterializer Materializer { get; }
@@ -170,9 +182,12 @@ public sealed class ArchiveBuildWorkflowTests
     private sealed class FakeVerifier(Fixture fixture) : IArchiveArtifactVerifier
     {
         public ImmutableArray<ArchiveArtifactEntry> LastEntries { get; private set; }
-        public Task<ArchiveArtifactVerification> VerifyAsync(string path, RelativePath manifestPath, CancellationToken token)
+        public SecretMaterialLease? ObservedSecret { get; private set; }
+        public Task<ArchiveArtifactVerification> VerifyAsync(ArchiveVerificationRequest request, CancellationToken token)
         {
+            if (fixture.Failure == "cancel-verifier") { fixture.CancellationSource!.Cancel(); token.ThrowIfCancellationRequested(); }
             token.ThrowIfCancellationRequested();
+            ObservedSecret = request.SecretLease;
             LastEntries = [.. fixture.Request.Archive.Candidate.Entries.Select(x => new ArchiveArtifactEntry(x.ArchivePath, x.Kind))];
             if (fixture.Failure == "entries") LastEntries = [.. LastEntries.Skip(1)];
             var manifest = fixture.Materializer.Manifest.ToArray();

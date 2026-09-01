@@ -211,12 +211,12 @@ public sealed class CandidateArchiveCompositionTests
 
     private sealed class SupportedCapabilities : IArchiveCapabilityResolver
     {
-        public ArchiveCapabilityResolution Resolve(EffectiveArchiveSpec archiveSpec, int archiveSemanticsVersion) => new(Capability(archiveSpec, "test-capability-v1"), null);
+        public ArchiveCapabilityResolution Resolve(ArchiveCapabilityRequirements requirements, int archiveSemanticsVersion) => new(Capability(requirements.ArchiveSpec, "test-capability-v1"), null);
     }
 
     private sealed class UnsupportedCapabilities : IArchiveCapabilityResolver
     {
-        public ArchiveCapabilityResolution Resolve(EffectiveArchiveSpec archiveSpec, int archiveSemanticsVersion) => new(null, "unsupported test combination");
+        public ArchiveCapabilityResolution Resolve(ArchiveCapabilityRequirements requirements, int archiveSemanticsVersion) => new(null, "unsupported test combination");
     }
 
     private static ResolvedArchiveCapability Capability(EffectiveArchiveSpec spec, string semantics) =>

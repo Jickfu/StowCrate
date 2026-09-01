@@ -7,6 +7,20 @@ namespace StowCrate.Application.BackupPlans.Candidates;
 
 public enum ArchiveLinkSemantics { NoLinks, PreserveSymbolicLinks }
 public enum ArchiveMetadataSemantics { PortableBasic, Posix }
+public sealed record ArchiveCapabilityRequirements(
+    EffectiveArchiveSpec ArchiveSpec,
+    bool RequiresSymbolicLinks,
+    ArchiveMetadataSemantics RequiredMetadataSemantics)
+{
+    public static ArchiveCapabilityRequirements From(CandidateArchive archive)
+    {
+        var payload = archive.Entries.Where(entry => entry.OwnerKind is not CandidateEntryOwnerKind.Generated);
+        return new(archive.Unit.ArchiveSpec,
+            payload.Any(entry => entry.Kind is StowCrate.Core.Filesystem.FileSystemEntryKind.Link),
+            payload.Any(entry => entry.MetadataFlags.HasFlag(StowCrate.Core.Filesystem.SourceMetadata.Executable))
+                ? ArchiveMetadataSemantics.Posix : ArchiveMetadataSemantics.PortableBasic);
+    }
+}
 
 /// <summary>工具无关且可进入 fingerprint 的已解析归档能力；不包含 executable、路径或命令行参数。</summary>
 public sealed record ResolvedArchiveCapability
@@ -30,6 +44,9 @@ public sealed record ResolvedArchiveCapability
     public string CapabilitySemantics { get; }
     public bool ExactlyMatches(EffectiveArchiveSpec spec) =>
         Format == spec.Format && CompressionPreset == spec.CompressionPreset && Protection == spec.Protection;
+    public bool Satisfies(ArchiveCapabilityRequirements requirements) => ExactlyMatches(requirements.ArchiveSpec)
+        && (!requirements.RequiresSymbolicLinks || LinkSemantics is ArchiveLinkSemantics.PreserveSymbolicLinks)
+        && (requirements.RequiredMetadataSemantics is ArchiveMetadataSemantics.PortableBasic || MetadataSemantics is ArchiveMetadataSemantics.Posix);
 }
 
 public sealed record ArchiveCapabilityResolution(
@@ -41,7 +58,7 @@ public sealed record ArchiveCapabilityResolution(
 
 public interface IArchiveCapabilityResolver
 {
-    ArchiveCapabilityResolution Resolve(EffectiveArchiveSpec archiveSpec, int archiveSemanticsVersion);
+    ArchiveCapabilityResolution Resolve(ArchiveCapabilityRequirements requirements, int archiveSemanticsVersion);
 }
 
 public sealed record CommittedArchiveUnitRegistrationFact(
@@ -161,8 +178,9 @@ public sealed class ExecutionReadinessEvaluator : IExecutionReadinessEvaluator
                 else secure = new SecureRevisionRequirement(binding.SecretSlotId, binding.Revision);
             }
 
-            var capability = capabilityResolver.Resolve(archive.Unit.ArchiveSpec, candidates.Semantics.Archive);
-            if (!capability.IsSupported || !capability.Capability!.ExactlyMatches(archive.Unit.ArchiveSpec))
+            var requirements = ArchiveCapabilityRequirements.From(archive);
+            var capability = capabilityResolver.Resolve(requirements, candidates.Semantics.Archive);
+            if (!capability.IsSupported || !capability.Capability!.Satisfies(requirements))
             {
                 blockers.Add(new ExecutionReadinessBlocker(
                     ExecutionReadinessBlockerCode.UnsupportedArchiveCapability,

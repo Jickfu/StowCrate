@@ -79,6 +79,13 @@ public sealed record ArchiveWriteRequest(
     ResolvedArchiveCapability Capability,
     SecretMaterialLease? SecretLease);
 
+public sealed record ArchiveVerificationRequest(
+    string PartialArtifactPath,
+    RelativePath ManifestPath,
+    EffectiveArchiveSpec ArchiveSpec,
+    ResolvedArchiveCapability Capability,
+    SecretMaterialLease? SecretLease);
+
 public interface IArchiveFormatWriter
 {
     Task WriteAsync(ArchiveWriteRequest request, CancellationToken cancellationToken);
@@ -94,7 +101,7 @@ public sealed record ArchiveArtifactVerification(
 
 public interface IArchiveArtifactVerifier
 {
-    Task<ArchiveArtifactVerification> VerifyAsync(string partialArtifactPath, RelativePath manifestPath, CancellationToken cancellationToken);
+    Task<ArchiveArtifactVerification> VerifyAsync(ArchiveVerificationRequest request, CancellationToken cancellationToken);
 }
 
 public interface IArchiveManifestCodec

@@ -20,7 +20,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-latest
+            rid: osx-x64
 
     steps:
       - name: 检出代码
@@ -37,5 +43,16 @@ jobs:
       - name: 构建
         run: dotnet build StowCrate.slnx --configuration Release --no-restore
 
+      - name: 获取并校验固定版本 7-Zip
+        shell: pwsh
+        run: ./eng/Acquire-Bundled7Zip.ps1 -RuntimeIdentifier '${{ matrix.rid }}'
+
+      - name: 获取 macOS universal 7-Zip 的另一 RID placement
+        if: matrix.os == 'macos-latest'
+        shell: pwsh
+        run: ./eng/Acquire-Bundled7Zip.ps1 -RuntimeIdentifier 'osx-arm64'
+
       - name: 测试
         run: dotnet test StowCrate.slnx --configuration Release --no-build
+        env:
+          STOWCRATE_7ZIP_ROOT: ${{ github.workspace }}/artifacts/bundled/7zip

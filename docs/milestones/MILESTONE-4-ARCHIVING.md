@@ -44,7 +44,23 @@ M4.1 使用 fake/in-memory archive adapter 验证完整 workflow，并用真实 
 
 ## 下一项
 
-**M4.2 SevenZip/ZIP Backend + bundled 7zz capability probe + Secure secret-transport spike**。仍不实现 Physical Current/History Publisher。
+## M4.2 — SevenZip / ZIP Backend + bundled 7zz Capability Probe + Secure Secret-Transport Spike（COMPLETE）
+
+M4.2 修复了三个 prerequisite blocker：同一 `SecretMaterialLease` 现在覆盖 writer 与 verifier 的完整 build verification window，直到成功、失败或取消后才 dispose/zeroize；verifier 不重新读取 durable secret binding。materializer 复用 M2 `IPhysicalFileSystem.Inspect` no-follow primitive，不再用 `File.Exists/Directory.Exists` 判断输入对象，能够观察并 staging dangling symbolic link；普通文件/目录的 Candidate mtime、attributes 与 Unix executable 会实际投影到 staging 并重新检查。`ArchiveCapabilityRequirements` 由 Candidate payload 的 link/metadata需要形成，Readiness 与 Build 均要求 capability 完整满足，ArchiveSpec 相同不再足以掩盖 fidelity 丢失。
+
+bundled backend 固定为官方 7-Zip **26.02 (2026-06-25)**。descriptor 固定每个受支持 RID 的官方 package SHA-256 与解包后 executable SHA-256；acquisition/packaging script只从 pinned release下载并验证，不搜索 system `7z/7zz`。probe验证 executable integrity、26.02 version和7z/ZIP format，Application capability只接收不含绝对路径的 semantic identity。Windows官方 standalone console文件名为`7za.exe`，Linux/macOS为`7zz`，这是 Archiving/packaging detail。
+
+None protection 的 SevenZip/ZIP真实 writer/verifier已实现。所有 invocation使用`UseShellExecute=false`与`ArgumentList`，显式`-t7z/-tzip`，限制输出，取消时kill entire process tree并等待退出。writer只以private staging为working directory，通过不含secret的UTF-8 input list固定精确entry set；verifier按exit code执行format test，以26.02 technical listing parser读取path/kind，只用`-so`读取唯一manifest，最终hash/length仍由M4.1 workflow cross-check。
+
+compression mapping冻结为`Store=-mx=0`、`Fast=-mx=3`、`Standard=-mx=5`、`Extreme=-mx=9`。7z固定container、LZMA2与solid；ZIP固定container，Store使用Copy，其余使用Deflate。版本、mapping、format、protection、link/metadata、single-volume与secret transport结论均进入`CapabilitySemantics`。
+
+Secure stdin spike的结论是 **Unsupported**：当前Windows 26.02 official console在`-p` switch + redirected stdin下可以创建archive，但同一Unicode material无法被后续test可靠重用，因此不能证明write/test/list/read-manifest完整窗口。绝不使用`-pPassword`，也没有argv/env/response-file fallback。7z/ZIP Secure在所有平台继续Unsupported，直到未来实现能够在三平台证明可靠与无泄漏的transport。ZIP即使未来启用AES-256，也不能宣称具备7z header/name encryption同等的metadata confidentiality。
+
+Privacy继续Unsupported；TarZstd不由此resolver声明；symbolic-link与POSIX metadata组合在跨平台create/list/extract fidelity matrix完成前Unsupported。None + no-links + PortableBasic metadata是M4.2唯一已声明的真实backend capability。CI在Windows/Linux/macOS获取并验证对应26.02官方资产，再运行format contract tests；第三方notice与upstream License.txt进入release acquisition要求。
+
+## 下一项
+
+**M4.3 — Privacy Recovery Envelope + TarZstd Backend + Cross-format Metadata/Link Fidelity**。仍不实现 Physical Current/History Publisher。
 
 ## 明确不做
 
