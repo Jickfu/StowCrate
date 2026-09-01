@@ -143,8 +143,8 @@ public sealed class CandidateArchiveCompositionTests
         var unit = Unit(UnitId, "project", RuleSource.UiManaged,
             archive: new EffectiveArchiveSpec(PortableArchiveFormat.SevenZip, PortableCompressionPreset.Standard, new SecureProtection(SecretId)));
         var candidate = new CandidateArchiveComposer().Compose(plan, Units([unit], Source(Entry("project/a")), External()), []).Archives[0];
-        var first = new ExecutionReadyArchive(candidate, new ResolvedArchiveCapability("cap-a"), unit.History, new SecureRevisionRequirement(SecretId, new SecretRevision(1)));
-        var second = new ExecutionReadyArchive(candidate, new ResolvedArchiveCapability("cap-b"), unit.History, new SecureRevisionRequirement(SecretId, new SecretRevision(2)));
+        var first = new ExecutionReadyArchive(candidate, Capability(unit.ArchiveSpec, "cap-a"), unit.History, new SecureRevisionRequirement(SecretId, new SecretRevision(1)));
+        var second = new ExecutionReadyArchive(candidate, Capability(unit.ArchiveSpec, "cap-b"), unit.History, new SecureRevisionRequirement(SecretId, new SecretRevision(2)));
 
         var firstFingerprints = CandidateFingerprintCalculator.Compute(plan, first, new StorageBindingFingerprintFacts(1, "fs")).Fingerprints!;
         var secondFingerprints = CandidateFingerprintCalculator.Compute(plan, second, new StorageBindingFingerprintFacts(1, "fs")).Fingerprints!;
@@ -211,11 +211,14 @@ public sealed class CandidateArchiveCompositionTests
 
     private sealed class SupportedCapabilities : IArchiveCapabilityResolver
     {
-        public ArchiveCapabilityResolution Resolve(EffectiveArchiveSpec archiveSpec, int archiveSemanticsVersion) => new(new ResolvedArchiveCapability("test-capability-v1"), null);
+        public ArchiveCapabilityResolution Resolve(EffectiveArchiveSpec archiveSpec, int archiveSemanticsVersion) => new(Capability(archiveSpec, "test-capability-v1"), null);
     }
 
     private sealed class UnsupportedCapabilities : IArchiveCapabilityResolver
     {
         public ArchiveCapabilityResolution Resolve(EffectiveArchiveSpec archiveSpec, int archiveSemanticsVersion) => new(null, "unsupported test combination");
     }
+
+    private static ResolvedArchiveCapability Capability(EffectiveArchiveSpec spec, string semantics) =>
+        new(spec.Format, spec.CompressionPreset, spec.Protection, ArchiveLinkSemantics.PreserveSymbolicLinks, ArchiveMetadataSemantics.PortableBasic, true, semantics);
 }

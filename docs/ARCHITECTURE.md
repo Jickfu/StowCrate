@@ -138,6 +138,10 @@ Raw binding expression（包括 `${HOME}`）的展开、绝对化和 physical ca
 
 External Source 只指向 declared Archive Unit。它由独立 no-follow observation 作为 explicit inclusion 加入目标 Candidate，不经过普通 Rules，也不在 external directory 内做 `.backupignore` rule parsing 或 Archive Unit discovery。Application/Infrastructure 使用只读 private staging，并确保最终 EntrySet 状态对应真正 materialized payload；normal/external/generated entries 在统一 path trie 中验证 owner collision、reserved namespace 和 child Boundary。
 
+M4 的单元构建入口正式命名为 `ArchiveBuildRequest`，其中复用现有 `ExecutionReadyArchive`，不引入易与既有 API 混淆的 `ExecutionReadyArchiveUnit`。Application 通过 `IArchiveInputMaterializer`、`IArchiveFormatWriter`、`IArchiveArtifactVerifier` 与 manifest codec port 编排：materializer 完成 physical no-follow/TOCTOU 验证并切断 writer 对原 Source/External root 的访问；writer 只读 private staging并只写唯一 runtime `.partial`；verifier 完成 format、entry set、archived manifest与最终 bytes integrity 四层验证。
+
+`VerifiedArchiveArtifact` 只关联 lifecycle 为 Verified 的 Core `ArchiveVersion` 和仍属 runtime 的 `.partial` handle。它不是 durable placement，不创建 `CurrentVersion`/`HistoryVersionPlacement`，不进入 PublishIntent，也不推进 Committed Baseline。Manifest v1 是独立 closed-world deterministic UTF-8 contract，描述 normal/external payload但不自列，且禁止 physical binding、Device/storage root、Secret、staging和process数据。
+
 `ExternalSourceSnapshot` 是不可变、平台无关的 observation boundary，关联 ExternalSourceId、root kind、relative entries 与原始业务 metadata/ScanIssue，不包含 physical binding、staging path、FileInfo、Stream 或 Handle。Infrastructure 可以复用 SourceScanner 的底层 no-follow enumeration primitive；Application 负责 ArchiveDestination mapping，Planning Kernel 只接收规范化后的 Candidate entry facts。
 
 ```text

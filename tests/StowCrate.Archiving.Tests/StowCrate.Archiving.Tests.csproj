@@ -19,4 +19,8 @@
     <ProjectReference Include="..\..\src\StowCrate.Archiving\StowCrate.Archiving.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="..\..\schemas\archive-manifest-v1.schema.json" Link="schemas\archive-manifest-v1.schema.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

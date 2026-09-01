@@ -5,7 +5,32 @@ using StowCrate.Core.Paths;
 
 namespace StowCrate.Application.BackupPlans.Candidates;
 
-public sealed record ResolvedArchiveCapability(string CapabilitySemantics);
+public enum ArchiveLinkSemantics { NoLinks, PreserveSymbolicLinks }
+public enum ArchiveMetadataSemantics { PortableBasic, Posix }
+
+/// <summary>工具无关且可进入 fingerprint 的已解析归档能力；不包含 executable、路径或命令行参数。</summary>
+public sealed record ResolvedArchiveCapability
+{
+    public ResolvedArchiveCapability(PortableArchiveFormat format, PortableCompressionPreset compressionPreset,
+        AuthoredProtection protection, ArchiveLinkSemantics linkSemantics, ArchiveMetadataSemantics metadataSemantics,
+        bool isSingleVolume, string capabilitySemantics)
+    {
+        ArgumentNullException.ThrowIfNull(protection);
+        if (!isSingleVolume) throw new ArgumentException("Archive capability v1 must be single-volume.", nameof(isSingleVolume));
+        ArgumentException.ThrowIfNullOrWhiteSpace(capabilitySemantics);
+        Format = format; CompressionPreset = compressionPreset; Protection = protection; LinkSemantics = linkSemantics;
+        MetadataSemantics = metadataSemantics; IsSingleVolume = isSingleVolume; CapabilitySemantics = capabilitySemantics;
+    }
+    public PortableArchiveFormat Format { get; }
+    public PortableCompressionPreset CompressionPreset { get; }
+    public AuthoredProtection Protection { get; }
+    public ArchiveLinkSemantics LinkSemantics { get; }
+    public ArchiveMetadataSemantics MetadataSemantics { get; }
+    public bool IsSingleVolume { get; }
+    public string CapabilitySemantics { get; }
+    public bool ExactlyMatches(EffectiveArchiveSpec spec) =>
+        Format == spec.Format && CompressionPreset == spec.CompressionPreset && Protection == spec.Protection;
+}
 
 public sealed record ArchiveCapabilityResolution(
     ResolvedArchiveCapability? Capability,
@@ -137,7 +162,7 @@ public sealed class ExecutionReadinessEvaluator : IExecutionReadinessEvaluator
             }
 
             var capability = capabilityResolver.Resolve(archive.Unit.ArchiveSpec, candidates.Semantics.Archive);
-            if (!capability.IsSupported)
+            if (!capability.IsSupported || !capability.Capability!.ExactlyMatches(archive.Unit.ArchiveSpec))
             {
                 blockers.Add(new ExecutionReadinessBlocker(
                     ExecutionReadinessBlockerCode.UnsupportedArchiveCapability,

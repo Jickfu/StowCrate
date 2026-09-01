@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "archiveSemanticsVersion", "planId", "sourceId", "archiveUnitId", "unitLogicalPath", "archiveSpec", "entries"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "archiveSemanticsVersion": { "type": "integer", "minimum": 1 },
+    "planId": { "$ref": "#/$defs/uuidV4" },
+    "sourceId": { "$ref": "#/$defs/uuidV4" },
+    "archiveUnitId": { "$ref": "#/$defs/uuidV4" },
+    "unitLogicalPath": { "type": "string", "minLength": 1 },
+    "archiveSpec": { "$ref": "#/$defs/archiveSpec" },
+    "entries": { "type": "array", "items": { "$ref": "#/$defs/entry" } }
+  },
+  "$defs": {
+    "uuidV4": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" },
+    "archiveSpec": {
+      "type": "object", "additionalProperties": false,
+      "required": ["format", "compressionPreset", "protection"],
+      "properties": {
+        "format": { "enum": ["SevenZip", "Zip", "TarZstd"] },
+        "compressionPreset": { "enum": ["Store", "Fast", "Standard", "Extreme"] },
+        "protection": { "$ref": "#/$defs/protection" }
+      }
+    },
+    "protection": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "const": "None" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "const": "Privacy" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "secretSlotId"], "properties": { "kind": { "const": "Secure" }, "secretSlotId": { "$ref": "#/$defs/uuidV4" } } }
+      ]
+    },
+    "entry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "kind", "owner", "length", "lastWriteTimeUtc", "metadata", "linkTarget", "fullContentSha256", "rawFileSha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "not": { "pattern": "^__stowcrate__(/|$)" } },
+        "kind": { "enum": ["File", "Directory", "Link"] },
+        "owner": { "enum": ["Normal", "External"] },
+        "length": { "type": "integer", "minimum": 0 },
+        "lastWriteTimeUtc": { "type": ["string", "null"], "format": "date-time" },
+        "metadata": { "type": "integer", "minimum": 0 },
+        "linkTarget": { "type": ["string", "null"] },
+        "fullContentSha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+        "rawFileSha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] }
+      }
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}
