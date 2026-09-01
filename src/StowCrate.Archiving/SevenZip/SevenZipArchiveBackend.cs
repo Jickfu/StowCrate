@@ -57,13 +57,13 @@ public sealed class SevenZipArchiveArtifactVerifier(string executablePath, Seven
     {
         if (request.SecretLease is not null) throw new NotSupportedException("Secure stdin transport is not proven for 7-Zip 26.02.");
         var type = request.ArchiveSpec.Format is PortableArchiveFormat.SevenZip ? "-t7z" : "-tzip";
-        var test = await runner.RunAsync(new(executablePath, null, ["t", type, "-bd", "-bb0", request.PartialArtifactPath], null), cancellationToken).ConfigureAwait(false);
+        var test = await runner.RunAsync(new(executablePath, null, ["t", type, "-sccUTF-8", "-bd", "-bb0", request.PartialArtifactPath], null), cancellationToken).ConfigureAwait(false);
         if (test.ExitCode != 0) return new(false, [], ReadOnlyMemory<byte>.Empty, default, -1);
-        var list = await runner.RunAsync(new(executablePath, null, ["l", type, "-slt", "-ba", request.PartialArtifactPath], null), cancellationToken).ConfigureAwait(false);
+        var list = await runner.RunAsync(new(executablePath, null, ["l", type, "-sccUTF-8", "-slt", "-ba", request.PartialArtifactPath], null), cancellationToken).ConfigureAwait(false);
         if (list.ExitCode != 0) throw new SevenZipBackendException("7-Zip technical listing failed.", list.ExitCode);
         var entries = SevenZipTechnicalListParser.Parse(list.StandardOutput);
         var manifest = await runner.RunBinaryAsync(new(executablePath, null,
-            ["x", type, "-so", "-bd", "-bb0", request.PartialArtifactPath, request.ManifestPath.Value], null), cancellationToken).ConfigureAwait(false);
+            ["x", type, "-sccUTF-8", "-so", "-bd", "-bb0", request.PartialArtifactPath, request.ManifestPath.Value], null), cancellationToken).ConfigureAwait(false);
         if (manifest.ExitCode != 0) throw new SevenZipBackendException("7-Zip manifest read failed.", manifest.ExitCode);
         await using var stream = File.OpenRead(request.PartialArtifactPath);
         var hash = new Sha256Digest(Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false)));

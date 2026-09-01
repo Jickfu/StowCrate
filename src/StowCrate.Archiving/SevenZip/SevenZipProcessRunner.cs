@@ -16,7 +16,8 @@ public sealed class SevenZipProcessRunner(int outputLimitBytes = 64 * 1024)
     public async Task<SevenZipProcessResult> RunAsync(SevenZipProcessRequest request, CancellationToken cancellationToken)
     {
         var start = new ProcessStartInfo(request.ExecutablePath) { UseShellExecute = false, RedirectStandardOutput = true,
-            RedirectStandardError = true, RedirectStandardInput = request.Password is not null, CreateNoWindow = true };
+            RedirectStandardError = true, RedirectStandardInput = request.Password is not null, CreateNoWindow = true,
+            StandardOutputEncoding = new UTF8Encoding(false, true), StandardErrorEncoding = new UTF8Encoding(false, true) };
         if (request.WorkingDirectory is not null) start.WorkingDirectory = request.WorkingDirectory;
         foreach (var argument in request.Arguments) start.ArgumentList.Add(argument);
         using var process = new Process { StartInfo = start };
@@ -44,7 +45,8 @@ public sealed class SevenZipProcessRunner(int outputLimitBytes = 64 * 1024)
     public async Task<SevenZipBinaryProcessResult> RunBinaryAsync(SevenZipProcessRequest request, CancellationToken cancellationToken)
     {
         var start = new ProcessStartInfo(request.ExecutablePath) { UseShellExecute = false, RedirectStandardOutput = true,
-            RedirectStandardError = true, RedirectStandardInput = request.Password is not null, CreateNoWindow = true };
+            RedirectStandardError = true, RedirectStandardInput = request.Password is not null, CreateNoWindow = true,
+            StandardOutputEncoding = new UTF8Encoding(false, true), StandardErrorEncoding = new UTF8Encoding(false, true) };
         if (request.WorkingDirectory is not null) start.WorkingDirectory = request.WorkingDirectory;
         foreach (var argument in request.Arguments) start.ArgumentList.Add(argument);
         using var process = new Process { StartInfo = start }; process.Start();
