@@ -337,7 +337,9 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
             if (expectedPrevious is null) { if (existing is not null && existing.Stage != "METADATA_COMMITTED") throw new LocalStateConcurrencyException("A non-complete PublishIntent already exists for this unit."); if (existing is not null) { var payload = await db.PublishIntentBaselines.SingleAsync(x => x.PlanId == plan && x.ArchiveUnitId == unit, cancellationToken); db.PublishIntentBaselines.Remove(payload); db.PublishIntents.Remove(existing); await db.SaveChangesAsync(cancellationToken); existing = null; } }
             else if (existing is null || existing.Stage != DurableCodecs.Token(expectedPrevious.Value)) throw new LocalStateConcurrencyException("PublishIntent stage CAS failed.");
             if (existing is null) { existing = new() { PlanId = plan, ArchiveUnitId = unit }; db.PublishIntents.Add(existing); db.PublishIntentBaselines.Add(MapIntentBaseline(intent)); }
-            ApplyIntent(existing, intent); await db.SaveChangesAsync(cancellationToken); await tx.CommitAsync(cancellationToken);
+            ApplyIntent(existing, intent);
+            existing.HistoryCaptureRequirement = DurableCodecs.Token(intent.HistoryRequirement);
+            await db.SaveChangesAsync(cancellationToken); await tx.CommitAsync(cancellationToken);
         }
         catch (Exception exception) { throw Translate(exception, "PublishIntent could not be saved."); }
     }
@@ -353,7 +355,9 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
             old = new(oldVersion, new(planId, unitId, oldVersion.Id, new(row.OldCurrentRelativePath!)));
             if (row.HistoryRelativePath is not null) { var placement = new HistoryVersionPlacement(planId, unitId, oldVersion.Id, new(row.HistoryRelativePath)); history = new(oldVersion.Id, DurableCodecs.Digest(row.HistoryVerifiedIntegritySha256!), placement); }
         }
-        return PendingPublishIntent.Restore(verified, new(row.CurrentRelativePath), baseline, new(DurableCodecs.Digest(row.OutputLayoutFingerprint)), old, DurableCodecs.PublishStage(row.Stage), row.CurrentPublishedAtUtcMs is null ? null : DurableCodecs.Utc(row.CurrentPublishedAtUtcMs.Value), history);
+        return PendingPublishIntent.Restore(verified, new(row.CurrentRelativePath), baseline, new(DurableCodecs.Digest(row.OutputLayoutFingerprint)), old,
+            DurableCodecs.HistoryRequirement(row.HistoryCaptureRequirement), DurableCodecs.PublishStage(row.Stage),
+            row.CurrentPublishedAtUtcMs is null ? null : DurableCodecs.Utc(row.CurrentPublishedAtUtcMs.Value), history);
     }
 
     private static ArchiveVersion MapArchive(ArchiveVersionEntity row)

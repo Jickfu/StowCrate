@@ -252,6 +252,7 @@ Planned
 
 - M4 build `.partial` 是 private runtime artifact，可以位于与 CurrentRoot 不同的文件系统；M4 writer 不解析或依赖 CurrentRoot；
 - M5 在 format/integrity verification 后把 artifact 流式复制到最终 Current target 的 sibling private publish `.partial`，重算 SHA-256/length 并 durable flush；只有该 destination-local temp 可作为同文件系统原子发布源；
+- Current/History rename后必须调用平台 metadata durability barrier：Windows尝试directory handle `FlushFileBuffers`，Linux/macOS使用directory `fsync`。proof明确记录barrier是否完成；atomic namespace操作本身不等同于突然断电后directory metadata必然durable。
 - 保存历史版本时不得先移走或删除旧 Current。History 与 Current 在同一文件系统时可采用经过验证的链接、克隆或复制策略；跨文件系统时采用“复制到 History 临时文件 → 完整性验证 → History 内原子发布”。这些是持久化策略，不是 Current 的事务切换；
 - 启用历史时，历史版本未持久化并验证成功就不得替换 Current；历史持久化失败时任务失败，旧 Current 保持原位；
 - 最终切换只在 Current 所在文件系统内执行 atomic replace。替换前崩溃时旧 Current 有效，替换后崩溃时新 Current 有效，不能出现先移走旧 Current 导致 Current 路径缺失的窗口；

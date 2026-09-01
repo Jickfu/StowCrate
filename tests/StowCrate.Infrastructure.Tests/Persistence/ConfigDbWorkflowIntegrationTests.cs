@@ -73,7 +73,8 @@ public sealed class ConfigDbWorkflowIntegrationTests
         var oldIntent = Intent(plan.Id, unit.Id, new(Guid.NewGuid()), Sha256Digest.Hash(oldBytes)); await database.Repository.BeginPublishAsync(oldIntent, CancellationToken.None); var oldPublished = oldIntent.MarkCurrentPublished(DateTimeOffset.UnixEpoch); await database.Repository.SavePublishProgressAsync(oldPublished, CancellationToken.None); await database.Repository.CompleteMetadataCommitAsync(oldPublished.RebuildMetadataCommitPlan(), CancellationToken.None);
         var oldState = (await database.Repository.LoadAsync(plan.Id, unit.Id, CancellationToken.None))!;
         var fingerprints = Fingerprints(); var nextArchive = ArchiveVersion.Prepare(new(Guid.NewGuid()), plan.Id, unit.Id, PortableArchiveFormat.SevenZip, fingerprints.ArchiveSpec).Verify(Sha256Digest.Hash("new"u8), 3);
-        var next = PendingPublishIntent.Prepare(nextArchive, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(fingerprints), fingerprints.OutputLayout, new(oldState.CurrentArchive!, oldState.Current!));
+        var next = PendingPublishIntent.Prepare(nextArchive, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(fingerprints), fingerprints.OutputLayout,
+            new(oldState.CurrentArchive!, oldState.Current!), HistoryCaptureRequirement.Required);
         await database.Repository.BeginPublishAsync(next, CancellationToken.None);
         var history = new HistoryVersionPlacement(plan.Id, unit.Id, oldState.CurrentArchive!.Id, new("history/unit.7z"));
         await database.Repository.SavePublishProgressAsync(next.MarkHistoryCaptured(new(oldState.CurrentArchive.Id, oldState.CurrentArchive.Integrity!.Value, history)), CancellationToken.None);
@@ -170,7 +171,7 @@ public sealed class ConfigDbWorkflowIntegrationTests
     private static PendingPublishIntent Intent(PlanId planId, ArchiveUnitId unitId, ArchiveVersionId versionId, Sha256Digest integrity)
     {
         var f = Fingerprints(); var archive = ArchiveVersion.Prepare(versionId, planId, unitId, PortableArchiveFormat.SevenZip, f.ArchiveSpec).Verify(integrity, 10);
-        return PendingPublishIntent.Prepare(archive, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(f), f.OutputLayout, null);
+        return PendingPublishIntent.Prepare(archive, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(f), f.OutputLayout, null, HistoryCaptureRequirement.NotRequired);
     }
     private static CandidateArchiveFingerprints Fingerprints() { var hash = Sha256Digest.Hash("x"u8); var d = new DiagnosticFingerprint(hash); return new(1, new(1, 1, 1), true, new(hash), new(hash), new(hash), new(hash), new(hash), new(hash), new(d, d, d, d, d, d, d, d)); }
     private static string Key(string path) { var key = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)).Replace('\\', '/'); return OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? key.ToUpperInvariant() : key; }

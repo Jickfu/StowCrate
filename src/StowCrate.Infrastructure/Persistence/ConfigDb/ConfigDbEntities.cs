@@ -25,6 +25,7 @@ internal sealed class PublishIntentEntity
     public byte[] PlanId { get; set; } = []; public byte[] ArchiveUnitId { get; set; } = []; public byte[] NewArchiveVersionId { get; set; } = []; public string Stage { get; set; } = "";
     public string NewArchiveFormat { get; set; } = ""; public byte[] NewArchiveSpecFingerprint { get; set; } = []; public byte[] ExpectedNewIntegritySha256 { get; set; } = []; public long NewLength { get; set; }
     public string CurrentRelativePath { get; set; } = ""; public byte[] OutputLayoutFingerprint { get; set; } = []; public long? CurrentPublishedAtUtcMs { get; set; }
+    public string HistoryCaptureRequirement { get; set; } = "";
     public byte[]? OldArchiveVersionId { get; set; } public string? OldArchiveFormat { get; set; } public byte[]? OldArchiveSpecFingerprint { get; set; } public byte[]? OldIntegritySha256 { get; set; } public long? OldLength { get; set; } public long? OldPublishedAtUtcMs { get; set; } public string? OldCurrentRelativePath { get; set; }
     public string? HistoryRelativePath { get; set; } public byte[]? HistoryVerifiedIntegritySha256 { get; set; }
 }

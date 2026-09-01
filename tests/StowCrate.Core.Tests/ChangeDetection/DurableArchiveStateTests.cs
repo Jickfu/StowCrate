@@ -35,7 +35,7 @@ public sealed class DurableArchiveStateTests
         var oldCurrent = new OldCurrentFacts(oldArchive, new(PlanId, UnitId, OldId, new("unit.7z")));
         var baseline = BaselineCandidate.FromCompleteCandidate(Fingerprints());
         var verified = ArchiveVersion.Prepare(NewId, PlanId, UnitId, PortableArchiveFormat.SevenZip, Spec()).Verify(NewHash, 20);
-        var journal = PendingPublishIntent.Prepare(verified, new("unit.7z"), baseline, baseline.Fingerprints.OutputLayout, oldCurrent);
+        var journal = PendingPublishIntent.Prepare(verified, new("unit.7z"), baseline, baseline.Fingerprints.OutputLayout, oldCurrent, HistoryCaptureRequirement.Required);
         var history = new HistoryVersionPlacement(PlanId, UnitId, OldId, new("2026/unit.7z"));
 
         var persisted = journal.MarkHistoryCaptured(new(OldId, OldHash, history)).MarkCurrentPublished(DateTimeOffset.UnixEpoch);
@@ -52,7 +52,7 @@ public sealed class DurableArchiveStateTests
     {
         var verified = ArchiveVersion.Prepare(NewId, PlanId, UnitId, PortableArchiveFormat.SevenZip, Spec()).Verify(NewHash, 20);
         var old = new OldCurrentFacts(Published(OldId, OldHash), new(PlanId, UnitId, OldId, new("unit.7z")));
-        var intent = PendingPublishIntent.Prepare(verified, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(Fingerprints()), Output("layout"), old);
+        var intent = PendingPublishIntent.Prepare(verified, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(Fingerprints()), Output("layout"), old, HistoryCaptureRequirement.Required);
 
         Assert.Equal(PublishRecoveryAction.AbortOrResumeOldCurrent, PublishRecoveryDecider.Decide(intent, OldHash));
         Assert.Equal(PublishRecoveryAction.CompleteMetadataCommit, PublishRecoveryDecider.Decide(intent, NewHash));
@@ -68,7 +68,7 @@ public sealed class DurableArchiveStateTests
     {
         var old = new OldCurrentFacts(Published(OldId, OldHash), new(PlanId, UnitId, OldId, new("unit.7z")));
         var verified = ArchiveVersion.Prepare(NewId, PlanId, UnitId, PortableArchiveFormat.SevenZip, Spec()).Verify(NewHash, 20);
-        var intent = PendingPublishIntent.Prepare(verified, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(Fingerprints()), Output("layout"), old)
+        var intent = PendingPublishIntent.Prepare(verified, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(Fingerprints()), Output("layout"), old, HistoryCaptureRequirement.NotRequired)
             .MarkCurrentPublished(DateTimeOffset.UnixEpoch);
 
         var committed = DurableUnitMetadataCommit.ConfirmCommitted(intent.RebuildMetadataCommitPlan());

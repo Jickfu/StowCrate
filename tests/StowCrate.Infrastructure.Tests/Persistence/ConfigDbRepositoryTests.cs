@@ -1,4 +1,7 @@
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using StowCrate.Application.BackupPlans.Resolution;
 using StowCrate.Application.LocalState;
 using StowCrate.Core.BackupPlans;
@@ -43,6 +46,28 @@ public sealed class ConfigDbRepositoryTests
             await Assert.ThrowsAsync<LocalStateCorruptionException>(() => ConfigDbOpenCoordinator.OpenAsync(path));
         }
         finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task ExplicitV1DatabaseMigratesToV2WithoutEditingInitialMigration()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"stowcrate-v1-{Guid.NewGuid():N}.db");
+        try
+        {
+            var factory = new ConfigDbContextFactory(path);
+            await using (var context = factory.Create())
+            {
+                await context.GetService<IMigrator>().MigrateAsync("20260831085053_InitialConfigDbV1");
+                await context.Database.ExecuteSqlRawAsync("INSERT INTO DatabaseMetadata(SingletonKey,SchemaVersion,DatabaseId,DeviceId,CreatedAtUtcMs) VALUES(1,1,randomblob(16),randomblob(16),0)");
+            }
+
+            _ = await ConfigDbOpenCoordinator.OpenAsync(path);
+
+            await using var connection = new SqliteConnection($"Data Source={path};Pooling=False"); await connection.OpenAsync();
+            Assert.Equal(2L, await Scalar(connection, "SELECT SchemaVersion FROM DatabaseMetadata WHERE SingletonKey=1"));
+            Assert.Equal(1L, await Scalar(connection, "SELECT count(*) FROM pragma_table_info('PublishIntent') WHERE name='HistoryCaptureRequirement'"));
+        }
+        finally { SqliteConnection.ClearAllPools(); if (File.Exists(path)) File.Delete(path); }
     }
 
     [Fact]
@@ -183,7 +208,7 @@ public sealed class ConfigDbRepositoryTests
     private static PendingPublishIntent Intent(PlanId planId, ArchiveUnitId unitId, ArchiveVersionId versionId)
     {
         var fingerprints = Fingerprints(); var archive = ArchiveVersion.Prepare(versionId, planId, unitId, PortableArchiveFormat.SevenZip, fingerprints.ArchiveSpec).Verify(Hash("artifact"), 42);
-        return PendingPublishIntent.Prepare(archive, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(fingerprints), fingerprints.OutputLayout, null);
+        return PendingPublishIntent.Prepare(archive, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(fingerprints), fingerprints.OutputLayout, null, HistoryCaptureRequirement.NotRequired);
     }
     private static CandidateArchiveFingerprints Fingerprints() { var d = new DiagnosticFingerprint(Hash("component")); return new(1, new(1, 1, 1), true, new(Hash("entry")), new(Hash("selection")), new(Hash("spec")), new(Hash("layout")), new(Hash("semantic")), new(Hash("binding")), new(d, d, d, d, d, d, d, d)); }
     private static Sha256Digest Hash(string value) => CanonicalFingerprintEncodingV1.Encode("test", writer => writer.Utf8(1, value));

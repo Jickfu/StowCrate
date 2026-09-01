@@ -36,3 +36,7 @@
 - 必须测试 Output Reorganization 不改变 baseline ArchiveVersionId 或 ArchiveVersion row。
 
 以上 implementation verification 已在 M3.10 以真实 SQLite 测试覆盖，包括 known-vector codec、低层 schema probe、restart recovery、六个 transaction fault points、corruption fixtures、authority/unregister non-cascade 与 Output Reorganization。Review 继续 PASS，无新增 schema-shaping blocker。
+
+## M5.1 hardening addendum — schema v2
+
+结论：**PASS**。v1 journal缺少当次 History capture requirement 是durable recovery blocker，已通过独立 schema v2 migration修正，未修改 Initial v1 migration。`REQUIRED|NOT_REQUIRED|UNKNOWN_LEGACY` 是 closed durable token；v1 old-Current incomplete intent只可迁移为 `UNKNOWN_LEGACY`并进入 ambiguous recovery，不依据当前 Plan猜测。真实 SQLite v1→v2 migration、schema version、列存在性、codec round-trip和 EF pending-model-change gate均纳入测试/验证。

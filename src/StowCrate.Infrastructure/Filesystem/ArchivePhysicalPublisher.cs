@@ -5,8 +5,9 @@ using StowCrate.Core.ChangeDetection;
 
 namespace StowCrate.Infrastructure.Filesystem;
 
-public sealed class ArchivePhysicalPublisher : IArchivePhysicalPublisher
+public sealed class ArchivePhysicalPublisher(IArchivePublishMetadataDurabilityBarrier? durabilityBarrier = null) : IArchivePhysicalPublisher
 {
+    private readonly IArchivePublishMetadataDurabilityBarrier durability = durabilityBarrier ?? new PlatformArchivePublishMetadataDurabilityBarrier();
     public async Task<PhysicalArchiveObservation?> ObserveAsync(OutputRootLocalBinding root, RelativeStoragePath path, CancellationToken cancellationToken)
     {
         var physical = Resolve(root, path);
@@ -39,6 +40,7 @@ public sealed class ArchivePhysicalPublisher : IArchivePhysicalPublisher
         var observation = await CopyVerifiedAsync(source, temp, oldCurrent.ArchiveVersion.Integrity!.Value,
             oldCurrent.ArchiveVersion.Length!.Value, cancellationToken).ConfigureAwait(false);
         File.Move(temp, final, overwrite: false);
+        _ = await durability.FlushDirectoryMetadataAsync(Path.GetDirectoryName(final)!, cancellationToken).ConfigureAwait(false);
         observation = await ObserveRequiredAsync(historyRoot, historyPath, cancellationToken).ConfigureAwait(false);
         Ensure(observation, oldCurrent.ArchiveVersion.Integrity.Value, oldCurrent.ArchiveVersion.Length.Value);
         return new(oldCurrent.ArchiveVersion.PlanId, oldCurrent.ArchiveVersion.ArchiveUnitId, oldCurrent.ArchiveVersion.Id,
@@ -57,12 +59,13 @@ public sealed class ArchivePhysicalPublisher : IArchivePhysicalPublisher
         var final = Resolve(request.CurrentRoot, request.CurrentRelativePath);
         var samePath = oldCurrent?.Placement.RelativePath == request.CurrentRelativePath;
         if (!samePath && File.Exists(final)) throw new IOException("Unexpected Current target exists.");
-        // File.Move(..., overwrite:true) maps to a same-filesystem atomic rename/replace; it never creates a delete-then-move window.
+        // File.Move 提供同文件系统 namespace 原子操作；断电后的目录项 durability 由独立 barrier 证明，不能由 rename 本身推断。
         File.Move(temp, final, overwrite: samePath);
+        var metadataDurability = await durability.FlushDirectoryMetadataAsync(Path.GetDirectoryName(final)!, cancellationToken).ConfigureAwait(false);
         var observed = await ObserveRequiredAsync(request.CurrentRoot, request.CurrentRelativePath, cancellationToken).ConfigureAwait(false);
         Ensure(observed, version.Integrity.Value, version.Length.Value);
         return new(version.PlanId, version.ArchiveUnitId, version.Id, request.CurrentRelativePath,
-            version.Integrity.Value, observed.Sha256, observed.Length, DateTimeOffset.UtcNow);
+            version.Integrity.Value, observed.Sha256, observed.Length, DateTimeOffset.UtcNow, metadataDurability);
     }
 
     public async Task<bool> DeleteIfMatchesAsync(OutputRootLocalBinding root, RelativeStoragePath path, Sha256Digest expected, long length, CancellationToken cancellationToken)

@@ -69,6 +69,7 @@ public static class OutputReorganization
 }
 
 public enum PublishIntentStage { Prepared, HistoryCaptured, CurrentPublished, MetadataCommitted }
+public enum HistoryCaptureRequirement { Required, NotRequired, UnknownLegacy }
 public sealed record OldCurrentFacts(ArchiveVersion ArchiveVersion, CurrentVersion Placement);
 public sealed record HistoryCaptureProof(ArchiveVersionId ArchiveVersionId, Sha256Digest VerifiedIntegrity, HistoryVersionPlacement Placement);
 
@@ -76,11 +77,18 @@ public sealed record HistoryCaptureProof(ArchiveVersionId ArchiveVersionId, Sha2
 public sealed class PendingPublishIntent
 {
     private PendingPublishIntent(ArchiveVersion newArchive, RelativeStoragePath currentPath, BaselineCandidate baseline,
-        OutputLayoutFingerprint layout, OldCurrentFacts? oldCurrent, PublishIntentStage stage, DateTimeOffset? publishedAtUtc, HistoryCaptureProof? history)
+        OutputLayoutFingerprint layout, OldCurrentFacts? oldCurrent, HistoryCaptureRequirement historyRequirement,
+        PublishIntentStage stage, DateTimeOffset? publishedAtUtc, HistoryCaptureProof? history)
     {
         if (newArchive.Lifecycle is not ArchiveVersionLifecycle.Verified) throw new ArgumentException("Publish intent requires a Verified new archive.", nameof(newArchive));
         NewArchive = newArchive; CurrentRelativePath = currentPath; BaselineCandidate = baseline; OutputLayoutFingerprint = layout;
-        OldCurrent = oldCurrent; Stage = stage; CurrentPublishedAtUtc = publishedAtUtc?.ToUniversalTime(); HistoryCapture = history;
+        if (oldCurrent is null && historyRequirement is not HistoryCaptureRequirement.NotRequired)
+            throw new ArgumentException("A first publish cannot require or inherit History capture.", nameof(historyRequirement));
+        if (oldCurrent is not null && historyRequirement is HistoryCaptureRequirement.Required
+            && stage is (PublishIntentStage.CurrentPublished or PublishIntentStage.MetadataCommitted) && history is null)
+            throw new ArgumentException("History-required published intent lacks capture proof.", nameof(history));
+        OldCurrent = oldCurrent; HistoryRequirement = historyRequirement; Stage = stage;
+        CurrentPublishedAtUtc = publishedAtUtc?.ToUniversalTime(); HistoryCapture = history;
     }
 
     public PlanId PlanId => NewArchive.PlanId;
@@ -92,34 +100,34 @@ public sealed class PendingPublishIntent
     public BaselineCandidate BaselineCandidate { get; }
     public OutputLayoutFingerprint OutputLayoutFingerprint { get; }
     public OldCurrentFacts? OldCurrent { get; }
+    public HistoryCaptureRequirement HistoryRequirement { get; }
     public PublishIntentStage Stage { get; }
     public DateTimeOffset? CurrentPublishedAtUtc { get; }
     public HistoryCaptureProof? HistoryCapture { get; }
 
-    public static PendingPublishIntent Prepare(ArchiveVersion newArchive, RelativeStoragePath currentPath, BaselineCandidate baseline, OutputLayoutFingerprint layout, OldCurrentFacts? oldCurrent)
+    public static PendingPublishIntent Prepare(ArchiveVersion newArchive, RelativeStoragePath currentPath, BaselineCandidate baseline,
+        OutputLayoutFingerprint layout, OldCurrentFacts? oldCurrent, HistoryCaptureRequirement historyRequirement)
     {
         ArgumentNullException.ThrowIfNull(newArchive); ArgumentNullException.ThrowIfNull(baseline);
         if (newArchive.ArchiveSpecFingerprint != baseline.Fingerprints.ArchiveSpec || layout != baseline.Fingerprints.OutputLayout) throw new ArgumentException("Journal metadata must match baseline candidate.", nameof(baseline));
         if (oldCurrent is not null && (oldCurrent.ArchiveVersion.Lifecycle is not ArchiveVersionLifecycle.Published || oldCurrent.ArchiveVersion.Id != oldCurrent.Placement.ArchiveVersionId || oldCurrent.ArchiveVersion.PlanId != newArchive.PlanId || oldCurrent.ArchiveVersion.ArchiveUnitId != newArchive.ArchiveUnitId)) throw new ArgumentException("Old Current facts are inconsistent.", nameof(oldCurrent));
-        return new(newArchive, currentPath, baseline, layout, oldCurrent, PublishIntentStage.Prepared, null, null);
+        return new(newArchive, currentPath, baseline, layout, oldCurrent, historyRequirement, PublishIntentStage.Prepared, null, null);
     }
 
     public static PendingPublishIntent Restore(ArchiveVersion newArchive, RelativeStoragePath currentPath, BaselineCandidate baseline,
-        OutputLayoutFingerprint layout, OldCurrentFacts? oldCurrent, PublishIntentStage stage,
+        OutputLayoutFingerprint layout, OldCurrentFacts? oldCurrent, HistoryCaptureRequirement historyRequirement, PublishIntentStage stage,
         DateTimeOffset? currentPublishedAtUtc, HistoryCaptureProof? historyCapture)
     {
-        var intent = Prepare(newArchive, currentPath, baseline, layout, oldCurrent);
-        if (stage is PublishIntentStage.Prepared) return intent;
-        if (historyCapture is not null) intent = intent.MarkHistoryCaptured(historyCapture);
-        if (stage is PublishIntentStage.HistoryCaptured) return intent;
-        if (currentPublishedAtUtc is null) throw new InvalidOperationException("Published journal stage requires a UTC timestamp.");
-        intent = intent.MarkCurrentPublished(currentPublishedAtUtc.Value);
-        return stage is PublishIntentStage.MetadataCommitted ? intent.MarkMetadataCommitted() : intent;
+        if (stage is PublishIntentStage.Prepared && (currentPublishedAtUtc is not null || historyCapture is not null)) throw new InvalidOperationException("Prepared journal contains progress facts.");
+        if (stage is PublishIntentStage.HistoryCaptured && (currentPublishedAtUtc is not null || historyCapture is null)) throw new InvalidOperationException("HistoryCaptured journal facts are incomplete.");
+        if (stage is (PublishIntentStage.CurrentPublished or PublishIntentStage.MetadataCommitted) && currentPublishedAtUtc is null) throw new InvalidOperationException("Published journal stage requires a UTC timestamp.");
+        return new(newArchive, currentPath, baseline, layout, oldCurrent, historyRequirement, stage, currentPublishedAtUtc, historyCapture);
     }
 
     public PendingPublishIntent MarkHistoryCaptured(HistoryCaptureProof proof)
     {
         if (Stage is not PublishIntentStage.Prepared) throw new InvalidOperationException("History capture transition requires Prepared intent.");
+        if (HistoryRequirement is not HistoryCaptureRequirement.Required) throw new InvalidOperationException("This intent does not require History capture.");
         if (OldCurrent is null || proof.ArchiveVersionId != OldCurrent.ArchiveVersion.Id || proof.VerifiedIntegrity != OldCurrent.ArchiveVersion.Integrity
             || proof.Placement.ArchiveVersionId != proof.ArchiveVersionId || proof.Placement.PlanId != PlanId
             || proof.Placement.ArchiveUnitId != ArchiveUnitId) throw new InvalidOperationException("History proof does not match old Current facts.");
@@ -129,7 +137,8 @@ public sealed class PendingPublishIntent
     public PendingPublishIntent MarkCurrentPublished(DateTimeOffset publishedAtUtc)
     {
         if (Stage is not (PublishIntentStage.Prepared or PublishIntentStage.HistoryCaptured)) throw new InvalidOperationException("Current publish transition is invalid.");
-        // History Disabled 时允许 Prepared → CurrentPublished；是否必须 capture 由 Application 的 effective policy决定。
+        if (HistoryRequirement is HistoryCaptureRequirement.UnknownLegacy) throw new InvalidOperationException("Legacy History requirement must be resolved by explicit recovery.");
+        if (HistoryRequirement is HistoryCaptureRequirement.Required && HistoryCapture is null) throw new InvalidOperationException("Required History must be captured before Current publish.");
         return With(PublishIntentStage.CurrentPublished, publishedAtUtc, HistoryCapture);
     }
 
@@ -145,7 +154,7 @@ public sealed class PendingPublishIntent
             new(PlanId, ArchiveUnitId, OutputLayoutFingerprint), OldCurrent?.ArchiveVersion.Supersede(), HistoryCapture?.Placement);
     }
 
-    private PendingPublishIntent With(PublishIntentStage stage, DateTimeOffset? publishedAtUtc, HistoryCaptureProof? history) => new(NewArchive, CurrentRelativePath, BaselineCandidate, OutputLayoutFingerprint, OldCurrent, stage, publishedAtUtc, history);
+    private PendingPublishIntent With(PublishIntentStage stage, DateTimeOffset? publishedAtUtc, HistoryCaptureProof? history) => new(NewArchive, CurrentRelativePath, BaselineCandidate, OutputLayoutFingerprint, OldCurrent, HistoryRequirement, stage, publishedAtUtc, history);
 }
 
 public sealed record DurableUnitMetadataCommitPlan(PendingPublishIntent CurrentPublishedIntent, ArchiveVersion PublishedArchive,

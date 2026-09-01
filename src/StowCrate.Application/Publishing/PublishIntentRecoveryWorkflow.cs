@@ -1,6 +1,5 @@
 using StowCrate.Application.LocalState;
 using StowCrate.Core.ChangeDetection;
-using StowCrate.Core.BackupPlans;
 
 namespace StowCrate.Application.Publishing;
 
@@ -9,13 +8,7 @@ public interface IPublishIntentRecoveryCoordinator
     Task<UnitStartupRecoveryResult> RecoverAsync(PendingPublishIntent intent, DevicePlanLocalBindings bindings, CancellationToken cancellationToken);
 }
 
-public interface IRecoveryHistoryPolicyProvider
-{
-    Task<EffectiveHistoryPolicy> LoadEffectiveAsync(PlanId planId, ArchiveUnitId archiveUnitId, CancellationToken cancellationToken);
-}
-
-public sealed class PublishIntentRecoveryWorkflow(IArchiveUnitDurableStateStore durableState, IArchivePhysicalPublisher physical,
-    IRecoveryHistoryPolicyProvider historyPolicies)
+public sealed class PublishIntentRecoveryWorkflow(IArchiveUnitDurableStateStore durableState, IArchivePhysicalPublisher physical)
     : IPublishIntentRecoveryCoordinator
 {
     public async Task<UnitStartupRecoveryResult> RecoverAsync(PendingPublishIntent intent, DevicePlanLocalBindings bindings, CancellationToken cancellationToken)
@@ -24,11 +17,12 @@ public sealed class PublishIntentRecoveryWorkflow(IArchiveUnitDurableStateStore 
         var current = await physical.ObserveAsync(bindings.CurrentRoot, intent.CurrentRelativePath, cancellationToken).ConfigureAwait(false);
         if (Matches(current, intent.NewArchive))
         {
+            if (intent.HistoryRequirement is HistoryCaptureRequirement.UnknownLegacy)
+                return Ambiguous(intent, "Legacy PublishIntent does not durably record its History capture requirement.");
             var recovered = intent;
             if (recovered.Stage is PublishIntentStage.Prepared && recovered.OldCurrent is not null)
             {
-                var historyPolicy = await historyPolicies.LoadEffectiveAsync(intent.PlanId, intent.ArchiveUnitId, cancellationToken).ConfigureAwait(false);
-                if (historyPolicy is EffectiveHistoryEnabled)
+                if (recovered.HistoryRequirement is HistoryCaptureRequirement.Required)
                 {
                     if (bindings.HistoryRoot is null) return Ambiguous(intent, "Expected History proof cannot be resolved.");
                     var historyPath = HistoryPhysicalLayoutV1.Create(intent.ArchiveUnitId, recovered.OldCurrent.ArchiveVersion);
@@ -54,9 +48,10 @@ public sealed class PublishIntentRecoveryWorkflow(IArchiveUnitDurableStateStore 
         if (!oldAtAuthorityPath) return Ambiguous(intent, "Observed Current proves neither old nor expected-new authority.");
         if (intent.Stage is PublishIntentStage.CurrentPublished) return Ambiguous(intent, "Journal says Current was published but filesystem still contains old Current.");
 
+        if (intent.HistoryRequirement is HistoryCaptureRequirement.UnknownLegacy)
+            return Ambiguous(intent, "Legacy PublishIntent cannot be safely aborted without a durable History requirement.");
         var abortHistoryPath = intent.HistoryCapture?.Placement.RelativePath;
-        if (abortHistoryPath is null && intent.OldCurrent is not null
-            && await historyPolicies.LoadEffectiveAsync(intent.PlanId, intent.ArchiveUnitId, cancellationToken).ConfigureAwait(false) is EffectiveHistoryEnabled)
+        if (abortHistoryPath is null && intent.OldCurrent is not null && intent.HistoryRequirement is HistoryCaptureRequirement.Required)
             abortHistoryPath = HistoryPhysicalLayoutV1.Create(intent.ArchiveUnitId, intent.OldCurrent.ArchiveVersion);
         if (abortHistoryPath is not null)
         {

@@ -79,7 +79,14 @@ public sealed record CurrentPublishStagingProof(PlanId PlanId, ArchiveUnitId Arc
 public sealed record HistoryCapturePhysicalProof(PlanId PlanId, ArchiveUnitId ArchiveUnitId, ArchiveVersionId ArchiveVersionId,
     RelativeStoragePath RelativeStoragePath, Sha256Digest ExpectedSha256, Sha256Digest ObservedSha256, long Length);
 public sealed record CurrentPublishReceipt(PlanId PlanId, ArchiveUnitId ArchiveUnitId, ArchiveVersionId ArchiveVersionId,
-    RelativeStoragePath RelativeStoragePath, Sha256Digest ExpectedSha256, Sha256Digest ObservedSha256, long Length, DateTimeOffset PublishedAtUtc);
+    RelativeStoragePath RelativeStoragePath, Sha256Digest ExpectedSha256, Sha256Digest ObservedSha256, long Length,
+    DateTimeOffset PublishedAtUtc, PublishMetadataDurabilityProof MetadataDurability);
+public sealed record PublishMetadataDurabilityProof(bool BarrierCompleted, string PlatformPolicy);
+
+public interface IArchivePublishMetadataDurabilityBarrier
+{
+    Task<PublishMetadataDurabilityProof> FlushDirectoryMetadataAsync(string destinationDirectory, CancellationToken cancellationToken);
+}
 
 public interface IArchivePhysicalPublisher
 {
@@ -104,8 +111,11 @@ public enum ArchivePublishFailureCode
     PhysicalPublishFailed, PlanChangedDuringRun, AmbiguousPublishRecovery, MetadataCommitFailed
 }
 
+public sealed record PostCommitMaintenanceRequirement(MaintenanceKind Kind, MaintenanceStatus Status, string Detail);
+
 public sealed record ArchivePublishResult(DurableUnitMetadataCommitResult? Commit, ArchivePublishFailureCode? Failure,
-    bool SkipRetentionCleanup, ImmutableArray<string> Warnings)
+    bool SkipRetentionCleanup, ImmutableArray<string> Warnings,
+    ImmutableArray<PostCommitMaintenanceRequirement> PendingMaintenance = default)
 {
     public bool Succeeded => Commit is not null;
 }

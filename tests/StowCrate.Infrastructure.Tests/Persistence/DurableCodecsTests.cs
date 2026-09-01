@@ -39,6 +39,7 @@ public sealed class DurableCodecsTests
         foreach (var value in Enum.GetValues<PortableArchiveFormat>()) Assert.Equal(value, DurableCodecs.ArchiveFormat(DurableCodecs.Token(value)));
         foreach (var value in Enum.GetValues<ArchiveVersionLifecycle>()) Assert.Equal(value, DurableCodecs.Lifecycle(DurableCodecs.Token(value)));
         foreach (var value in Enum.GetValues<PublishIntentStage>()) Assert.Equal(value, DurableCodecs.PublishStage(DurableCodecs.Token(value)));
+        foreach (var value in Enum.GetValues<HistoryCaptureRequirement>()) Assert.Equal(value, DurableCodecs.HistoryRequirement(DurableCodecs.Token(value)));
         foreach (var value in Enum.GetValues<ScheduleInstallationStatus>()) Assert.Equal(value, DurableCodecs.ScheduleStatus(DurableCodecs.Token(value)));
         foreach (var value in Enum.GetValues<MaintenanceStatus>()) Assert.Equal(value, DurableCodecs.MaintenanceStatus(DurableCodecs.Token(value)));
         foreach (var value in Enum.GetValues<MaintenanceKind>()) Assert.Equal(value, DurableCodecs.MaintenanceKind(DurableCodecs.Token(value)));

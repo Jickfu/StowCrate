@@ -93,7 +93,7 @@ public sealed class ChangeDetectorTests
         var integrity = Digest("artifact");
         var verified = ArchiveVersion.Prepare(versionId, PlanId, UnitId, PortableArchiveFormat.SevenZip, fingerprints.ArchiveSpec).Verify(integrity, 10);
         var baseline = BaselineCandidate.FromCompleteCandidate(fingerprints);
-        var intent = PendingPublishIntent.Prepare(verified, new RelativeStoragePath("unit.7z"), baseline, fingerprints.OutputLayout, null)
+        var intent = PendingPublishIntent.Prepare(verified, new RelativeStoragePath("unit.7z"), baseline, fingerprints.OutputLayout, null, HistoryCaptureRequirement.NotRequired)
             .MarkCurrentPublished(DateTimeOffset.UnixEpoch);
         var plan = intent.RebuildMetadataCommitPlan();
         var committed = DurableUnitMetadataCommit.ConfirmCommitted(plan);

@@ -139,7 +139,7 @@ public sealed class SecretAndMaintenanceIntegrationTests
         await using var database = await MaintenanceDatabase.Create(); var service = new ConfigDatabaseMaintenanceService();
         var snapshot = Path.Combine(database.DirectoryPath, "future.snapshot.db"); await service.CreateSnapshotAsync(database.Path, snapshot, CancellationToken.None);
         await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = snapshot }.ConnectionString))
-        { await connection.OpenAsync(); await using var command = connection.CreateCommand(); command.CommandText = "UPDATE DatabaseMetadata SET SchemaVersion=2"; await command.ExecuteNonQueryAsync(); }
+        { await connection.OpenAsync(); await using var command = connection.CreateCommand(); command.CommandText = "UPDATE DatabaseMetadata SET SchemaVersion=3"; await command.ExecuteNonQueryAsync(); }
 
         var candidate = await new ConfigDatabaseRecoveryWorkflow(service, new ConfigDatabaseSessionOpener()).DiscoverValidatedCandidateAsync(snapshot, CancellationToken.None);
         Assert.Null(candidate);
@@ -150,7 +150,7 @@ public sealed class SecretAndMaintenanceIntegrationTests
         var hash = Sha256Digest.Hash("maintenance"u8); var d = new DiagnosticFingerprint(hash);
         var fingerprints = new CandidateArchiveFingerprints(1, new(1, 1, 1), true, new(hash), new(hash), new(hash), new(hash), new(hash), new(hash), new(d, d, d, d, d, d, d, d));
         var archive = ArchiveVersion.Prepare(new(Guid.NewGuid()), planId, unitId, PortableArchiveFormat.SevenZip, fingerprints.ArchiveSpec).Verify(hash, 11);
-        return PendingPublishIntent.Prepare(archive, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(fingerprints), fingerprints.OutputLayout, null);
+        return PendingPublishIntent.Prepare(archive, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(fingerprints), fingerprints.OutputLayout, null, HistoryCaptureRequirement.NotRequired);
     }
 
     public enum SecretFaultPoint { AfterCreate, AfterCommit }

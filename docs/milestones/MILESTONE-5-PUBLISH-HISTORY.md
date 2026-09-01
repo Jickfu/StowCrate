@@ -1,6 +1,6 @@
 # Milestone 5 — Physical Current / History Publish & Durable Execution
 
-## M5.1 — Physical Publish Contract + PublishIntent Execution
+## M5.1 — Physical Publish Contract + PublishIntent Execution（COMPLETE）
 
 本阶段消费 M4 `VerifiedArchiveArtifact`，在不重新扫描、生成 Candidate 或运行 Archiver 的前提下完成 destination-local staging、History capture、atomic Current publish、PublishIntent journal 与 M3 单事务 metadata commit。
 
@@ -19,5 +19,13 @@ History v1 只 copy，不使用 hardlink/reflink。copy 到 History destination-
 同路径 Current 使用原子 overwrite/replace；新路径使用原子 move，新 target 不得覆盖。旧路径仅在 metadata durable commit 后、重新验证旧 integrity 时删除。filesystem 已发布但 journal 落后的 recovery 必须以 expected-new/old integrity 和唯一 History v1 proof 推进或安全 abort；无法证明时保留 journal并返回 `AmbiguousPublishRecovery`。
 
 本阶段不实现 retention physical deletion、Output Reorganization-only、CurrentRoot/HistoryRoot relocation、scheduler/CLI/UI 或新 Archiver capability。
+
+### Completion Hardening
+
+- config.db schema v2 为每个 intent durable冻结 `HistoryCaptureRequirement = Required | NotRequired | UnknownLegacy`；recovery不再读取当前Plan解释旧事务，v1 old-Current incomplete intent迁移为UnknownLegacy并fail closed。
+- `CompleteMetadataCommitAsync` 成功是永久success point。其后忽略caller cancellation，retention marker、old-path cleanup和runtime cleanup失败只产生warning、durable maintenance OutOfSync或强类型pending maintenance requirement，不得把已提交backup重新报告为failed/cancelled。
+- Application状态机测试覆盖first/replacement、History Enabled/Disabled、same/new path、stale、retention drift、journal落后、proof重建、UnknownLegacy、safe abort、metadata fault和post-commit failure。
+- 真实filesystem fixture直接执行Current sibling staging、same-path replace、new-path move、unexpected target、corrupt temp、temp cleanup及跨runtime root copy，并由现有Windows/Linux/macOS CI matrix运行。
+- file data在rename前使用WriteThrough + flush-to-disk；rename/replace后执行platform metadata durability barrier。自动测试证明API结果和proof，不模拟真实突然断电；M5 Completion Review必须把实际power-loss保证限制在操作系统/文件系统对成功barrier的承诺内。
 
 下一项：**M5.2 — Retention Maintenance + Publish Recovery/Orphan Reconciliation**。

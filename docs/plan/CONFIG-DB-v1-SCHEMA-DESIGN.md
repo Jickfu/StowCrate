@@ -232,3 +232,16 @@ SQLite CHECK/FK 不能独立表达 UUID v4、RFC byte order、path grammar、Pla
 ## 6. M3.10 entry gate
 
 Schema Design Review 已逐项验证 blocker、durable encoding、authority、recovery completeness、atomic boundary 与 non-destructive lifecycle，结论 PASS。M3.10 已按本文生成 Initial EF Core SQLite migration并完成 repository tests。实现前唯一 schema 修正是 MaintenanceState nullable scope blocker，已先回写本文与 Review；其余 Entity/migration 未反向修改契约。
+
+## 7. config.db schema v2 — durable History capture requirement
+
+M5.1 Completion Hardening 发现 v1 `PublishIntent` 无法区分“旧 Current 本次要求 History capture”与“本次明确不要求”。恢复时重新读取当前 Plan 会用崩溃后可能已变化的配置解释旧事务，因此 schema v2 新增：
+
+```text
+PublishIntent.HistoryCaptureRequirement
+  REQUIRED | NOT_REQUIRED | UNKNOWN_LEGACY
+```
+
+新 intent 在 `BeginPublish` 前冻结：无旧 Current 为 `NOT_REQUIRED`；有旧 Current且当次 effective History Enabled 为 `REQUIRED`；有旧 Current且 Disabled 为 `NOT_REQUIRED`。recovery 只能读取该 durable fact，禁止重新读取当前 Plan 判断旧事务。
+
+v1→v2 migration 独立于 Initial v1 migration：旧 row 无旧 Current时可无歧义迁移为 `NOT_REQUIRED`；存在旧 Current的历史 row迁移为 `UNKNOWN_LEGACY`，未完成事务一律 fail closed为 `AmbiguousPublishRecovery`。已完成 intent仍可由 durability maintenance清理。`DatabaseMetadata.SchemaVersion` 同一 migration更新为2，open coordinator只允许显式1→2升级并继续拒绝未来版本。

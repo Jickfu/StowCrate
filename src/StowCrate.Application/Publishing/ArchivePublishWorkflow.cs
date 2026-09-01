@@ -6,7 +6,7 @@ using StowCrate.Core.ChangeDetection;
 namespace StowCrate.Application.Publishing;
 
 public sealed class ArchivePublishWorkflow(IArchiveUnitDurableStateStore durableState, IArchivePhysicalPublisher physical,
-    ICurrentExecutionSemanticSnapshotProvider snapshots, IMaintenanceStateStore? maintenance = null)
+    ICurrentExecutionSemanticSnapshotProvider snapshots, IMaintenanceStateStore maintenance)
 {
     public async Task<ArchivePublishResult> PublishAsync(ArchivePublishRequest request, CancellationToken cancellationToken)
     {
@@ -36,7 +36,10 @@ public sealed class ArchivePublishWorkflow(IArchiveUnitDurableStateStore durable
         try { staging = await physical.StageCurrentAsync(request, cancellationToken).ConfigureAwait(false); }
         catch (Exception ex) { return Failed(ArchivePublishFailureCode.PhysicalPublishFailed, ex.Message); }
 
-        var intent = PendingPublishIntent.Prepare(version, request.CurrentRelativePath, request.BaselineCandidate, request.OutputLayoutFingerprint, old);
+        var historyRequirement = old is not null && request.HistoryPolicy is EffectiveHistoryEnabled
+            ? HistoryCaptureRequirement.Required : HistoryCaptureRequirement.NotRequired;
+        var intent = PendingPublishIntent.Prepare(version, request.CurrentRelativePath, request.BaselineCandidate,
+            request.OutputLayoutFingerprint, old, historyRequirement);
         await durableState.BeginPublishAsync(intent, cancellationToken).ConfigureAwait(false);
 
         if (old is not null && request.HistoryPolicy is EffectiveHistoryEnabled)
@@ -74,23 +77,50 @@ public sealed class ArchivePublishWorkflow(IArchiveUnitDurableStateStore durable
         catch (Exception ex) { return Failed(ArchivePublishFailureCode.MetadataCommitFailed, ex.Message); }
 
         var warnings = new List<string>();
-        if (revalidation.HistoryMaintenanceOutOfSync && maintenance is not null)
-            await maintenance.SaveAsync(new(version.PlanId, version.ArchiveUnitId, MaintenanceKind.HistoryRetention,
-                MaintenanceStatus.OutOfSync, "Retention policy changed during publish; cleanup was skipped.", DateTimeOffset.UtcNow), cancellationToken).ConfigureAwait(false);
+        var pendingMaintenance = new List<PostCommitMaintenanceRequirement>();
+        // metadata commit 是不可逆成功点；其后只使用独立 token，并把所有失败降级为可恢复 warning。
+        var postCommitToken = CancellationToken.None;
+        if (revalidation.HistoryMaintenanceOutOfSync)
+        {
+            try
+            {
+                await maintenance.SaveAsync(new(version.PlanId, version.ArchiveUnitId, MaintenanceKind.HistoryRetention,
+                    MaintenanceStatus.OutOfSync, "Retention policy changed during publish; cleanup was skipped.", DateTimeOffset.UtcNow), postCommitToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                const string detail = "Retention policy changed during publish; cleanup was skipped.";
+                warnings.Add($"History retention maintenance marker failed: {ex.Message}");
+                pendingMaintenance.Add(new(MaintenanceKind.HistoryRetention, MaintenanceStatus.OutOfSync, detail));
+            }
+        }
         if (old is not null && old.Placement.RelativePath != request.CurrentRelativePath)
         {
-            var removed = await physical.DeleteIfMatchesAsync(request.CurrentRoot, old.Placement.RelativePath,
-                old.ArchiveVersion.Integrity!.Value, old.ArchiveVersion.Length!.Value, cancellationToken).ConfigureAwait(false);
+            bool removed;
+            try
+            {
+                removed = await physical.DeleteIfMatchesAsync(request.CurrentRoot, old.Placement.RelativePath,
+                    old.ArchiveVersion.Integrity!.Value, old.ArchiveVersion.Length!.Value, postCommitToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) { removed = false; warnings.Add($"Old Current path cleanup failed: {ex.Message}"); }
             if (!removed)
             {
                 warnings.Add("Old Current path cleanup is out of sync.");
-                if (maintenance is not null) await maintenance.SaveAsync(new(version.PlanId, version.ArchiveUnitId,
-                    MaintenanceKind.OldCurrentPathCleanup, MaintenanceStatus.OutOfSync, warnings[^1], DateTimeOffset.UtcNow), cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await maintenance.SaveAsync(new(version.PlanId, version.ArchiveUnitId,
+                        MaintenanceKind.OldCurrentPathCleanup, MaintenanceStatus.OutOfSync, warnings[^1], DateTimeOffset.UtcNow), postCommitToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    warnings.Add($"Old Current cleanup maintenance marker failed: {ex.Message}");
+                    pendingMaintenance.Add(new(MaintenanceKind.OldCurrentPathCleanup, MaintenanceStatus.OutOfSync, warnings[^2]));
+                }
             }
         }
-        try { await physical.CleanupRuntimeArtifactAsync(request.Artifact.PartialArtifactPath, cancellationToken).ConfigureAwait(false); }
+        try { await physical.CleanupRuntimeArtifactAsync(request.Artifact.PartialArtifactPath, postCommitToken).ConfigureAwait(false); }
         catch (Exception ex) { warnings.Add($"Runtime artifact cleanup failed: {ex.Message}"); }
-        return new(committed, null, revalidation.SkipRetentionCleanup, [.. warnings]);
+        return new(committed, null, revalidation.SkipRetentionCleanup, [.. warnings], [.. pendingMaintenance]);
     }
 
     private static ArchivePublishResult Failed(ArchivePublishFailureCode code, string warning) => new(null, code, false, [warning]);
