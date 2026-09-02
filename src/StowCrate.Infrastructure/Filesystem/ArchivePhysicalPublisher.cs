@@ -96,11 +96,19 @@ public sealed class ArchivePhysicalPublisher : IArchivePhysicalPublisher, IHisto
         RetentionDeletionIntent intent, CancellationToken cancellationToken)
     {
         var path = Resolve(historyRoot, intent.HistoryRelativePath); var parent = Path.GetDirectoryName(path)!;
-        try { ValidateOrdinaryAncestors(historyRoot, intent.HistoryRelativePath); }
+        NativeFileType.FileIdentity rootIdentity;
+        try { rootIdentity = ValidateTrustedNamespace(historyRoot, intent.HistoryRelativePath); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new(HistoryDeletionPhysicalStatus.UnsupportedObject, ex.Message); }
         if (!PathEntryExists(path))
         {
-            try { _ = await durability.FlushDirectoryMetadataAsync(parent, cancellationToken).ConfigureAwait(false); return new(HistoryDeletionPhysicalStatus.AlreadyAbsentDurably); }
+            try
+            {
+                _ = await durability.FlushDirectoryMetadataAsync(parent, cancellationToken).ConfigureAwait(false);
+                ValidateTrustedNamespace(historyRoot, intent.HistoryRelativePath, rootIdentity);
+                return PathEntryExists(path)
+                    ? new(HistoryDeletionPhysicalStatus.Mismatch, "History artifact appeared during absence verification.")
+                    : new(HistoryDeletionPhysicalStatus.AlreadyAbsentDurably);
+            }
             catch (Exception ex) { return new(HistoryDeletionPhysicalStatus.Failed, ex.Message); }
         }
         FileInfo info;
@@ -119,7 +127,7 @@ public sealed class ArchivePhysicalPublisher : IArchivePhysicalPublisher, IHisto
         try
         {
             // 再次逐级检查 namespace 并比较 native identity，检测同步工具常见的 rename/replace 漂移；不声称抵御主动 hostile race。
-            ValidateOrdinaryAncestors(historyRoot, intent.HistoryRelativePath);
+            ValidateTrustedNamespace(historyRoot, intent.HistoryRelativePath, rootIdentity);
             if (NativeFileType.GetIdentityNoFollow(path) != identity)
                 return new(HistoryDeletionPhysicalStatus.Mismatch, "History artifact identity changed during destructive verification.");
         }
@@ -131,8 +139,16 @@ public sealed class ArchivePhysicalPublisher : IArchivePhysicalPublisher, IHisto
 
     public async Task<bool> ConfirmAbsentDurablyAsync(OutputRootLocalBinding historyRoot, RetentionDeletionIntent intent, CancellationToken cancellationToken)
     {
-        var path = Resolve(historyRoot, intent.HistoryRelativePath); if (PathEntryExists(path)) return false;
-        var proof = await durability.FlushDirectoryMetadataAsync(Path.GetDirectoryName(path)!, cancellationToken).ConfigureAwait(false); return proof.BarrierCompleted;
+        var path = Resolve(historyRoot, intent.HistoryRelativePath);
+        try
+        {
+            var rootIdentity = ValidateTrustedNamespace(historyRoot, intent.HistoryRelativePath);
+            if (PathEntryExists(path)) return false;
+            var proof = await durability.FlushDirectoryMetadataAsync(Path.GetDirectoryName(path)!, cancellationToken).ConfigureAwait(false);
+            ValidateTrustedNamespace(historyRoot, intent.HistoryRelativePath, rootIdentity);
+            return proof.BarrierCompleted && !PathEntryExists(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
     }
 
     public async Task<System.Collections.Immutable.ImmutableArray<HistoryInventoryPhysicalEntry>> InventoryManagedNamespaceAsync(
@@ -193,9 +209,16 @@ public sealed class ArchivePhysicalPublisher : IArchivePhysicalPublisher, IHisto
         catch (DirectoryNotFoundException) { return false; }
     }
 
-    private static void ValidateOrdinaryAncestors(OutputRootLocalBinding root, RelativeStoragePath relativePath)
+    private static NativeFileType.FileIdentity ValidateTrustedNamespace(OutputRootLocalBinding root, RelativeStoragePath relativePath,
+        NativeFileType.FileIdentity? expectedRootIdentity = null)
     {
         var current = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root.CanonicalPath));
+        var rootAttributes = File.GetAttributes(current);
+        if ((rootAttributes & FileAttributes.Directory) == 0 || (rootAttributes & (FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
+            throw new IOException("HistoryRoot is not an ordinary directory.");
+        var rootIdentity = NativeFileType.GetIdentityNoFollow(current);
+        if (expectedRootIdentity is not null && rootIdentity != expectedRootIdentity.Value)
+            throw new IOException("HistoryRoot identity changed during destructive verification.");
         var segments = relativePath.Value.Split('/');
         for (var index = 0; index < segments.Length - 1; index++)
         {
@@ -204,6 +227,7 @@ public sealed class ArchivePhysicalPublisher : IArchivePhysicalPublisher, IHisto
             if ((attributes & FileAttributes.Directory) == 0 || (attributes & (FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
                 throw new IOException($"History ancestor is not an ordinary directory: {segments[index]}");
         }
+        return rootIdentity;
     }
 
     private static async Task<PhysicalArchiveObservation> CopyVerifiedAsync(string source, string destination, Sha256Digest expected, long length, CancellationToken cancellationToken)

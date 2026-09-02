@@ -203,6 +203,24 @@ public sealed class ConfigDbWorkflowIntegrationTests
         Assert.Empty((await database.Repository.LoadAsync(plan.Id, unit.Id, CancellationToken.None))!.History);
         Assert.Equal(ArchiveVersionLifecycle.Superseded, victim.Archive.Lifecycle);
         Assert.Equal(RetentionDeletionStage.Completed, Assert.Single(await database.Repository.ListDeletionIntentsAsync(true, CancellationToken.None)).Stage);
+
+        var factory = new ConfigDbContextFactory(database.Path);
+        await using (var context = factory.Create())
+        {
+            context.HistoryVersionPlacements.Add(new()
+            {
+                ArchiveVersionId = DurableCodecs.Uuid(victim.Archive.Id.Value),
+                PlanId = DurableCodecs.Uuid(plan.Id.Value),
+                ArchiveUnitId = DurableCodecs.Uuid(unit.Id.Value),
+                HistoryRelativePath = victim.Placement.RelativePath.Value
+            });
+            await context.SaveChangesAsync();
+        }
+
+        await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => database.Repository.CompactCompletedDeletionIntentsAsync(
+            [victim.Archive.Id], CancellationToken.None));
+        Assert.Equal(RetentionDeletionStage.Completed,
+            Assert.Single(await database.Repository.ListDeletionIntentsAsync(true, CancellationToken.None)).Stage);
     }
 
     [Fact]

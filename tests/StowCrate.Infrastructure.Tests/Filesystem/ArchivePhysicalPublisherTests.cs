@@ -163,6 +163,63 @@ public sealed class ArchivePhysicalPublisherTests
     }
 
     [Fact]
+    public async Task RetentionDeleteRejectsHistoryRootLinkAndAbsenceProofFailsClosed()
+    {
+        var container = Directory.CreateTempSubdirectory("stowcrate-retention-root-link-");
+        try
+        {
+            var outside = Directory.CreateDirectory(Path.Combine(container.FullName, "outside"));
+            var bytes = "expected"u8.ToArray();
+            var relative = new RelativeStoragePath("history-v1/unit/version.7z");
+            var outsideFile = Path.Combine(outside.FullName, relative.Value.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(outsideFile)!); await File.WriteAllBytesAsync(outsideFile, bytes);
+            var rootLink = Path.Combine(container.FullName, "history-root");
+            try { Directory.CreateSymbolicLink(rootLink, outside.FullName); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or PlatformNotSupportedException) { return; }
+            var intent = new RetentionDeletionIntent(new(Guid.NewGuid()), Plan, Unit, new(Guid.NewGuid()), RetentionDeletionStage.Prepared,
+                relative, Sha256Digest.Hash(bytes), bytes.Length, 1, 1, DateTimeOffset.UtcNow);
+            var publisher = new ArchivePhysicalPublisher(new SuccessfulBarrier());
+
+            var result = await publisher.DeleteDurablyIfMatchesAsync(Root(rootLink), intent, CancellationToken.None);
+
+            Assert.Equal(HistoryDeletionPhysicalStatus.UnsupportedObject, result.Status);
+            Assert.False(await publisher.ConfirmAbsentDurablyAsync(Root(rootLink), intent with
+            {
+                Stage = RetentionDeletionStage.Completed,
+                CompletedAtUtc = DateTimeOffset.UtcNow,
+                HistoryRelativePath = new("history-v1/unit/absent.7z")
+            }, CancellationToken.None));
+            Assert.True(File.Exists(outsideFile));
+        }
+        finally { container.Delete(true); }
+    }
+
+    [Fact]
+    public async Task RetentionDeleteFailsClosedWhenHistoryRootIdentityChanges()
+    {
+        var container = Directory.CreateTempSubdirectory("stowcrate-retention-root-race-");
+        try
+        {
+            var rootPath = Path.Combine(container.FullName, "history-root");
+            var parkedPath = Path.Combine(container.FullName, "parked-root");
+            Directory.CreateDirectory(rootPath);
+            var bytes = "expected"u8.ToArray(); var relative = new RelativeStoragePath("history-v1/unit/version.7z");
+            var full = Path.Combine(rootPath, relative.Value.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!); await File.WriteAllBytesAsync(full, bytes);
+            var intent = new RetentionDeletionIntent(new(Guid.NewGuid()), Plan, Unit, new(Guid.NewGuid()), RetentionDeletionStage.Prepared,
+                relative, Sha256Digest.Hash(bytes), bytes.Length, 1, 1, DateTimeOffset.UtcNow);
+
+            var result = await new ArchivePhysicalPublisher(new SuccessfulBarrier(),
+                    new ReplaceRootBeforeIdentityCheck(rootPath, parkedPath, relative, bytes))
+                .DeleteDurablyIfMatchesAsync(Root(rootPath), intent, CancellationToken.None);
+
+            Assert.Equal(HistoryDeletionPhysicalStatus.Mismatch, result.Status);
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(full));
+        }
+        finally { container.Delete(true); }
+    }
+
+    [Fact]
     public async Task HistoryInventoryReadsOnlyManagedNamespaceAndReportsUnknownContent()
     {
         var root = Directory.CreateTempSubdirectory("stowcrate-history-inventory-");
@@ -284,6 +341,17 @@ public sealed class ArchivePhysicalPublisherTests
     private sealed class ReplaceBeforeIdentityCheck(string replacement) : IHistoryDeletionTestHook
     {
         public void BeforeFinalIdentityCheck(string path) { File.Delete(path); File.Move(replacement, path); }
+    }
+    private sealed class ReplaceRootBeforeIdentityCheck(string rootPath, string parkedPath, RelativeStoragePath relativePath, byte[] bytes)
+        : IHistoryDeletionTestHook
+    {
+        public void BeforeFinalIdentityCheck(string path)
+        {
+            Directory.Move(rootPath, parkedPath);
+            var replacement = Path.Combine(rootPath, relativePath.Value.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(replacement)!);
+            File.WriteAllBytes(replacement, bytes);
+        }
     }
 
     private static OutputRootLocalBinding Root(string path) => new(path, path, true);

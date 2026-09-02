@@ -435,7 +435,10 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
         if (confirmedAbsentVersions.Count == 0) return 0; await using var db = factory.Create(); await using var tx = await db.Database.BeginTransactionAsync(cancellationToken); var deleted = 0;
         foreach (var version in confirmedAbsentVersions)
         {
-            var id = DurableCodecs.Uuid(version.Value); var changed = await db.RetentionDeletionIntents.Where(x => x.ArchiveVersionId == id && x.Stage == "COMPLETED").ExecuteDeleteAsync(cancellationToken);
+            var id = DurableCodecs.Uuid(version.Value);
+            if (await db.HistoryVersionPlacements.AnyAsync(x => x.ArchiveVersionId == id, cancellationToken))
+                throw new LocalStateConcurrencyException("Completed retention intent still has a History placement and cannot be compacted.");
+            var changed = await db.RetentionDeletionIntents.Where(x => x.ArchiveVersionId == id && x.Stage == "COMPLETED").ExecuteDeleteAsync(cancellationToken);
             if (changed != 1) throw new LocalStateConcurrencyException("Completed retention intent changed before compaction."); deleted += changed;
         }
         await tx.CommitAsync(cancellationToken); return deleted;

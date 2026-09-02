@@ -21,6 +21,7 @@ internal static class NativeFileType
     private const uint ShareReadWriteDelete = 0x00000007;
     private const uint OpenExisting = 3;
     private const uint FileFlagOpenReparsePoint = 0x00200000;
+    private const uint FileFlagBackupSemantics = 0x02000000;
     private static readonly IntPtr InvalidHandleValue = new(-1);
 
     public static FileSystemEntryKind GetEntryKind(string path, bool isDirectory)
@@ -78,7 +79,9 @@ internal static class NativeFileType
     {
         if (OperatingSystem.IsWindows())
         {
-            using var handle = CreateFile(path, GenericRead, ShareReadWriteDelete, IntPtr.Zero, OpenExisting, FileFlagOpenReparsePoint, IntPtr.Zero);
+            // FILE_FLAG_BACKUP_SEMANTICS 使同一 no-follow identity primitive 同时覆盖普通文件与目录。
+            using var handle = CreateFile(path, GenericRead, ShareReadWriteDelete, IntPtr.Zero, OpenExisting,
+                FileFlagOpenReparsePoint | FileFlagBackupSemantics, IntPtr.Zero);
             if (handle.IsInvalid) throw new IOException($"无法打开文件系统对象 identity：{path}", Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()));
             if (!GetFileInformationByHandle(handle, out var information))
                 throw new IOException($"无法读取文件系统对象 identity：{path}", Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()));
