@@ -5,7 +5,7 @@ using StowCrate.Core.ChangeDetection;
 
 namespace StowCrate.Infrastructure.Filesystem;
 
-public sealed class ArchivePhysicalPublisher(IArchivePublishMetadataDurabilityBarrier? durabilityBarrier = null) : IArchivePhysicalPublisher
+public sealed class ArchivePhysicalPublisher(IArchivePublishMetadataDurabilityBarrier? durabilityBarrier = null) : IArchivePhysicalPublisher, IHistoryArtifactDeletionStore
 {
     private readonly IArchivePublishMetadataDurabilityBarrier durability = durabilityBarrier ?? new PlatformArchivePublishMetadataDurabilityBarrier();
     public async Task<PhysicalArchiveObservation?> ObserveAsync(OutputRootLocalBinding root, RelativeStoragePath path, CancellationToken cancellationToken)
@@ -81,6 +81,46 @@ public sealed class ArchivePhysicalPublisher(IArchivePublishMetadataDurabilityBa
         cancellationToken.ThrowIfCancellationRequested();
         if (File.Exists(path)) File.Delete(path);
         return Task.CompletedTask;
+    }
+
+    public async Task<HistoryDeletionPhysicalResult> DeleteDurablyIfMatchesAsync(OutputRootLocalBinding historyRoot,
+        RetentionDeletionIntent intent, CancellationToken cancellationToken)
+    {
+        var path = Resolve(historyRoot, intent.HistoryRelativePath); var parent = Path.GetDirectoryName(path)!;
+        if (!PathEntryExists(path))
+        {
+            try { _ = await durability.FlushDirectoryMetadataAsync(parent, cancellationToken).ConfigureAwait(false); return new(HistoryDeletionPhysicalStatus.AlreadyAbsentDurably); }
+            catch (Exception ex) { return new(HistoryDeletionPhysicalStatus.Failed, ex.Message); }
+        }
+        FileInfo info;
+        try { info = new(path); info.Refresh(); if ((info.Attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory | FileAttributes.Device)) != 0 || info.LinkTarget is not null) return new(HistoryDeletionPhysicalStatus.UnsupportedObject, "Expected History path is a link, directory, or special object."); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new(HistoryDeletionPhysicalStatus.Failed, ex.Message); }
+        var first = await HashAsync(path, cancellationToken).ConfigureAwait(false);
+        if (first.Hash != intent.ExpectedIntegrity || first.Length != intent.ExpectedLength) return new(HistoryDeletionPhysicalStatus.Mismatch, "History artifact integrity mismatch.");
+        info.Refresh();
+        if (!info.Exists || info.Length != first.Length || (info.Attributes & FileAttributes.ReparsePoint) != 0) return new(HistoryDeletionPhysicalStatus.Mismatch, "History artifact changed during destructive verification.");
+        var second = await HashAsync(path, cancellationToken).ConfigureAwait(false);
+        if (second != first) return new(HistoryDeletionPhysicalStatus.Mismatch, "History artifact changed during destructive verification.");
+        try { File.Delete(path); _ = await durability.FlushDirectoryMetadataAsync(parent, cancellationToken).ConfigureAwait(false); return new(HistoryDeletionPhysicalStatus.DeletedDurably); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new(HistoryDeletionPhysicalStatus.Failed, ex.Message); }
+    }
+
+    public async Task<bool> ConfirmAbsentDurablyAsync(OutputRootLocalBinding historyRoot, RetentionDeletionIntent intent, CancellationToken cancellationToken)
+    {
+        var path = Resolve(historyRoot, intent.HistoryRelativePath); if (PathEntryExists(path)) return false;
+        var proof = await durability.FlushDirectoryMetadataAsync(Path.GetDirectoryName(path)!, cancellationToken).ConfigureAwait(false); return proof.BarrierCompleted;
+    }
+
+    private static bool PathEntryExists(string path)
+    {
+        try
+        {
+            // File.Exists 会把断链符号链接报告为不存在；保留目录项本身，避免把未知对象当作已完成删除。
+            _ = File.GetAttributes(path);
+            return true;
+        }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
     }
 
     private static async Task<PhysicalArchiveObservation> CopyVerifiedAsync(string source, string destination, Sha256Digest expected, long length, CancellationToken cancellationToken)

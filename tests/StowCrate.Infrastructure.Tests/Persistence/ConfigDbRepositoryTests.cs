@@ -49,7 +49,7 @@ public sealed class ConfigDbRepositoryTests
     }
 
     [Fact]
-    public async Task ExplicitV1DatabaseMigratesToV2WithoutEditingInitialMigration()
+    public async Task ExplicitV1DatabaseMigratesThroughV2ToV3WithoutEditingOldMigrations()
     {
         var path = Path.Combine(Path.GetTempPath(), $"stowcrate-v1-{Guid.NewGuid():N}.db");
         try
@@ -64,7 +64,8 @@ public sealed class ConfigDbRepositoryTests
             _ = await ConfigDbOpenCoordinator.OpenAsync(path);
 
             await using var connection = new SqliteConnection($"Data Source={path};Pooling=False"); await connection.OpenAsync();
-            Assert.Equal(2L, await Scalar(connection, "SELECT SchemaVersion FROM DatabaseMetadata WHERE SingletonKey=1"));
+            Assert.Equal(3L, await Scalar(connection, "SELECT SchemaVersion FROM DatabaseMetadata WHERE SingletonKey=1"));
+            Assert.Equal(1L, await Scalar(connection, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='RetentionDeletionIntent'"));
             Assert.Equal(1L, await Scalar(connection, "SELECT count(*) FROM pragma_table_info('PublishIntent') WHERE name='HistoryCaptureRequirement'"));
         }
         finally { SqliteConnection.ClearAllPools(); if (File.Exists(path)) File.Delete(path); }

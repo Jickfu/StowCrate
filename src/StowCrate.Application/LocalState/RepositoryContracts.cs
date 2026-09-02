@@ -92,7 +92,8 @@ public sealed record ConfigDatabaseSession(
     IPlanRegistrationStore Plans,
     IDevicePlanBindingStore Bindings,
     ISecretBindingMetadataStore Secrets,
-    IArchiveUnitDurableStateStore ArchiveUnits);
+    IArchiveUnitDurableStateStore ArchiveUnits,
+    IHistoryRetentionDurableStore HistoryRetention);
 
 public interface IConfigDatabaseSessionOpener
 {
@@ -118,4 +119,29 @@ public interface IMaintenanceStateStore
 {
     Task<ImmutableArray<MaintenanceState>> ListPendingAsync(PlanId planId, CancellationToken cancellationToken);
     Task SaveAsync(MaintenanceState state, CancellationToken cancellationToken);
+}
+
+public readonly record struct RetentionSelectionId
+{
+    public RetentionSelectionId(Guid value) { if (value == Guid.Empty) throw new ArgumentException("RetentionSelectionId must not be empty.", nameof(value)); Value = value; }
+    public Guid Value { get; }
+}
+
+public enum RetentionDeletionStage { Prepared, Completed }
+public sealed record HistoryRetentionEntry(ArchiveVersion Archive, HistoryVersionPlacement Placement);
+public sealed record HistoryRetentionSnapshot(PlanId PlanId, ArchiveUnitId ArchiveUnitId, ImmutableArray<HistoryRetentionEntry> Entries);
+public sealed record RetentionDeletionIntent(
+    RetentionSelectionId SelectionId, PlanId PlanId, ArchiveUnitId ArchiveUnitId, ArchiveVersionId ArchiveVersionId,
+    RetentionDeletionStage Stage, RelativeStoragePath HistoryRelativePath, Sha256Digest ExpectedIntegrity, long ExpectedLength,
+    int RetentionSemanticsVersion, int KeepLastVersionsCount, DateTimeOffset SelectedAtUtc, DateTimeOffset? CompletedAtUtc = null);
+
+/// <summary>History retention 选择与逐制品删除完成都通过事务形状端口提交，禁止暴露表级 CRUD。</summary>
+public interface IHistoryRetentionDurableStore
+{
+    Task<HistoryRetentionSnapshot> LoadRetentionSnapshotAsync(PlanId planId, ArchiveUnitId archiveUnitId, CancellationToken cancellationToken);
+    Task BeginDeletionIntentsAsync(RetentionSelectionId selectionId, PlanId planId, ArchiveUnitId archiveUnitId,
+        int keepLastVersionsCount, IReadOnlyCollection<HistoryRetentionEntry> victims, CancellationToken cancellationToken);
+    Task<ImmutableArray<RetentionDeletionIntent>> ListDeletionIntentsAsync(bool includeCompleted, CancellationToken cancellationToken);
+    Task CompleteDeletionAsync(RetentionDeletionIntent intent, DateTimeOffset completedAtUtc, CancellationToken cancellationToken);
+    Task<int> CompactCompletedDeletionIntentsAsync(IReadOnlyCollection<ArchiveVersionId> confirmedAbsentVersions, CancellationToken cancellationToken);
 }

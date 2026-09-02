@@ -21,6 +21,7 @@ public sealed class ConfigDbContext(DbContextOptions<ConfigDbContext> options) :
     internal DbSet<PublishIntentBaselineEntity> PublishIntentBaselines => Set<PublishIntentBaselineEntity>();
     internal DbSet<ScheduleInstallationEntity> ScheduleInstallations => Set<ScheduleInstallationEntity>();
     internal DbSet<MaintenanceStateEntity> MaintenanceStates => Set<MaintenanceStateEntity>();
+    internal DbSet<RetentionDeletionIntentEntity> RetentionDeletionIntents => Set<RetentionDeletionIntentEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -86,6 +87,17 @@ public sealed class ConfigDbContext(DbContextOptions<ConfigDbContext> options) :
         });
         intent.HasKey(x => new { x.PlanId, x.ArchiveUnitId }); intent.HasIndex(x => x.NewArchiveVersionId).IsUnique(); intent.HasOne<PlanRegistrationEntity>().WithMany().HasForeignKey(x => x.PlanId).OnDelete(DeleteBehavior.Restrict);
         var payload = model.Entity<PublishIntentBaselineEntity>(); payload.ToTable("PublishIntentBaseline", table => table.HasCheckConstraint("CK_PublishIntentBaseline_Digests", BaselineDigestCheck() + " AND length(OutputLayoutFingerprint)=32 AND length(ExecutionSemanticFingerprint)=32 AND length(ExecutionBindingFingerprint)=32")); payload.HasKey(x => new { x.PlanId, x.ArchiveUnitId }); payload.HasOne<PublishIntentEntity>().WithOne().HasForeignKey<PublishIntentBaselineEntity>(x => new { x.PlanId, x.ArchiveUnitId }).OnDelete(DeleteBehavior.Restrict);
+
+        var deletion = model.Entity<RetentionDeletionIntentEntity>();
+        deletion.ToTable("RetentionDeletionIntent", table =>
+        {
+            table.HasCheckConstraint("CK_RetentionDeletionIntent_Ids", "length(ArchiveVersionId)=16 AND length(PlanId)=16 AND length(ArchiveUnitId)=16 AND length(SelectionId)=16");
+            table.HasCheckConstraint("CK_RetentionDeletionIntent_Digest", "length(ExpectedIntegritySha256)=32");
+            table.HasCheckConstraint("CK_RetentionDeletionIntent_Stage", "Stage IN ('PREPARED','COMPLETED')");
+            table.HasCheckConstraint("CK_RetentionDeletionIntent_Facts", "ExpectedLength>=0 AND RetentionSemanticsVersion=1 AND KeepLastVersionsCount>=1 AND ((Stage='PREPARED' AND CompletedAtUtcMs IS NULL) OR (Stage='COMPLETED' AND CompletedAtUtcMs IS NOT NULL))");
+        });
+        deletion.HasKey(x => x.ArchiveVersionId); deletion.HasIndex(x => x.SelectionId);
+        deletion.HasOne<ArchiveVersionEntity>().WithMany().HasForeignKey(x => new { x.PlanId, x.ArchiveUnitId, x.ArchiveVersionId }).HasPrincipalKey(x => new { x.PlanId, x.ArchiveUnitId, x.ArchiveVersionId }).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureLocalState(ModelBuilder model)

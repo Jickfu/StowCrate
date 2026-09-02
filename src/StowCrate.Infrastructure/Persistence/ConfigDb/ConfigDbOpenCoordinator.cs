@@ -9,7 +9,7 @@ namespace StowCrate.Infrastructure.Persistence.ConfigDb;
 
 public sealed class ConfigDbOpenCoordinator
 {
-    public const int SupportedSchemaVersion = 2;
+    public const int SupportedSchemaVersion = 3;
 
     public static async Task<ConfigDbRepository> OpenAsync(string databasePath, Guid? newDatabaseId = null, DeviceId? newDeviceId = null, CancellationToken cancellationToken = default)
     {
@@ -57,7 +57,7 @@ public sealed class ConfigDbOpenCoordinator
             var versionValue = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
             if (versionValue is not long version || version < 1) throw new LocalStateCorruptionException("DatabaseMetadata.SchemaVersion is missing or invalid.");
             if (version > SupportedSchemaVersion) throw new UnsupportedConfigDatabaseVersionException(checked((int)version));
-            if (version is not (1 or SupportedSchemaVersion)) throw new LocalStateCorruptionException($"Config database schema version {version} requires an explicit supported migration path.");
+            if (version < 1 || version > SupportedSchemaVersion) throw new LocalStateCorruptionException($"Config database schema version {version} requires an explicit supported migration path.");
 
             command.CommandText = "SELECT DatabaseId,DeviceId,CreatedAtUtcMs FROM DatabaseMetadata WHERE SingletonKey=1";
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);

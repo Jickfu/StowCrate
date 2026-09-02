@@ -29,3 +29,15 @@ History v1 只 copy，不使用 hardlink/reflink。copy 到 History destination-
 - file data在rename前使用WriteThrough + flush-to-disk；rename/replace后执行platform metadata durability barrier。自动测试证明API结果和proof，不模拟真实突然断电；M5 Completion Review必须把实际power-loss保证限制在操作系统/文件系统对成功barrier的承诺内。
 
 下一项：**M5.2 — Retention Maintenance + Publish Recovery/Orphan Reconciliation**。
+
+## M5.2 — Retention Maintenance + Publish Recovery/Orphan Reconciliation（IMPLEMENTED / REVIEW PENDING）
+
+Retention v1 只自动执行 `KeepLastVersions(N)`，`Disabled` 与 `KeepAll` 均不产生新删除授权；Purge 不在本阶段。候选只来自 active `HistoryVersionPlacement` 与同 identity 的 `SUPERSEDED ArchiveVersion`，Current 在结构上不可能成为 victim。时间顺序固定为 `(PublishedAtUtcMs ASC, ArchiveVersionId RFC-4122/network bytes ASC)`，保留末尾 N 个。
+
+每个 victim 必须先进入 config.db v3 `RetentionDeletionIntent(PREPARED)`。一次选择的全部 intent 在同一 SQLite 事务中重验并全有或全无地写入；intent 冻结 path、SHA-256、length、selection、语义版本及当时的 KeepLastVersions count，后续 Plan 漂移不得撤销或重新解释该授权。
+
+物理删除只接受 no-follow ordinary file。实现必须在删除前验证 identity/integrity 并检测正常替换竞态；删除后完成 parent-directory metadata durability barrier，才允许在单一 SQLite 事务中删除 `HistoryVersionPlacement` 并把 intent 标为 `COMPLETED`。`ArchiveVersion` 作为不可变历史事实永久保留。单个 destructive work 开始后忽略 caller cancellation，直到形成可恢复稳定状态；不同 victim 之间可以取消。
+
+Recovery 只依赖 intent 与物理事实。`PREPARED + matching/absent` 可重试删除或完成 metadata；mismatch、link、special 或 placement conflict 均保留 artifact、placement 与 intent并标记 OutOfSync。`COMPLETED` intent 暂留作 reconciliation authority；仅在后续再次证明 placement 与 artifact 均不存在且 barrier 成功后才可 compact。
+
+Orphan reconciliation 不凭文件名、deterministic path 或裸 `ArchiveVersion` 猜测 ownership。只有 live PublishIntent 的 HistoryCaptureProof 可以交回 publish recovery，只有 retention intent 可以授权删除。tracked missing/corrupt、unplaced known version、unknown history-v1 file 与任意 HistoryRoot 内容都只报告诊断，不自动修复或删除，也不递归删除未知目录。

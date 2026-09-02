@@ -55,6 +55,70 @@ public sealed class ArchivePhysicalPublisherTests
         finally { root.Delete(recursive: true); }
     }
 
+    [Fact]
+    public async Task RetentionDeleteRequiresExactOrdinaryArtifactAndDurabilityBarrier()
+    {
+        var root = Directory.CreateTempSubdirectory("stowcrate-retention-");
+        try
+        {
+            var bytes = "retained-history"u8.ToArray(); var hash = Sha256Digest.Hash(bytes); var relative = new RelativeStoragePath("history-v1/unit/version.7z");
+            var full = Path.Combine(root.FullName, relative.Value.Replace('/', Path.DirectorySeparatorChar)); Directory.CreateDirectory(Path.GetDirectoryName(full)!); await File.WriteAllBytesAsync(full, bytes);
+            var intent = new RetentionDeletionIntent(new(Guid.NewGuid()), Plan, Unit, new(Guid.NewGuid()), RetentionDeletionStage.Prepared,
+                relative, hash, bytes.Length, 1, 1, DateTimeOffset.UtcNow);
+            var barrier = new SuccessfulBarrier(); var publisher = new ArchivePhysicalPublisher(barrier);
+
+            var result = await publisher.DeleteDurablyIfMatchesAsync(Root(root.FullName), intent, CancellationToken.None);
+
+            Assert.Equal(HistoryDeletionPhysicalStatus.DeletedDurably, result.Status); Assert.False(File.Exists(full)); Assert.True(barrier.Calls > 0);
+        }
+        finally { root.Delete(true); }
+    }
+
+    [Fact]
+    public async Task RetentionDeletePreservesMismatchedArtifactAndDoesNotCrossFailedBarrier()
+    {
+        var root = Directory.CreateTempSubdirectory("stowcrate-retention-safe-");
+        try
+        {
+            var relative = new RelativeStoragePath("history-v1/unit/version.7z"); var full = Path.Combine(root.FullName, relative.Value.Replace('/', Path.DirectorySeparatorChar)); Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            await File.WriteAllTextAsync(full, "unexpected"); var intent = new RetentionDeletionIntent(new(Guid.NewGuid()), Plan, Unit, new(Guid.NewGuid()), RetentionDeletionStage.Prepared,
+                relative, Sha256Digest.Hash("expected"u8), 8, 1, 1, DateTimeOffset.UtcNow);
+            var mismatch = await new ArchivePhysicalPublisher(new SuccessfulBarrier()).DeleteDurablyIfMatchesAsync(Root(root.FullName), intent, CancellationToken.None);
+            Assert.Equal(HistoryDeletionPhysicalStatus.Mismatch, mismatch.Status); Assert.True(File.Exists(full));
+
+            File.Delete(full); var absent = await new ArchivePhysicalPublisher(new FailingBarrier()).DeleteDurablyIfMatchesAsync(Root(root.FullName), intent, CancellationToken.None);
+            Assert.Equal(HistoryDeletionPhysicalStatus.Failed, absent.Status);
+        }
+        finally { root.Delete(true); }
+    }
+
+    [Fact]
+    public async Task RetentionReconciliationDoesNotTreatBrokenSymbolicLinkAsAbsent()
+    {
+        var root = Directory.CreateTempSubdirectory("stowcrate-retention-link-");
+        try
+        {
+            var relative = new RelativeStoragePath("history-v1/unit/version.7z");
+            var full = Path.Combine(root.FullName, relative.Value.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            try { File.CreateSymbolicLink(full, Path.Combine(root.FullName, "missing-target")); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+            {
+                // Windows 未启用开发者模式时创建链接需要额外权限；Linux CI 仍执行完整断链场景。
+                return;
+            }
+            var intent = new RetentionDeletionIntent(new(Guid.NewGuid()), Plan, Unit, new(Guid.NewGuid()), RetentionDeletionStage.Completed,
+                relative, Sha256Digest.Hash("expected"u8), 8, 1, 1, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+            var publisher = new ArchivePhysicalPublisher(new SuccessfulBarrier());
+
+            Assert.False(await publisher.ConfirmAbsentDurablyAsync(Root(root.FullName), intent, CancellationToken.None));
+            var result = await publisher.DeleteDurablyIfMatchesAsync(Root(root.FullName), intent, CancellationToken.None);
+            Assert.Equal(HistoryDeletionPhysicalStatus.UnsupportedObject, result.Status);
+            Assert.NotNull(new FileInfo(full).LinkTarget);
+        }
+        finally { root.Delete(true); }
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -151,7 +215,9 @@ public sealed class ArchivePhysicalPublisherTests
         new(Hash("plan")), [new(Unit, new(Hash("semantic")), new(Hash("binding")), null, null, new(Hash("history")))]);
     private static Sha256Digest Hash(string value) => CanonicalFingerprintEncodingV1.Encode("test", writer => writer.Utf8(1, value));
     private sealed class SuccessfulBarrier : IArchivePublishMetadataDurabilityBarrier
-    { public Task<PublishMetadataDurabilityProof> FlushDirectoryMetadataAsync(string destinationDirectory, CancellationToken cancellationToken) => Task.FromResult(new PublishMetadataDurabilityProof(true, "test")); }
+    { public int Calls { get; private set; } public Task<PublishMetadataDurabilityProof> FlushDirectoryMetadataAsync(string destinationDirectory, CancellationToken cancellationToken) { Calls++; return Task.FromResult(new PublishMetadataDurabilityProof(true, "test")); } }
+    private sealed class FailingBarrier : IArchivePublishMetadataDurabilityBarrier
+    { public Task<PublishMetadataDurabilityProof> FlushDirectoryMetadataAsync(string destinationDirectory, CancellationToken cancellationToken) => throw new IOException("barrier failed"); }
 
     private static OutputRootLocalBinding Root(string path) => new(path, path, true);
 }

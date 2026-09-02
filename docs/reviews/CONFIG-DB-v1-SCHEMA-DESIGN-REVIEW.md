@@ -40,3 +40,7 @@
 ## M5.1 hardening addendum — schema v2
 
 结论：**PASS**。v1 journal缺少当次 History capture requirement 是durable recovery blocker，已通过独立 schema v2 migration修正，未修改 Initial v1 migration。`REQUIRED|NOT_REQUIRED|UNKNOWN_LEGACY` 是 closed durable token；v1 old-Current incomplete intent只可迁移为 `UNKNOWN_LEGACY`并进入 ambiguous recovery，不依据当前 Plan猜测。真实 SQLite v1→v2 migration、schema version、列存在性、codec round-trip和 EF pending-model-change gate均纳入测试/验证。
+
+# M5.2 schema v3 addendum review
+
+结论：PASS for implementation。artifact-level `RetentionDeletionIntent` 是 destructive authorization 与 crash recovery 的必要边界；它不得由 coarse `MaintenanceState` 替代。placement removal 与 intent completion 必须同一 SQLite transaction，`ArchiveVersion` 保留，completed intent 延迟 compact。v1/v2 migrations 不修改，新增 v2→v3 additive migration且无猜测式 backfill。

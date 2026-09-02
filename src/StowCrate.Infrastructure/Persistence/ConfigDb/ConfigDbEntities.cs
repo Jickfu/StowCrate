@@ -37,3 +37,10 @@ internal sealed class PublishIntentBaselineEntity
 }
 internal sealed class ScheduleInstallationEntity { public byte[] PlanId { get; set; } = []; public byte[] DeviceId { get; set; } = []; public string Status { get; set; } = ""; public string? AdapterToken { get; set; } public string? OpaqueInstallationId { get; set; } public byte[]? InstalledIntentDigest { get; set; } public long UpdatedAtUtcMs { get; set; } public string? LastError { get; set; } }
 internal sealed class MaintenanceStateEntity { public long MaintenanceStateRowId { get; set; } public byte[] PlanId { get; set; } = []; public byte[]? ArchiveUnitId { get; set; } public string Kind { get; set; } = ""; public string Status { get; set; } = ""; public string? Detail { get; set; } public long UpdatedAtUtcMs { get; set; } }
+internal sealed class RetentionDeletionIntentEntity
+{
+    public byte[] ArchiveVersionId { get; set; } = []; public byte[] PlanId { get; set; } = []; public byte[] ArchiveUnitId { get; set; } = [];
+    public byte[] SelectionId { get; set; } = []; public string Stage { get; set; } = ""; public string HistoryRelativePath { get; set; } = "";
+    public byte[] ExpectedIntegritySha256 { get; set; } = []; public long ExpectedLength { get; set; } public long RetentionSemanticsVersion { get; set; }
+    public long KeepLastVersionsCount { get; set; } public long SelectedAtUtcMs { get; set; } public long? CompletedAtUtcMs { get; set; }
+}

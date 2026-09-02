@@ -376,3 +376,9 @@ ArchiveVersion 的 durable identity 与 placement 分离：只记录 VersionId�
 6. TAR.ZST、平台元数据与高级文件系统优化。
 
 阶段顺序可调整，但不得用 GUI 直接调用压缩进程绕过 Application 层，也不得以云端集成替代本地可靠性。
+
+# M5.2 retention durability boundary
+
+History retention 是独立于 publish commit 的 destructive maintenance。每个自动删除必须先有 artifact-level durable intent；filesystem deletion 与 SQLite placement removal 不能假装是一个跨系统事务，而由 `PREPARED` journal、物理 absence/integrity observation、directory metadata durability barrier 和原子 metadata completion 实现可恢复性。粗粒度 `MaintenanceState` 只汇总健康状态，不能授权具体路径删除。
+
+未知 HistoryRoot 内容以及只有 identity/hash、没有活动 workflow journal 的 artifact 不具备删除或 metadata 修复授权。未来 History relocation 与同单元 active PREPARED retention intent 必须互斥。

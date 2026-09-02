@@ -245,3 +245,11 @@ PublishIntent.HistoryCaptureRequirement
 新 intent 在 `BeginPublish` 前冻结：无旧 Current 为 `NOT_REQUIRED`；有旧 Current且当次 effective History Enabled 为 `REQUIRED`；有旧 Current且 Disabled 为 `NOT_REQUIRED`。recovery 只能读取该 durable fact，禁止重新读取当前 Plan 判断旧事务。
 
 v1→v2 migration 独立于 Initial v1 migration：旧 row 无旧 Current时可无歧义迁移为 `NOT_REQUIRED`；存在旧 Current的历史 row迁移为 `UNKNOWN_LEGACY`，未完成事务一律 fail closed为 `AmbiguousPublishRecovery`。已完成 intent仍可由 durability maintenance清理。`DatabaseMetadata.SchemaVersion` 同一 migration更新为2，open coordinator只允许显式1→2升级并继续拒绝未来版本。
+
+# config.db schema v3 addendum — Retention deletion journal
+
+M5.2 把 schema 从 v2 提升到 v3；v1/v2 migration 保持不可变。新增 artifact-level `RetentionDeletionIntent`，以 `ArchiveVersionId` 为主键，并保存 `PlanId`、`ArchiveUnitId`、`SelectionId`、`PREPARED|COMPLETED`、History relative path、expected SHA-256/length、RetentionSemanticsVersion=1、KeepLastVersionsCount、SelectedAtUtcMs 与 optional CompletedAtUtcMs。
+
+该表是 destructive authorization/recovery journal，不是 History placement，也不替代 unit-level `MaintenanceState(HISTORY_RETENTION)`。它 FK 到 immutable `ArchiveVersion`，但不 FK 到 `HistoryVersionPlacement`，因为完成事务会有意删除 placement 并保留 completed intent。完成事务原子验证 PREPARED intent、exact placement 与同一 SUPERSEDED version，然后删除 placement并将 intent更新为COMPLETED；ArchiveVersion 不删除、不增加 Deleted lifecycle。
+
+一次 retention evaluation 使用 `SelectionId` 分组，并在同一事务中重验所有 victims 后全部插入或全部拒绝。恢复不得读取当前 Plan 决定旧 intent 是否仍应执行。

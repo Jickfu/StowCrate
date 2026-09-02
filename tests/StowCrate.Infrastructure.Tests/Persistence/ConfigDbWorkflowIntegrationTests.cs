@@ -168,6 +168,33 @@ public sealed class ConfigDbWorkflowIntegrationTests
         Assert.Contains(error.Issues, issue => issue.Code == PlanResolutionIssueCode.ActivePlanRootConflict);
     }
 
+    [Fact]
+    public async Task RetentionDeletionIntentAtomicallyRemovesPlacementAndPreservesArchiveVersion()
+    {
+        await using var database = await WorkflowDatabase.Create(); var (plan, unit) = await database.RegisterFixturePlan(); var f = Fingerprints();
+        var first = Intent(plan.Id, unit.Id, new(Guid.NewGuid()), Sha256Digest.Hash("old"u8));
+        await database.Repository.BeginPublishAsync(first, CancellationToken.None); var firstPublished = first.MarkCurrentPublished(DateTimeOffset.UnixEpoch);
+        await database.Repository.SavePublishProgressAsync(firstPublished, CancellationToken.None); await database.Repository.CompleteMetadataCommitAsync(firstPublished.RebuildMetadataCommitPlan(), CancellationToken.None);
+        var oldState = (await database.Repository.LoadAsync(plan.Id, unit.Id, CancellationToken.None))!;
+        var nextArchive = ArchiveVersion.Prepare(new(Guid.NewGuid()), plan.Id, unit.Id, PortableArchiveFormat.SevenZip, f.ArchiveSpec).Verify(Sha256Digest.Hash("new"u8), 10);
+        var next = PendingPublishIntent.Prepare(nextArchive, new("unit.7z"), BaselineCandidate.FromCompleteCandidate(f), f.OutputLayout,
+            new(oldState.CurrentArchive!, oldState.Current!), HistoryCaptureRequirement.Required);
+        await database.Repository.BeginPublishAsync(next, CancellationToken.None);
+        var placement = new HistoryVersionPlacement(plan.Id, unit.Id, oldState.CurrentArchive!.Id, new($"history-v1/{unit.Id.Value:D}/old.7z"));
+        var captured = next.MarkHistoryCaptured(new(oldState.CurrentArchive.Id, oldState.CurrentArchive.Integrity!.Value, placement));
+        await database.Repository.SavePublishProgressAsync(captured, CancellationToken.None); var currentPublished = captured.MarkCurrentPublished(DateTimeOffset.FromUnixTimeSeconds(1));
+        await database.Repository.SavePublishProgressAsync(currentPublished, CancellationToken.None); await database.Repository.CompleteMetadataCommitAsync(currentPublished.RebuildMetadataCommitPlan(), CancellationToken.None);
+
+        var snapshot = await database.Repository.LoadRetentionSnapshotAsync(plan.Id, unit.Id, CancellationToken.None); var victim = Assert.Single(snapshot.Entries);
+        await database.Repository.BeginDeletionIntentsAsync(new(Guid.NewGuid()), plan.Id, unit.Id, 1, [victim], CancellationToken.None);
+        var intent = Assert.Single(await database.Repository.ListDeletionIntentsAsync(false, CancellationToken.None));
+        await database.Repository.CompleteDeletionAsync(intent, DateTimeOffset.UtcNow, CancellationToken.None);
+
+        Assert.Empty((await database.Repository.LoadAsync(plan.Id, unit.Id, CancellationToken.None))!.History);
+        Assert.Equal(ArchiveVersionLifecycle.Superseded, victim.Archive.Lifecycle);
+        Assert.Equal(RetentionDeletionStage.Completed, Assert.Single(await database.Repository.ListDeletionIntentsAsync(true, CancellationToken.None)).Stage);
+    }
+
     private static PendingPublishIntent Intent(PlanId planId, ArchiveUnitId unitId, ArchiveVersionId versionId, Sha256Digest integrity)
     {
         var f = Fingerprints(); var archive = ArchiveVersion.Prepare(versionId, planId, unitId, PortableArchiveFormat.SevenZip, f.ArchiveSpec).Verify(integrity, 10);

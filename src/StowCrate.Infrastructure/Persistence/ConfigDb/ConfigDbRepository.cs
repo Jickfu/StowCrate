@@ -15,7 +15,8 @@ internal interface IMetadataCommitFaultInjector { void ThrowIfRequested(Metadata
 internal sealed class NoMetadataCommitFaultInjector : IMetadataCommitFaultInjector { public static NoMetadataCommitFaultInjector Instance { get; } = new(); public void ThrowIfRequested(MetadataCommitFaultPoint point) { } }
 
 public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegistrationStore, IDevicePlanBindingStore,
-    ISecretBindingMetadataStore, IFileManagedArchiveUnitRegistrationStore, IArchiveUnitDurableStateStore, IScheduleInstallationStore, IMaintenanceStateStore
+    ISecretBindingMetadataStore, IFileManagedArchiveUnitRegistrationStore, IArchiveUnitDurableStateStore, IScheduleInstallationStore, IMaintenanceStateStore,
+    IHistoryRetentionDurableStore
 {
     private readonly ConfigDbContextFactory factory;
     private readonly IMetadataCommitFaultInjector faultInjector;
@@ -320,6 +321,90 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
     {
         await using var db = factory.Create(); var plan = DurableCodecs.Uuid(state.PlanId.Value); var unit = state.ArchiveUnitId is null ? null : DurableCodecs.Uuid(state.ArchiveUnitId.Value.Value); var kind = DurableCodecs.Token(state.Kind); var rows = await db.MaintenanceStates.Where(x => x.PlanId == plan && x.Kind == kind).ToListAsync(cancellationToken); var row = rows.SingleOrDefault(x => (unit is null && x.ArchiveUnitId is null) || (unit is not null && x.ArchiveUnitId != null && x.ArchiveUnitId.SequenceEqual(unit))); if (row is null) { row = new() { PlanId = plan, ArchiveUnitId = unit, Kind = kind }; db.MaintenanceStates.Add(row); } row.Status = DurableCodecs.Token(state.Status); row.Detail = state.Detail; row.UpdatedAtUtcMs = DurableCodecs.Utc(state.UpdatedAtUtc); await SaveAsync(db, "Maintenance state could not be saved.", cancellationToken);
     }
+
+    public async Task<HistoryRetentionSnapshot> LoadRetentionSnapshotAsync(PlanId planId, ArchiveUnitId archiveUnitId, CancellationToken cancellationToken)
+    {
+        await using var db = factory.Create(); var plan = DurableCodecs.Uuid(planId.Value); var unit = DurableCodecs.Uuid(archiveUnitId.Value);
+        var rows = await (from placement in db.HistoryVersionPlacements.AsNoTracking()
+                          join archive in db.ArchiveVersions.AsNoTracking() on placement.ArchiveVersionId equals archive.ArchiveVersionId
+                          where placement.PlanId == plan && placement.ArchiveUnitId == unit
+                              && archive.Lifecycle == "SUPERSEDED"
+                              && !db.RetentionDeletionIntents.Any(intent => intent.ArchiveVersionId == placement.ArchiveVersionId)
+                          select new { placement, archive }).ToListAsync(cancellationToken);
+        try
+        {
+            return new(planId, archiveUnitId, [.. rows.Select(x => new HistoryRetentionEntry(MapArchive(x.archive),
+                new(planId, archiveUnitId, new(DurableCodecs.Uuid(x.placement.ArchiveVersionId)), new(x.placement.HistoryRelativePath))))]);
+        }
+        catch (Exception exception) { throw Translate(exception, "History retention snapshot is corrupt."); }
+    }
+
+    public async Task BeginDeletionIntentsAsync(RetentionSelectionId selectionId, PlanId planId, ArchiveUnitId archiveUnitId,
+        int keepLastVersionsCount, IReadOnlyCollection<HistoryRetentionEntry> victims, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(keepLastVersionsCount, 1); if (victims.Count == 0) return;
+        await using var db = factory.Create(); await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        var plan = DurableCodecs.Uuid(planId.Value); var unit = DurableCodecs.Uuid(archiveUnitId.Value); var now = DateTimeOffset.UtcNow;
+        foreach (var victim in victims)
+        {
+            if (victim.Archive.PlanId != planId || victim.Archive.ArchiveUnitId != archiveUnitId || victim.Archive.Lifecycle is not ArchiveVersionLifecycle.Superseded
+                || victim.Archive.Integrity is null || victim.Archive.Length is null || victim.Placement.ArchiveVersionId != victim.Archive.Id)
+                throw new ArgumentException("Retention victim is not a complete superseded History entry.", nameof(victims));
+            var id = DurableCodecs.Uuid(victim.Archive.Id.Value);
+            var placement = await db.HistoryVersionPlacements.AsNoTracking().SingleOrDefaultAsync(x => x.ArchiveVersionId == id && x.PlanId == plan && x.ArchiveUnitId == unit, cancellationToken);
+            var archive = await db.ArchiveVersions.AsNoTracking().SingleOrDefaultAsync(x => x.ArchiveVersionId == id && x.PlanId == plan && x.ArchiveUnitId == unit, cancellationToken);
+            if (placement is null || archive is null || placement.HistoryRelativePath != victim.Placement.RelativePath.Value
+                || archive.Lifecycle != "SUPERSEDED" || !archive.IntegritySha256!.SequenceEqual(DurableCodecs.Digest(victim.Archive.Integrity.Value)) || archive.Length != victim.Archive.Length)
+                throw new LocalStateConcurrencyException("History retention selection changed before authorization.");
+            if (await db.RetentionDeletionIntents.AnyAsync(x => x.ArchiveVersionId == id, cancellationToken))
+                throw new LocalStateConcurrencyException("History version already has a retention deletion intent.");
+            db.RetentionDeletionIntents.Add(new() { ArchiveVersionId = id, PlanId = plan, ArchiveUnitId = unit,
+                SelectionId = DurableCodecs.Uuid(selectionId.Value), Stage = "PREPARED", HistoryRelativePath = placement.HistoryRelativePath,
+                ExpectedIntegritySha256 = archive.IntegritySha256!, ExpectedLength = archive.Length!.Value, RetentionSemanticsVersion = 1,
+                KeepLastVersionsCount = keepLastVersionsCount, SelectedAtUtcMs = DurableCodecs.Utc(now) });
+        }
+        await SaveAsync(db, "Retention deletion intents could not be created.", cancellationToken); await tx.CommitAsync(cancellationToken);
+    }
+
+    public async Task<ImmutableArray<RetentionDeletionIntent>> ListDeletionIntentsAsync(bool includeCompleted, CancellationToken cancellationToken)
+    {
+        await using var db = factory.Create(); var query = db.RetentionDeletionIntents.AsNoTracking().AsQueryable();
+        if (!includeCompleted) query = query.Where(x => x.Stage == "PREPARED");
+        var rows = await query.ToListAsync(cancellationToken);
+        try { return [.. rows.Select(MapRetentionIntent)]; }
+        catch (Exception exception) { throw Translate(exception, "Retention deletion intents are corrupt."); }
+    }
+
+    public async Task CompleteDeletionAsync(RetentionDeletionIntent intent, DateTimeOffset completedAtUtc, CancellationToken cancellationToken)
+    {
+        if (intent.Stage is not RetentionDeletionStage.Prepared) throw new ArgumentException("Only a prepared deletion can complete.", nameof(intent));
+        await using var db = factory.Create(); await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        var id = DurableCodecs.Uuid(intent.ArchiveVersionId.Value); var plan = DurableCodecs.Uuid(intent.PlanId.Value); var unit = DurableCodecs.Uuid(intent.ArchiveUnitId.Value);
+        var row = await db.RetentionDeletionIntents.SingleOrDefaultAsync(x => x.ArchiveVersionId == id && x.Stage == "PREPARED", cancellationToken)
+            ?? throw new LocalStateConcurrencyException("Retention deletion intent is no longer PREPARED.");
+        var placement = await db.HistoryVersionPlacements.SingleOrDefaultAsync(x => x.ArchiveVersionId == id && x.PlanId == plan && x.ArchiveUnitId == unit, cancellationToken)
+            ?? throw new LocalStateConcurrencyException("History placement disappeared before deletion completion.");
+        if (placement.HistoryRelativePath != intent.HistoryRelativePath.Value || !row.ExpectedIntegritySha256.SequenceEqual(DurableCodecs.Digest(intent.ExpectedIntegrity)) || row.ExpectedLength != intent.ExpectedLength)
+            throw new LocalStateConcurrencyException("Retention deletion facts changed before completion.");
+        db.HistoryVersionPlacements.Remove(placement); row.Stage = "COMPLETED"; row.CompletedAtUtcMs = DurableCodecs.Utc(completedAtUtc);
+        await SaveAsync(db, "Retention deletion completion failed.", cancellationToken); await tx.CommitAsync(cancellationToken);
+    }
+
+    public async Task<int> CompactCompletedDeletionIntentsAsync(IReadOnlyCollection<ArchiveVersionId> confirmedAbsentVersions, CancellationToken cancellationToken)
+    {
+        if (confirmedAbsentVersions.Count == 0) return 0; await using var db = factory.Create(); await using var tx = await db.Database.BeginTransactionAsync(cancellationToken); var deleted = 0;
+        foreach (var version in confirmedAbsentVersions)
+        {
+            var id = DurableCodecs.Uuid(version.Value); var changed = await db.RetentionDeletionIntents.Where(x => x.ArchiveVersionId == id && x.Stage == "COMPLETED").ExecuteDeleteAsync(cancellationToken);
+            if (changed != 1) throw new LocalStateConcurrencyException("Completed retention intent changed before compaction."); deleted += changed;
+        }
+        await tx.CommitAsync(cancellationToken); return deleted;
+    }
+
+    private static RetentionDeletionIntent MapRetentionIntent(RetentionDeletionIntentEntity row) => new(
+        new(DurableCodecs.Uuid(row.SelectionId)), new(DurableCodecs.Uuid(row.PlanId)), new(DurableCodecs.Uuid(row.ArchiveUnitId)), new(DurableCodecs.Uuid(row.ArchiveVersionId)),
+        DurableCodecs.RetentionDeletionStage(row.Stage), new(row.HistoryRelativePath), DurableCodecs.Digest(row.ExpectedIntegritySha256), row.ExpectedLength,
+        checked((int)row.RetentionSemanticsVersion), checked((int)row.KeepLastVersionsCount), DurableCodecs.Utc(row.SelectedAtUtcMs), row.CompletedAtUtcMs is null ? null : DurableCodecs.Utc(row.CompletedAtUtcMs.Value));
 
     private static byte[] ValidateCanonicalDocument(PlanId planId, ReadOnlyMemory<byte> supplied)
     {
