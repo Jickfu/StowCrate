@@ -44,3 +44,5 @@
 # M5.2 schema v3 addendum review
 
 结论：PASS for implementation。artifact-level `RetentionDeletionIntent` 是 destructive authorization 与 crash recovery 的必要边界；它不得由 coarse `MaintenanceState` 替代。placement removal 与 intent completion 必须同一 SQLite transaction，`ArchiveVersion` 保留，completed intent 延迟 compact。v1/v2 migrations 不修改，新增 v2→v3 additive migration且无猜测式 backfill。
+
+M5.2 completion re-review：**PASS**。最终实现进一步要求 destructive path 把 `HistoryRoot` 本身纳入 no-follow native identity proof，并要求 completed-intent compaction 在同一 SQLite transaction 内重验 `HistoryVersionPlacement` 已不存在。review ref `e872ed74c6f171d430d710ce660ff601a250bded`，三平台 CI run `33628437400` 全部通过。

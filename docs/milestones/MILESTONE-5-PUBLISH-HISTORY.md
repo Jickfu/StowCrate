@@ -30,7 +30,7 @@ History v1 只 copy，不使用 hardlink/reflink。copy 到 History destination-
 
 下一项：**M5.2 — Retention Maintenance + Publish Recovery/Orphan Reconciliation**。
 
-## M5.2 — Retention Maintenance + Publish Recovery/Orphan Reconciliation（IMPLEMENTED / REVIEW PENDING）
+## M5.2 — Retention Maintenance + Publish Recovery/Orphan Reconciliation（COMPLETE）
 
 Retention v1 只自动执行 `KeepLastVersions(N)`，`Disabled` 与 `KeepAll` 均不产生新删除授权；Purge 不在本阶段。候选只来自 active `HistoryVersionPlacement` 与同 identity 的 `SUPERSEDED ArchiveVersion`，Current 在结构上不可能成为 victim。时间顺序固定为 `(PublishedAtUtcMs ASC, ArchiveVersionId RFC-4122/network bytes ASC)`，保留末尾 N 个。
 
@@ -43,3 +43,11 @@ Recovery 只依赖 intent 与物理事实。`PREPARED + matching/absent` 可重�
 Orphan reconciliation 不凭文件名、deterministic path 或裸 `ArchiveVersion` 猜测 ownership。只有 live PublishIntent 的 HistoryCaptureProof 可以交回 publish recovery，只有 retention intent 可以授权删除。tracked missing/corrupt、unplaced known version、unknown history-v1 file 与任意 HistoryRoot 内容都只报告诊断，不自动修复或删除，也不递归删除未知目录。
 
 只读 inventory 仅遍历 StowCrate 管理的 `history-v1` namespace，逐级 no-follow；普通目录只用于遍历，link/reparse/special/unreadable component 作为诊断停止下钻。物理删除逐级拒绝异常 ancestor，并在 hash 前与 namespace 删除前捕获、比较 Windows volume/file ID 或 POSIX device/inode。该检查防止正常同步/替换竞态静默删掉另一对象，不宣称能在所有文件系统上抵御主动 hostile race，也不以此扩大删除授权。
+
+### Completion Review
+
+结论：**PASS**。最终评审确认 retention selection、durable deletion authorization、可信 History namespace 与 artifact identity 验证、目录 durability barrier、placement removal + intent completion 原子事务、后续 absence re-proof 与 placement-absence compaction revalidation 形成闭合链路；`ArchiveVersion` 始终保留为 immutable historical fact，orphan inventory 始终只有诊断权限。
+
+最终实现提交为 `e872ed74c6f171d430d710ce660ff601a250bded`。本地 build 0 warning/error，334 项测试通过，EF model 无 pending change；GitHub Actions run `33628437400` 在 Windows、Ubuntu、macOS 全部通过。
+
+下一项：**M5.3 — Output Reorganization + Storage Relocation**。编码前必须先冻结跨 filesystem/SQLite relocation journal 与 crash recovery；同一 Archive Unit 存在 `PREPARED RetentionDeletionIntent` 时不得开始 History/Storage relocation。
