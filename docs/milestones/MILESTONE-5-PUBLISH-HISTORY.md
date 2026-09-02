@@ -41,3 +41,5 @@ Retention v1 只自动执行 `KeepLastVersions(N)`，`Disabled` 与 `KeepAll` �
 Recovery 只依赖 intent 与物理事实。`PREPARED + matching/absent` 可重试删除或完成 metadata；mismatch、link、special 或 placement conflict 均保留 artifact、placement 与 intent并标记 OutOfSync。`COMPLETED` intent 暂留作 reconciliation authority；仅在后续再次证明 placement 与 artifact 均不存在且 barrier 成功后才可 compact。
 
 Orphan reconciliation 不凭文件名、deterministic path 或裸 `ArchiveVersion` 猜测 ownership。只有 live PublishIntent 的 HistoryCaptureProof 可以交回 publish recovery，只有 retention intent 可以授权删除。tracked missing/corrupt、unplaced known version、unknown history-v1 file 与任意 HistoryRoot 内容都只报告诊断，不自动修复或删除，也不递归删除未知目录。
+
+只读 inventory 仅遍历 StowCrate 管理的 `history-v1` namespace，逐级 no-follow；普通目录只用于遍历，link/reparse/special/unreadable component 作为诊断停止下钻。物理删除逐级拒绝异常 ancestor，并在 hash 前与 namespace 删除前捕获、比较 Windows volume/file ID 或 POSIX device/inode。该检查防止正常同步/替换竞态静默删掉另一对象，不宣称能在所有文件系统上抵御主动 hostile race，也不以此扩大删除授权。

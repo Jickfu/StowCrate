@@ -22,6 +22,8 @@ public sealed class ConfigDbRepositoryTests
     public async Task InitialMigrationUsesDurablePragmasAndPartialMaintenanceIndexes()
     {
         await using var database = await TestDatabase.Create();
+        Assert.Equal(3, (await database.Repository.LoadAsync(TestContext.Current.CancellationToken))!.SchemaVersion);
+        Assert.Equal(3, (await (await ConfigDbOpenCoordinator.OpenAsync(database.Path)).LoadAsync(TestContext.Current.CancellationToken))!.SchemaVersion);
         await using var connection = database.Connection(); await connection.OpenAsync();
         Assert.Equal("wal", await Scalar(connection, "PRAGMA journal_mode"));
         Assert.Equal(1L, await Scalar(connection, "PRAGMA foreign_keys"));
@@ -30,6 +32,25 @@ public sealed class ConfigDbRepositoryTests
         Assert.Contains("ArchiveUnitId IS NULL", sql, StringComparison.Ordinal);
         Assert.Contains("ArchiveUnitId IS NOT NULL", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("CASCADE", (string)(await Scalar(connection, "SELECT group_concat(sql,' ') FROM sqlite_master WHERE type='table'"))!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExplicitV2DatabaseMigratesDirectlyToV3()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"stowcrate-v2-{Guid.NewGuid():N}.db");
+        try
+        {
+            var factory = new ConfigDbContextFactory(path);
+            await using (var context = factory.Create())
+            {
+                await context.GetService<IMigrator>().MigrateAsync("20260831085053_InitialConfigDbV1");
+                await context.Database.ExecuteSqlRawAsync("INSERT INTO DatabaseMetadata(SingletonKey,SchemaVersion,DatabaseId,DeviceId,CreatedAtUtcMs) VALUES(1,1,randomblob(16),randomblob(16),0)");
+                await context.GetService<IMigrator>().MigrateAsync("20260901180347_AddPublishIntentHistoryRequirementV2");
+            }
+            var repository = await ConfigDbOpenCoordinator.OpenAsync(path);
+            Assert.Equal(3, (await repository.LoadAsync(CancellationToken.None))!.SchemaVersion);
+        }
+        finally { SqliteConnection.ClearAllPools(); if (File.Exists(path)) File.Delete(path); }
     }
 
     [Fact]
@@ -224,7 +245,8 @@ public sealed class ConfigDbRepositoryTests
     private sealed class TestDatabase : IAsyncDisposable
     {
         private TestDatabase(string path, ConfigDbRepository repository) { Path = path; Repository = repository; }
-        public string Path { get; } public ConfigDbRepository Repository { get; }
+        public string Path { get; }
+        public ConfigDbRepository Repository { get; }
         public static async Task<TestDatabase> Create()
         {
             var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"stowcrate-{Guid.NewGuid():N}.db"); var repository = await ConfigDbOpenCoordinator.OpenAsync(path, Guid.NewGuid(), DeviceId);

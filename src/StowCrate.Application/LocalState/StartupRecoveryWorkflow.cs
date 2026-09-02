@@ -13,11 +13,14 @@ public interface ICurrentArtifactRecoveryProbe
 public enum UnitStartupRecoveryStatus { MetadataCommitCompleted, ResumeOrAbortRequired, AmbiguousPublishRecovery }
 public sealed record UnitStartupRecoveryResult(PlanId PlanId, ArchiveUnitId ArchiveUnitId, UnitStartupRecoveryStatus Status, string? Detail);
 public sealed record HistoryRetentionStartupResult(PlanId PlanId, ArchiveUnitId ArchiveUnitId, int Completed, int Pending, ImmutableArray<string> Diagnostics);
+public sealed record HistoryOrphanStartupResult(PlanId PlanId, ImmutableArray<HistoryReconciliationDiagnostic> Diagnostics);
 public sealed record ConfigDatabaseStartupResult(ConfigDatabaseIdentity Identity, ImmutableArray<PlanRegistration> ActivePlans,
-    ImmutableArray<UnitStartupRecoveryResult> UnitRecoveries, ImmutableArray<HistoryRetentionStartupResult> RetentionRecoveries = default);
+    ImmutableArray<UnitStartupRecoveryResult> UnitRecoveries, ImmutableArray<HistoryRetentionStartupResult> RetentionRecoveries = default,
+    ImmutableArray<HistoryOrphanStartupResult> HistoryReconciliations = default);
 
 public sealed class ConfigDatabaseStartupCoordinator(IConfigDatabaseSessionOpener opener, ICurrentArtifactRecoveryProbe probe,
-    IPublishIntentRecoveryCoordinator? publishRecovery = null, IHistoryRetentionRecoveryCoordinator? retentionRecovery = null)
+    IPublishIntentRecoveryCoordinator? publishRecovery = null, IHistoryRetentionRecoveryCoordinator? retentionRecovery = null,
+    IHistoryOrphanReconciliationCoordinator? historyReconciliation = null)
 {
     public async Task<ConfigDatabaseStartupResult> StartAsync(ConfigDatabaseOpenRequest request, CancellationToken cancellationToken)
     {
@@ -68,6 +71,17 @@ public sealed class ConfigDatabaseStartupCoordinator(IConfigDatabaseSessionOpene
                 retentionRecoveries.Add(new(group.Key.PlanId, group.Key.ArchiveUnitId, result.Completed, result.Pending.Length, result.Diagnostics));
             }
         }
-        return new(session.Identity, registrations, recoveries.ToImmutable(), retentionRecoveries.ToImmutable());
+        var historyReconciliations = ImmutableArray.CreateBuilder<HistoryOrphanStartupResult>();
+        if (historyReconciliation is not null)
+        {
+            foreach (var registration in registrations)
+            {
+                var binding = await session.Bindings.LoadAsync(registration.PlanId, cancellationToken).ConfigureAwait(false);
+                if (binding?.HistoryRoot is null) continue;
+                var result = await historyReconciliation.ReconcileAsync(registration.PlanId, binding.HistoryRoot, cancellationToken).ConfigureAwait(false);
+                historyReconciliations.Add(new(registration.PlanId, result.Diagnostics));
+            }
+        }
+        return new(session.Identity, registrations, recoveries.ToImmutable(), retentionRecoveries.ToImmutable(), historyReconciliations.ToImmutable());
     }
 }

@@ -382,3 +382,5 @@ ArchiveVersion 的 durable identity 与 placement 分离：只记录 VersionId�
 History retention 是独立于 publish commit 的 destructive maintenance。每个自动删除必须先有 artifact-level durable intent；filesystem deletion 与 SQLite placement removal 不能假装是一个跨系统事务，而由 `PREPARED` journal、物理 absence/integrity observation、directory metadata durability barrier 和原子 metadata completion 实现可恢复性。粗粒度 `MaintenanceState` 只汇总健康状态，不能授权具体路径删除。
 
 未知 HistoryRoot 内容以及只有 identity/hash、没有活动 workflow journal 的 artifact 不具备删除或 metadata 修复授权。未来 History relocation 与同单元 active PREPARED retention intent 必须互斥。
+
+M5.2 orphan reconciliation 是只读诊断面：对全部 active Plan 的 tracked placements 与 `history-v1` managed namespace 做 no-follow inventory，报告 missing、corrupt/replaced、known-unplaced 与 unknown/ambiguous，不从 inventory 产生 mutation。Retention destructive path 必须验证全部 ancestor，并在可用平台读取 native object identity、在最终 namespace deletion 前重验；race-resistance 保证限于检测正常替换漂移。

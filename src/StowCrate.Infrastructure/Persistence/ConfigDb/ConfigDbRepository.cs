@@ -10,7 +10,7 @@ using StowCrate.Infrastructure.Configuration.BackupPlans.V1;
 
 namespace StowCrate.Infrastructure.Persistence.ConfigDb;
 
-internal enum MetadataCommitFaultPoint { AfterNewArchive, AfterHistory, AfterCurrent, AfterBaseline, AfterLayout, AfterIntentCompletion }
+internal enum MetadataCommitFaultPoint { AfterNewArchive, AfterHistory, AfterCurrent, AfterBaseline, AfterLayout, AfterIntentCompletion, AfterRetentionCompletionMutation }
 internal interface IMetadataCommitFaultInjector { void ThrowIfRequested(MetadataCommitFaultPoint point); }
 internal sealed class NoMetadataCommitFaultInjector : IMetadataCommitFaultInjector { public static NoMetadataCommitFaultInjector Instance { get; } = new(); public void ThrowIfRequested(MetadataCommitFaultPoint point) { } }
 
@@ -34,7 +34,7 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
         await using var db = factory.Create();
         if (await db.DatabaseMetadata.AnyAsync(cancellationToken)) throw new LocalStateConcurrencyException("Config database is already initialized.");
         var now = DateTimeOffset.UtcNow; db.DatabaseMetadata.Add(new() { SingletonKey = 1, SchemaVersion = ConfigDbOpenCoordinator.SupportedSchemaVersion, DatabaseId = DurableCodecs.Uuid(databaseId), DeviceId = DurableCodecs.Uuid(deviceId.Value), CreatedAtUtcMs = DurableCodecs.Utc(now) });
-        await SaveAsync(db, "Database identity could not be initialized.", cancellationToken); return new(databaseId, deviceId, 1, DurableCodecs.Utc(DurableCodecs.Utc(now)));
+        await SaveAsync(db, "Database identity could not be initialized.", cancellationToken); return new(databaseId, deviceId, ConfigDbOpenCoordinator.SupportedSchemaVersion, DurableCodecs.Utc(DurableCodecs.Utc(now)));
     }
 
     async Task<RegisteredPlanState?> IPlanRegistrationStore.LoadAsync(PlanId planId, CancellationToken cancellationToken)
@@ -148,7 +148,8 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
     public async Task<ImmutableArray<DevicePlanLocalBindings>> ListActiveRootFactsAsync(CancellationToken cancellationToken)
     {
         await using var db = factory.Create(); var ids = await db.PlanRegistrations.AsNoTracking().Where(x => x.IsActive == 1).Select(x => x.PlanId).ToListAsync(cancellationToken); var result = ImmutableArray.CreateBuilder<DevicePlanLocalBindings>();
-        foreach (var id in ids) { var loaded = await LoadAsync(new(DurableCodecs.Uuid(id)), cancellationToken); if (loaded is not null) result.Add(loaded); } return result.ToImmutable();
+        foreach (var id in ids) { var loaded = await LoadAsync(new(DurableCodecs.Uuid(id)), cancellationToken); if (loaded is not null) result.Add(loaded); }
+        return result.ToImmutable();
     }
 
     async Task<ImmutableArray<SecretBindingMetadata>> ISecretBindingMetadataStore.LoadAsync(PlanId planId, CancellationToken cancellationToken)
@@ -309,7 +310,8 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
 
     public async Task SaveAsync(ScheduleInstallationState state, CancellationToken cancellationToken)
     {
-        await using var db = factory.Create(); var plan = DurableCodecs.Uuid(state.PlanId.Value); var device = DurableCodecs.Uuid(state.DeviceId.Value); var row = await db.ScheduleInstallations.SingleOrDefaultAsync(x => x.PlanId == plan && x.DeviceId == device, cancellationToken); if (row is null) { row = new() { PlanId = plan, DeviceId = device }; db.ScheduleInstallations.Add(row); } row.Status = DurableCodecs.Token(state.Status); row.AdapterToken = state.AdapterToken; row.OpaqueInstallationId = state.OpaqueInstallationId; row.InstalledIntentDigest = state.InstalledIntentDigest is null ? null : DurableCodecs.Digest(state.InstalledIntentDigest.Value); row.UpdatedAtUtcMs = DurableCodecs.Utc(state.UpdatedAtUtc); row.LastError = state.LastError; await SaveAsync(db, "Schedule state could not be saved.", cancellationToken);
+        await using var db = factory.Create(); var plan = DurableCodecs.Uuid(state.PlanId.Value); var device = DurableCodecs.Uuid(state.DeviceId.Value); var row = await db.ScheduleInstallations.SingleOrDefaultAsync(x => x.PlanId == plan && x.DeviceId == device, cancellationToken); if (row is null) { row = new() { PlanId = plan, DeviceId = device }; db.ScheduleInstallations.Add(row); }
+        row.Status = DurableCodecs.Token(state.Status); row.AdapterToken = state.AdapterToken; row.OpaqueInstallationId = state.OpaqueInstallationId; row.InstalledIntentDigest = state.InstalledIntentDigest is null ? null : DurableCodecs.Digest(state.InstalledIntentDigest.Value); row.UpdatedAtUtcMs = DurableCodecs.Utc(state.UpdatedAtUtc); row.LastError = state.LastError; await SaveAsync(db, "Schedule state could not be saved.", cancellationToken);
     }
 
     public async Task<ImmutableArray<MaintenanceState>> ListPendingAsync(PlanId planId, CancellationToken cancellationToken)
@@ -319,7 +321,8 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
 
     public async Task SaveAsync(MaintenanceState state, CancellationToken cancellationToken)
     {
-        await using var db = factory.Create(); var plan = DurableCodecs.Uuid(state.PlanId.Value); var unit = state.ArchiveUnitId is null ? null : DurableCodecs.Uuid(state.ArchiveUnitId.Value.Value); var kind = DurableCodecs.Token(state.Kind); var rows = await db.MaintenanceStates.Where(x => x.PlanId == plan && x.Kind == kind).ToListAsync(cancellationToken); var row = rows.SingleOrDefault(x => (unit is null && x.ArchiveUnitId is null) || (unit is not null && x.ArchiveUnitId != null && x.ArchiveUnitId.SequenceEqual(unit))); if (row is null) { row = new() { PlanId = plan, ArchiveUnitId = unit, Kind = kind }; db.MaintenanceStates.Add(row); } row.Status = DurableCodecs.Token(state.Status); row.Detail = state.Detail; row.UpdatedAtUtcMs = DurableCodecs.Utc(state.UpdatedAtUtc); await SaveAsync(db, "Maintenance state could not be saved.", cancellationToken);
+        await using var db = factory.Create(); var plan = DurableCodecs.Uuid(state.PlanId.Value); var unit = state.ArchiveUnitId is null ? null : DurableCodecs.Uuid(state.ArchiveUnitId.Value.Value); var kind = DurableCodecs.Token(state.Kind); var rows = await db.MaintenanceStates.Where(x => x.PlanId == plan && x.Kind == kind).ToListAsync(cancellationToken); var row = rows.SingleOrDefault(x => (unit is null && x.ArchiveUnitId is null) || (unit is not null && x.ArchiveUnitId != null && x.ArchiveUnitId.SequenceEqual(unit))); if (row is null) { row = new() { PlanId = plan, ArchiveUnitId = unit, Kind = kind }; db.MaintenanceStates.Add(row); }
+        row.Status = DurableCodecs.Token(state.Status); row.Detail = state.Detail; row.UpdatedAtUtcMs = DurableCodecs.Utc(state.UpdatedAtUtc); await SaveAsync(db, "Maintenance state could not be saved.", cancellationToken);
     }
 
     public async Task<HistoryRetentionSnapshot> LoadRetentionSnapshotAsync(PlanId planId, ArchiveUnitId archiveUnitId, CancellationToken cancellationToken)
@@ -337,6 +340,24 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
                 new(planId, archiveUnitId, new(DurableCodecs.Uuid(x.placement.ArchiveVersionId)), new(x.placement.HistoryRelativePath))))]);
         }
         catch (Exception exception) { throw Translate(exception, "History retention snapshot is corrupt."); }
+    }
+
+    public async Task<HistoryInventorySnapshot> LoadHistoryInventorySnapshotAsync(PlanId planId, CancellationToken cancellationToken)
+    {
+        await using var db = factory.Create(); var plan = DurableCodecs.Uuid(planId.Value);
+        var archives = await db.ArchiveVersions.AsNoTracking().Where(x => x.PlanId == plan && x.Lifecycle == "SUPERSEDED").ToListAsync(cancellationToken);
+        var placements = await db.HistoryVersionPlacements.AsNoTracking().Where(x => x.PlanId == plan).ToListAsync(cancellationToken);
+        var publishPaths = await db.PublishIntents.AsNoTracking().Where(x => x.PlanId == plan && x.Stage != "METADATA_COMMITTED" && x.HistoryRelativePath != null)
+            .Select(x => x.HistoryRelativePath!).ToListAsync(cancellationToken);
+        try
+        {
+            var mapped = archives.Select(MapArchive).ToImmutableArray();
+            var byId = mapped.ToDictionary(x => x.Id);
+            var entries = placements.Select(x => new HistoryRetentionEntry(byId[new(DurableCodecs.Uuid(x.ArchiveVersionId))],
+                new(planId, new(DurableCodecs.Uuid(x.ArchiveUnitId)), new(DurableCodecs.Uuid(x.ArchiveVersionId)), new(x.HistoryRelativePath)))).ToImmutableArray();
+            return new(planId, entries, mapped, [.. publishPaths.Select(x => new RelativeStoragePath(x))]);
+        }
+        catch (Exception exception) { throw Translate(exception, "History inventory metadata is corrupt."); }
     }
 
     public async Task BeginDeletionIntentsAsync(RetentionSelectionId selectionId, PlanId planId, ArchiveUnitId archiveUnitId,
@@ -358,10 +379,20 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
                 throw new LocalStateConcurrencyException("History retention selection changed before authorization.");
             if (await db.RetentionDeletionIntents.AnyAsync(x => x.ArchiveVersionId == id, cancellationToken))
                 throw new LocalStateConcurrencyException("History version already has a retention deletion intent.");
-            db.RetentionDeletionIntents.Add(new() { ArchiveVersionId = id, PlanId = plan, ArchiveUnitId = unit,
-                SelectionId = DurableCodecs.Uuid(selectionId.Value), Stage = "PREPARED", HistoryRelativePath = placement.HistoryRelativePath,
-                ExpectedIntegritySha256 = archive.IntegritySha256!, ExpectedLength = archive.Length!.Value, RetentionSemanticsVersion = 1,
-                KeepLastVersionsCount = keepLastVersionsCount, SelectedAtUtcMs = DurableCodecs.Utc(now) });
+            db.RetentionDeletionIntents.Add(new()
+            {
+                ArchiveVersionId = id,
+                PlanId = plan,
+                ArchiveUnitId = unit,
+                SelectionId = DurableCodecs.Uuid(selectionId.Value),
+                Stage = "PREPARED",
+                HistoryRelativePath = placement.HistoryRelativePath,
+                ExpectedIntegritySha256 = archive.IntegritySha256!,
+                ExpectedLength = archive.Length!.Value,
+                RetentionSemanticsVersion = 1,
+                KeepLastVersionsCount = keepLastVersionsCount,
+                SelectedAtUtcMs = DurableCodecs.Utc(now)
+            });
         }
         await SaveAsync(db, "Retention deletion intents could not be created.", cancellationToken); await tx.CommitAsync(cancellationToken);
     }
@@ -384,10 +415,19 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
             ?? throw new LocalStateConcurrencyException("Retention deletion intent is no longer PREPARED.");
         var placement = await db.HistoryVersionPlacements.SingleOrDefaultAsync(x => x.ArchiveVersionId == id && x.PlanId == plan && x.ArchiveUnitId == unit, cancellationToken)
             ?? throw new LocalStateConcurrencyException("History placement disappeared before deletion completion.");
-        if (placement.HistoryRelativePath != intent.HistoryRelativePath.Value || !row.ExpectedIntegritySha256.SequenceEqual(DurableCodecs.Digest(intent.ExpectedIntegrity)) || row.ExpectedLength != intent.ExpectedLength)
+        var archive = await db.ArchiveVersions.AsNoTracking().SingleOrDefaultAsync(x => x.ArchiveVersionId == id && x.PlanId == plan && x.ArchiveUnitId == unit, cancellationToken);
+        if (!row.PlanId.SequenceEqual(plan) || !row.ArchiveUnitId.SequenceEqual(unit)
+            || !row.SelectionId.SequenceEqual(DurableCodecs.Uuid(intent.SelectionId.Value))
+            || placement.HistoryRelativePath != intent.HistoryRelativePath.Value || row.HistoryRelativePath != intent.HistoryRelativePath.Value
+            || !row.ExpectedIntegritySha256.SequenceEqual(DurableCodecs.Digest(intent.ExpectedIntegrity)) || row.ExpectedLength != intent.ExpectedLength
+            || row.RetentionSemanticsVersion != intent.RetentionSemanticsVersion || row.KeepLastVersionsCount != intent.KeepLastVersionsCount
+            || row.SelectedAtUtcMs != DurableCodecs.Utc(intent.SelectedAtUtc)
+            || archive is null || archive.Lifecycle != "SUPERSEDED" || archive.IntegritySha256 is null
+            || !archive.IntegritySha256.SequenceEqual(row.ExpectedIntegritySha256) || archive.Length != row.ExpectedLength)
             throw new LocalStateConcurrencyException("Retention deletion facts changed before completion.");
         db.HistoryVersionPlacements.Remove(placement); row.Stage = "COMPLETED"; row.CompletedAtUtcMs = DurableCodecs.Utc(completedAtUtc);
-        await SaveAsync(db, "Retention deletion completion failed.", cancellationToken); await tx.CommitAsync(cancellationToken);
+        await SaveAsync(db, "Retention deletion completion failed.", cancellationToken);
+        faultInjector.ThrowIfRequested(MetadataCommitFaultPoint.AfterRetentionCompletionMutation); await tx.CommitAsync(cancellationToken);
     }
 
     public async Task<int> CompactCompletedDeletionIntentsAsync(IReadOnlyCollection<ArchiveVersionId> confirmedAbsentVersions, CancellationToken cancellationToken)
@@ -483,7 +523,8 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
     {
         var sources = await db.SourceLocalBindings.Where(x => x.PlanId == plan).ToListAsync(token); foreach (var row in sources) row.IsActive = 0; foreach (var item in value.Sources) { var id = DurableCodecs.Uuid(item.SourceId.Value); var row = sources.SingleOrDefault(x => x.SourceId.SequenceEqual(id)); if (row is null) { row = new() { PlanId = plan, SourceId = id }; db.SourceLocalBindings.Add(row); } row.CanonicalPath = item.CanonicalPath; row.ComparisonKey = item.ComparisonKey; row.IsActive = DurableCodecs.Boolean(item.IsActive); }
         var external = await db.ExternalLocalBindings.Where(x => x.PlanId == plan).ToListAsync(token); foreach (var row in external) row.IsActive = 0; foreach (var item in value.ExternalSources) { var id = DurableCodecs.Uuid(item.ExternalSourceId.Value); var row = external.SingleOrDefault(x => x.ExternalSourceId.SequenceEqual(id)); if (row is null) { row = new() { PlanId = plan, ExternalSourceId = id }; db.ExternalLocalBindings.Add(row); } row.CanonicalPath = item.CanonicalPath; row.ComparisonKey = item.ComparisonKey; row.IsActive = DurableCodecs.Boolean(item.IsActive); }
-        var roots = await db.OutputRootLocalBindings.Where(x => x.PlanId == plan).ToListAsync(token); foreach (var row in roots) row.IsActive = 0; void Root(string kind, OutputRootLocalBinding? item) { if (item is null) return; var row = roots.SingleOrDefault(x => x.RootKind == kind); if (row is null) { row = new() { PlanId = plan, RootKind = kind }; db.OutputRootLocalBindings.Add(row); } row.CanonicalPath = item.CanonicalPath; row.ComparisonKey = item.ComparisonKey; row.IsActive = DurableCodecs.Boolean(item.IsActive); } Root("CURRENT", value.CurrentRoot); Root("HISTORY", value.HistoryRoot);
+        var roots = await db.OutputRootLocalBindings.Where(x => x.PlanId == plan).ToListAsync(token); foreach (var row in roots) row.IsActive = 0; void Root(string kind, OutputRootLocalBinding? item) { if (item is null) return; var row = roots.SingleOrDefault(x => x.RootKind == kind); if (row is null) { row = new() { PlanId = plan, RootKind = kind }; db.OutputRootLocalBindings.Add(row); } row.CanonicalPath = item.CanonicalPath; row.ComparisonKey = item.ComparisonKey; row.IsActive = DurableCodecs.Boolean(item.IsActive); }
+        Root("CURRENT", value.CurrentRoot); Root("HISTORY", value.HistoryRoot);
     }
 
     private async Task<SecretBindingMetadata> SwitchSecretAsync(PlanId planId, SecretSlotId slotId, SecretRevision? expectedRevision,

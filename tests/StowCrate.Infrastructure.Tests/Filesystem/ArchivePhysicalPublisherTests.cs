@@ -21,19 +21,19 @@ public sealed class ArchivePhysicalPublisherTests
         var history = Directory.CreateTempSubdirectory("stowcrate-history-");
         try
         {
-        var bytes = "old-current"u8.ToArray(); var hash = Sha256Digest.Hash(bytes);
-        await File.WriteAllBytesAsync(Path.Combine(current.FullName, "unit.7z"), bytes, CancellationToken.None);
-        var version = ArchiveVersion.Prepare(new(Guid.Parse("cccccccc-cccc-4ccc-8ccc-cccccccccccc")), Plan, Unit,
-            PortableArchiveFormat.SevenZip, new(hash)).Verify(hash, bytes.Length).Publish(new DateTimeOffset(2026, 9, 1, 17, 23, 15, 123, TimeSpan.Zero));
-        var old = new OldCurrentFacts(version, new(Plan, Unit, version.Id, new("unit.7z")));
-        var path = HistoryPhysicalLayoutV1.Create(Unit, version);
+            var bytes = "old-current"u8.ToArray(); var hash = Sha256Digest.Hash(bytes);
+            await File.WriteAllBytesAsync(Path.Combine(current.FullName, "unit.7z"), bytes, CancellationToken.None);
+            var version = ArchiveVersion.Prepare(new(Guid.Parse("cccccccc-cccc-4ccc-8ccc-cccccccccccc")), Plan, Unit,
+                PortableArchiveFormat.SevenZip, new(hash)).Verify(hash, bytes.Length).Publish(new DateTimeOffset(2026, 9, 1, 17, 23, 15, 123, TimeSpan.Zero));
+            var old = new OldCurrentFacts(version, new(Plan, Unit, version.Id, new("unit.7z")));
+            var path = HistoryPhysicalLayoutV1.Create(Unit, version);
 
-        var proof = await new ArchivePhysicalPublisher().CaptureHistoryAsync(old, Root(current.FullName), Root(history.FullName), path, CancellationToken.None);
+            var proof = await new ArchivePhysicalPublisher().CaptureHistoryAsync(old, Root(current.FullName), Root(history.FullName), path, CancellationToken.None);
 
-        Assert.True(File.Exists(Path.Combine(current.FullName, "unit.7z")));
-        Assert.Equal(hash, proof.ObservedSha256);
-        Assert.Equal($"history-v1/{Unit.Value:D}/20260901T172315.123Z--{version.Id.Value:D}.7z", path.Value);
-        Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(history.FullName, path.Value.Replace('/', Path.DirectorySeparatorChar)), CancellationToken.None));
+            Assert.True(File.Exists(Path.Combine(current.FullName, "unit.7z")));
+            Assert.Equal(hash, proof.ObservedSha256);
+            Assert.Equal($"history-v1/{Unit.Value:D}/20260901T172315.123Z--{version.Id.Value:D}.7z", path.Value);
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(history.FullName, path.Value.Replace('/', Path.DirectorySeparatorChar)), CancellationToken.None));
         }
         finally { current.Delete(recursive: true); history.Delete(recursive: true); }
     }
@@ -44,13 +44,13 @@ public sealed class ArchivePhysicalPublisherTests
         var root = Directory.CreateTempSubdirectory("stowcrate-delete-");
         try
         {
-        await File.WriteAllTextAsync(Path.Combine(root.FullName, "unit.zip"), "unexpected", CancellationToken.None);
+            await File.WriteAllTextAsync(Path.Combine(root.FullName, "unit.zip"), "unexpected", CancellationToken.None);
 
-        var deleted = await new ArchivePhysicalPublisher().DeleteIfMatchesAsync(Root(root.FullName), new("unit.zip"),
-            Sha256Digest.Hash("expected"u8), 8, CancellationToken.None);
+            var deleted = await new ArchivePhysicalPublisher().DeleteIfMatchesAsync(Root(root.FullName), new("unit.zip"),
+                Sha256Digest.Hash("expected"u8), 8, CancellationToken.None);
 
-        Assert.False(deleted);
-        Assert.True(File.Exists(Path.Combine(root.FullName, "unit.zip")));
+            Assert.False(deleted);
+            Assert.True(File.Exists(Path.Combine(root.FullName, "unit.zip")));
         }
         finally { root.Delete(recursive: true); }
     }
@@ -115,6 +115,69 @@ public sealed class ArchivePhysicalPublisherTests
             var result = await publisher.DeleteDurablyIfMatchesAsync(Root(root.FullName), intent, CancellationToken.None);
             Assert.Equal(HistoryDeletionPhysicalStatus.UnsupportedObject, result.Status);
             Assert.NotNull(new FileInfo(full).LinkTarget);
+        }
+        finally { root.Delete(true); }
+    }
+
+    [Fact]
+    public async Task RetentionDeleteFailsClosedWhenLeafIdentityChangesAfterHashing()
+    {
+        var root = Directory.CreateTempSubdirectory("stowcrate-retention-race-");
+        try
+        {
+            var bytes = "expected"u8.ToArray(); var relative = new RelativeStoragePath("history-v1/unit/version.7z");
+            var full = Path.Combine(root.FullName, relative.Value.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!); await File.WriteAllBytesAsync(full, bytes);
+            var replacement = Path.Combine(root.FullName, "replacement"); await File.WriteAllTextAsync(replacement, "replacement");
+            var intent = new RetentionDeletionIntent(new(Guid.NewGuid()), Plan, Unit, new(Guid.NewGuid()), RetentionDeletionStage.Prepared,
+                relative, Sha256Digest.Hash(bytes), bytes.Length, 1, 1, DateTimeOffset.UtcNow);
+
+            var result = await new ArchivePhysicalPublisher(new SuccessfulBarrier(), new ReplaceBeforeIdentityCheck(replacement))
+                .DeleteDurablyIfMatchesAsync(Root(root.FullName), intent, CancellationToken.None);
+
+            Assert.Equal(HistoryDeletionPhysicalStatus.Mismatch, result.Status);
+            Assert.Equal("replacement", await File.ReadAllTextAsync(full));
+        }
+        finally { root.Delete(true); }
+    }
+
+    [Fact]
+    public async Task RetentionDeleteRejectsAncestorLinkWithoutTouchingTarget()
+    {
+        var root = Directory.CreateTempSubdirectory("stowcrate-retention-ancestor-");
+        var outside = Directory.CreateTempSubdirectory("stowcrate-retention-outside-");
+        try
+        {
+            var bytes = "expected"u8.ToArray(); var outsideFile = Path.Combine(outside.FullName, "version.7z"); await File.WriteAllBytesAsync(outsideFile, bytes);
+            var history = Directory.CreateDirectory(Path.Combine(root.FullName, "history-v1"));
+            try { Directory.CreateSymbolicLink(Path.Combine(history.FullName, "unit"), outside.FullName); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or PlatformNotSupportedException) { return; }
+            var intent = new RetentionDeletionIntent(new(Guid.NewGuid()), Plan, Unit, new(Guid.NewGuid()), RetentionDeletionStage.Prepared,
+                new("history-v1/unit/version.7z"), Sha256Digest.Hash(bytes), bytes.Length, 1, 1, DateTimeOffset.UtcNow);
+
+            var result = await new ArchivePhysicalPublisher(new SuccessfulBarrier()).DeleteDurablyIfMatchesAsync(Root(root.FullName), intent, CancellationToken.None);
+
+            Assert.Equal(HistoryDeletionPhysicalStatus.UnsupportedObject, result.Status); Assert.True(File.Exists(outsideFile));
+        }
+        finally { root.Delete(true); outside.Delete(true); }
+    }
+
+    [Fact]
+    public async Task HistoryInventoryReadsOnlyManagedNamespaceAndReportsUnknownContent()
+    {
+        var root = Directory.CreateTempSubdirectory("stowcrate-history-inventory-");
+        try
+        {
+            var managed = Directory.CreateDirectory(Path.Combine(root.FullName, "history-v1", "unit"));
+            var bytes = "history"u8.ToArray(); await File.WriteAllBytesAsync(Path.Combine(managed.FullName, "version.7z"), bytes);
+            await File.WriteAllTextAsync(Path.Combine(root.FullName, "user-file.txt"), "untouched");
+
+            var entries = await new ArchivePhysicalPublisher(new SuccessfulBarrier())
+                .InventoryManagedNamespaceAsync(Root(root.FullName), CancellationToken.None);
+
+            var artifact = Assert.Single(entries.Where(x => x.Kind is HistoryInventoryEntryKind.RegularFile));
+            Assert.Equal("history-v1/unit/version.7z", artifact.RelativePath.Value); Assert.Equal(Sha256Digest.Hash(bytes), artifact.Integrity);
+            Assert.DoesNotContain(entries, x => x.RelativePath.Value.Contains("user-file", StringComparison.Ordinal));
         }
         finally { root.Delete(true); }
     }
@@ -218,6 +281,10 @@ public sealed class ArchivePhysicalPublisherTests
     { public int Calls { get; private set; } public Task<PublishMetadataDurabilityProof> FlushDirectoryMetadataAsync(string destinationDirectory, CancellationToken cancellationToken) { Calls++; return Task.FromResult(new PublishMetadataDurabilityProof(true, "test")); } }
     private sealed class FailingBarrier : IArchivePublishMetadataDurabilityBarrier
     { public Task<PublishMetadataDurabilityProof> FlushDirectoryMetadataAsync(string destinationDirectory, CancellationToken cancellationToken) => throw new IOException("barrier failed"); }
+    private sealed class ReplaceBeforeIdentityCheck(string replacement) : IHistoryDeletionTestHook
+    {
+        public void BeforeFinalIdentityCheck(string path) { File.Delete(path); File.Move(replacement, path); }
+    }
 
     private static OutputRootLocalBinding Root(string path) => new(path, path, true);
 }

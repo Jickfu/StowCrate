@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Microsoft.EntityFrameworkCore;
 using StowCrate.Application.BackupPlans.Documents;
 using StowCrate.Application.BackupPlans.Resolution;
 using StowCrate.Application.LocalState;
@@ -188,11 +189,62 @@ public sealed class ConfigDbWorkflowIntegrationTests
         var snapshot = await database.Repository.LoadRetentionSnapshotAsync(plan.Id, unit.Id, CancellationToken.None); var victim = Assert.Single(snapshot.Entries);
         await database.Repository.BeginDeletionIntentsAsync(new(Guid.NewGuid()), plan.Id, unit.Id, 1, [victim], CancellationToken.None);
         var intent = Assert.Single(await database.Repository.ListDeletionIntentsAsync(false, CancellationToken.None));
+        await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => database.Repository.CompleteDeletionAsync(
+            intent with { SelectionId = new(Guid.NewGuid()) }, DateTimeOffset.UtcNow, CancellationToken.None));
+        Assert.Single((await database.Repository.LoadAsync(plan.Id, unit.Id, CancellationToken.None))!.History);
+        Assert.Equal(RetentionDeletionStage.Prepared, Assert.Single(await database.Repository.ListDeletionIntentsAsync(false, CancellationToken.None)).Stage);
+        var faulty = new ConfigDbRepository(new ConfigDbContextFactory(database.Path), new ThrowAtRetentionCompletion());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => faulty.CompleteDeletionAsync(intent, DateTimeOffset.UtcNow, CancellationToken.None));
+        var reopened = await ConfigDbOpenCoordinator.OpenAsync(database.Path);
+        Assert.Single((await reopened.LoadAsync(plan.Id, unit.Id, CancellationToken.None))!.History);
+        Assert.Equal(RetentionDeletionStage.Prepared, Assert.Single(await reopened.ListDeletionIntentsAsync(false, CancellationToken.None)).Stage);
         await database.Repository.CompleteDeletionAsync(intent, DateTimeOffset.UtcNow, CancellationToken.None);
 
         Assert.Empty((await database.Repository.LoadAsync(plan.Id, unit.Id, CancellationToken.None))!.History);
         Assert.Equal(ArchiveVersionLifecycle.Superseded, victim.Archive.Lifecycle);
         Assert.Equal(RetentionDeletionStage.Completed, Assert.Single(await database.Repository.ListDeletionIntentsAsync(true, CancellationToken.None)).Stage);
+    }
+
+    [Fact]
+    public async Task RetentionVictimAuthorizationRollsBackWholeSelectionWhenOnePlacementDrifts()
+    {
+        await using var database = await WorkflowDatabase.Create(); var (plan, unit) = await database.RegisterFixturePlan(); var f = Fingerprints();
+        var versions = new[]
+        {
+            ArchiveVersion.Prepare(new(Guid.NewGuid()), plan.Id, unit.Id, PortableArchiveFormat.SevenZip, f.ArchiveSpec).Verify(Sha256Digest.Hash("one"u8), 3).Publish(DateTimeOffset.UnixEpoch).Supersede(),
+            ArchiveVersion.Prepare(new(Guid.NewGuid()), plan.Id, unit.Id, PortableArchiveFormat.SevenZip, f.ArchiveSpec).Verify(Sha256Digest.Hash("two"u8), 3).Publish(DateTimeOffset.FromUnixTimeSeconds(1)).Supersede(),
+        };
+        var factory = new ConfigDbContextFactory(database.Path);
+        await using (var context = factory.Create())
+        {
+            foreach (var version in versions)
+            {
+                context.ArchiveVersions.Add(new()
+                {
+                    ArchiveVersionId = DurableCodecs.Uuid(version.Id.Value),
+                    PlanId = DurableCodecs.Uuid(plan.Id.Value),
+                    ArchiveUnitId = DurableCodecs.Uuid(unit.Id.Value),
+                    ArchiveFormat = "SEVEN_ZIP",
+                    ArchiveSpecFingerprint = DurableCodecs.Digest(version.ArchiveSpecFingerprint.Digest),
+                    Lifecycle = "SUPERSEDED",
+                    IntegritySha256 = DurableCodecs.Digest(version.Integrity!.Value),
+                    Length = version.Length,
+                    PublishedAtUtcMs = DurableCodecs.Utc(version.PublishedAtUtc!.Value)
+                });
+                context.HistoryVersionPlacements.Add(new() { ArchiveVersionId = DurableCodecs.Uuid(version.Id.Value), PlanId = DurableCodecs.Uuid(plan.Id.Value), ArchiveUnitId = DurableCodecs.Uuid(unit.Id.Value), HistoryRelativePath = $"history-v1/{unit.Id.Value:D}/{version.Id.Value:D}.7z" });
+            }
+            await context.SaveChangesAsync();
+        }
+        var snapshot = await database.Repository.LoadRetentionSnapshotAsync(plan.Id, unit.Id, CancellationToken.None);
+        await using (var context = factory.Create())
+        {
+            var drifted = await context.HistoryVersionPlacements.SingleAsync(x => x.ArchiveVersionId == DurableCodecs.Uuid(versions[1].Id.Value));
+            drifted.HistoryRelativePath = "history-v1/drifted.7z"; await context.SaveChangesAsync();
+        }
+
+        await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => database.Repository.BeginDeletionIntentsAsync(
+            new(Guid.NewGuid()), plan.Id, unit.Id, 1, snapshot.Entries, CancellationToken.None));
+        Assert.Empty(await database.Repository.ListDeletionIntentsAsync(true, CancellationToken.None));
     }
 
     private static PendingPublishIntent Intent(PlanId planId, ArchiveUnitId unitId, ArchiveVersionId versionId, Sha256Digest integrity)
@@ -214,7 +266,9 @@ public sealed class ConfigDbWorkflowIntegrationTests
     private sealed class WorkflowDatabase : IAsyncDisposable
     {
         private WorkflowDatabase(string directoryPath, string path, ConfigDbRepository repository) { DirectoryPath = directoryPath; Path = path; Repository = repository; }
-        public string DirectoryPath { get; } public string Path { get; } public ConfigDbRepository Repository { get; }
+        public string DirectoryPath { get; }
+        public string Path { get; }
+        public ConfigDbRepository Repository { get; }
         public static async Task<WorkflowDatabase> Create(bool registerDefaultPlan = true)
         {
             var directory = Directory.CreateTempSubdirectory("stowcrate-workflow-"); var path = System.IO.Path.Combine(directory.FullName, "config.db"); var repository = await ConfigDbOpenCoordinator.OpenAsync(path, Guid.NewGuid(), new DeviceId(Guid.NewGuid())); var value = new WorkflowDatabase(directory.FullName, path, repository); if (registerDefaultPlan) await value.RegisterFixturePlan(); return value;
@@ -222,4 +276,6 @@ public sealed class ConfigDbWorkflowIntegrationTests
         public async Task<(PortableBackupPlan Plan, AuthoredArchiveUnit Unit)> RegisterFixturePlan() { var plan = await ReadFixturePlan(); var source = new BackupPlanDocumentSource(); var existing = await ((IPlanRegistrationStore)Repository).LoadAsync(plan.Id, CancellationToken.None); if (existing is null) await new AuthoritativePlanWorkflow(Repository, source).CreateManagedAsync(plan, CancellationToken.None); return (plan, plan.ArchiveUnits[0]); }
         public ValueTask DisposeAsync() { Directory.Delete(DirectoryPath, recursive: true); return ValueTask.CompletedTask; }
     }
+    private sealed class ThrowAtRetentionCompletion : IMetadataCommitFaultInjector
+    { public void ThrowIfRequested(MetadataCommitFaultPoint point) { if (point is MetadataCommitFaultPoint.AfterRetentionCompletionMutation) throw new InvalidOperationException("injected"); } }
 }

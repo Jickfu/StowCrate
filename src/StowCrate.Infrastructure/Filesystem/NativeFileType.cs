@@ -1,10 +1,12 @@
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using StowCrate.Core.Filesystem;
 
 namespace StowCrate.Infrastructure.Filesystem;
 
 internal static class NativeFileType
 {
+    internal readonly record struct FileIdentity(ulong DeviceOrVolume, ulong FileId);
     private const uint IoReparseTagMountPoint = 0xA0000003;
     private const uint IoReparseTagSymbolicLink = 0xA000000C;
     private const uint UnixFileTypeMask = 0xF000;
@@ -15,6 +17,10 @@ internal static class NativeFileType
     private const int AtFileDescriptorCurrentWorkingDirectory = -100;
     private const int AtSymbolicLinkNoFollow = 0x100;
     private const uint StatXBasicStats = 0x7ff;
+    private const uint GenericRead = 0x80000000;
+    private const uint ShareReadWriteDelete = 0x00000007;
+    private const uint OpenExisting = 3;
+    private const uint FileFlagOpenReparsePoint = 0x00200000;
     private static readonly IntPtr InvalidHandleValue = new(-1);
 
     public static FileSystemEntryKind GetEntryKind(string path, bool isDirectory)
@@ -66,6 +72,34 @@ internal static class NativeFileType
         {
             _ = FindClose(handle);
         }
+    }
+
+    public static FileIdentity GetIdentityNoFollow(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            using var handle = CreateFile(path, GenericRead, ShareReadWriteDelete, IntPtr.Zero, OpenExisting, FileFlagOpenReparsePoint, IntPtr.Zero);
+            if (handle.IsInvalid) throw new IOException($"无法打开文件系统对象 identity：{path}", Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()));
+            if (!GetFileInformationByHandle(handle, out var information))
+                throw new IOException($"无法读取文件系统对象 identity：{path}", Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()));
+            return new(information.VolumeSerialNumber, ((ulong)information.FileIndexHigh << 32) | information.FileIndexLow);
+        }
+
+        var buffer = Marshal.AllocHGlobal(512);
+        try
+        {
+            var result = OperatingSystem.IsLinux()
+                ? StatX(AtFileDescriptorCurrentWorkingDirectory, path, AtSymbolicLinkNoFollow, StatXBasicStats, buffer)
+                : LStat(path, buffer);
+            if (result != 0) throw new IOException($"无法读取文件系统对象 identity：{path}");
+            if (OperatingSystem.IsMacOS())
+                return new(unchecked((uint)Marshal.ReadInt32(buffer, 0)), unchecked((ulong)Marshal.ReadInt64(buffer, 8)));
+            // Linux statx ABI 中 stx_ino 位于 32，stx_dev_major/minor 位于 136/140；组合后只用于同平台同轮次 identity 比较。
+            var device = ((ulong)unchecked((uint)Marshal.ReadInt32(buffer, 136)) << 32)
+                | unchecked((uint)Marshal.ReadInt32(buffer, 140));
+            return new(device, unchecked((ulong)Marshal.ReadInt64(buffer, 32)));
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
     }
 
     private static bool IsVolumeTarget(string path)
@@ -126,6 +160,29 @@ internal static class NativeFileType
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool FindClose(IntPtr findFile);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandle(SafeFileHandle file, out ByHandleFileInformation fileInformation);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "CreateFileW", SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(string fileName, uint desiredAccess, uint shareMode, IntPtr securityAttributes,
+        uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ByHandleFileInformation
+    {
+        public uint FileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct Win32FindData

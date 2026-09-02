@@ -5,9 +5,18 @@ using StowCrate.Core.ChangeDetection;
 
 namespace StowCrate.Infrastructure.Filesystem;
 
-public sealed class ArchivePhysicalPublisher(IArchivePublishMetadataDurabilityBarrier? durabilityBarrier = null) : IArchivePhysicalPublisher, IHistoryArtifactDeletionStore
+internal interface IHistoryDeletionTestHook { void BeforeFinalIdentityCheck(string path); }
+
+public sealed class ArchivePhysicalPublisher : IArchivePhysicalPublisher, IHistoryArtifactDeletionStore, IHistoryArtifactInventoryStore
 {
-    private readonly IArchivePublishMetadataDurabilityBarrier durability = durabilityBarrier ?? new PlatformArchivePublishMetadataDurabilityBarrier();
+    private readonly IArchivePublishMetadataDurabilityBarrier durability;
+    private readonly IHistoryDeletionTestHook? deletionTestHook;
+
+    public ArchivePhysicalPublisher(IArchivePublishMetadataDurabilityBarrier? durabilityBarrier = null) =>
+        durability = durabilityBarrier ?? new PlatformArchivePublishMetadataDurabilityBarrier();
+
+    internal ArchivePhysicalPublisher(IArchivePublishMetadataDurabilityBarrier durabilityBarrier, IHistoryDeletionTestHook deletionTestHook)
+    { durability = durabilityBarrier; this.deletionTestHook = deletionTestHook; }
     public async Task<PhysicalArchiveObservation?> ObserveAsync(OutputRootLocalBinding root, RelativeStoragePath path, CancellationToken cancellationToken)
     {
         var physical = Resolve(root, path);
@@ -87,6 +96,8 @@ public sealed class ArchivePhysicalPublisher(IArchivePublishMetadataDurabilityBa
         RetentionDeletionIntent intent, CancellationToken cancellationToken)
     {
         var path = Resolve(historyRoot, intent.HistoryRelativePath); var parent = Path.GetDirectoryName(path)!;
+        try { ValidateOrdinaryAncestors(historyRoot, intent.HistoryRelativePath); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new(HistoryDeletionPhysicalStatus.UnsupportedObject, ex.Message); }
         if (!PathEntryExists(path))
         {
             try { _ = await durability.FlushDirectoryMetadataAsync(parent, cancellationToken).ConfigureAwait(false); return new(HistoryDeletionPhysicalStatus.AlreadyAbsentDurably); }
@@ -95,12 +106,25 @@ public sealed class ArchivePhysicalPublisher(IArchivePublishMetadataDurabilityBa
         FileInfo info;
         try { info = new(path); info.Refresh(); if ((info.Attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory | FileAttributes.Device)) != 0 || info.LinkTarget is not null) return new(HistoryDeletionPhysicalStatus.UnsupportedObject, "Expected History path is a link, directory, or special object."); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new(HistoryDeletionPhysicalStatus.Failed, ex.Message); }
+        NativeFileType.FileIdentity identity;
+        try { identity = NativeFileType.GetIdentityNoFollow(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new(HistoryDeletionPhysicalStatus.Failed, ex.Message); }
         var first = await HashAsync(path, cancellationToken).ConfigureAwait(false);
         if (first.Hash != intent.ExpectedIntegrity || first.Length != intent.ExpectedLength) return new(HistoryDeletionPhysicalStatus.Mismatch, "History artifact integrity mismatch.");
         info.Refresh();
         if (!info.Exists || info.Length != first.Length || (info.Attributes & FileAttributes.ReparsePoint) != 0) return new(HistoryDeletionPhysicalStatus.Mismatch, "History artifact changed during destructive verification.");
         var second = await HashAsync(path, cancellationToken).ConfigureAwait(false);
         if (second != first) return new(HistoryDeletionPhysicalStatus.Mismatch, "History artifact changed during destructive verification.");
+        deletionTestHook?.BeforeFinalIdentityCheck(path);
+        try
+        {
+            // 再次逐级检查 namespace 并比较 native identity，检测同步工具常见的 rename/replace 漂移；不声称抵御主动 hostile race。
+            ValidateOrdinaryAncestors(historyRoot, intent.HistoryRelativePath);
+            if (NativeFileType.GetIdentityNoFollow(path) != identity)
+                return new(HistoryDeletionPhysicalStatus.Mismatch, "History artifact identity changed during destructive verification.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { return new(HistoryDeletionPhysicalStatus.Mismatch, ex.Message); }
         try { File.Delete(path); _ = await durability.FlushDirectoryMetadataAsync(parent, cancellationToken).ConfigureAwait(false); return new(HistoryDeletionPhysicalStatus.DeletedDurably); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new(HistoryDeletionPhysicalStatus.Failed, ex.Message); }
     }
@@ -109,6 +133,52 @@ public sealed class ArchivePhysicalPublisher(IArchivePublishMetadataDurabilityBa
     {
         var path = Resolve(historyRoot, intent.HistoryRelativePath); if (PathEntryExists(path)) return false;
         var proof = await durability.FlushDirectoryMetadataAsync(Path.GetDirectoryName(path)!, cancellationToken).ConfigureAwait(false); return proof.BarrierCompleted;
+    }
+
+    public async Task<System.Collections.Immutable.ImmutableArray<HistoryInventoryPhysicalEntry>> InventoryManagedNamespaceAsync(
+        OutputRootLocalBinding historyRoot, CancellationToken cancellationToken)
+    {
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(historyRoot.CanonicalPath));
+        var managed = Path.Combine(root, "history-v1");
+        if (!PathEntryExists(managed)) return [];
+        var results = System.Collections.Immutable.ImmutableArray.CreateBuilder<HistoryInventoryPhysicalEntry>();
+        await InspectDirectoryAsync(managed).ConfigureAwait(false);
+        return results.ToImmutable();
+
+        async Task InspectDirectoryAsync(string directory)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            FileAttributes directoryAttributes;
+            try { directoryAttributes = File.GetAttributes(directory); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { results.Add(PhysicalEntry(directory, HistoryInventoryEntryKind.Unreadable, ex.Message)); return; }
+            if ((directoryAttributes & FileAttributes.Directory) == 0 || (directoryAttributes & (FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
+            { results.Add(PhysicalEntry(directory, HistoryInventoryEntryKind.UnsupportedObject, "Managed namespace component is not an ordinary directory.")); return; }
+            IEnumerable<string> children;
+            try { children = Directory.EnumerateFileSystemEntries(directory).ToArray(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { results.Add(PhysicalEntry(directory, HistoryInventoryEntryKind.Unreadable, ex.Message)); return; }
+            foreach (var child in children)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    var attributes = File.GetAttributes(child);
+                    if ((attributes & FileAttributes.ReparsePoint) != 0 || (attributes & FileAttributes.Device) != 0)
+                    { results.Add(PhysicalEntry(child, HistoryInventoryEntryKind.UnsupportedObject, "Link, reparse point, or special object.")); continue; }
+                    if ((attributes & FileAttributes.Directory) != 0)
+                    { results.Add(PhysicalEntry(child, HistoryInventoryEntryKind.Directory, "Ordinary directory.")); await InspectDirectoryAsync(child).ConfigureAwait(false); continue; }
+                    var observed = await HashAsync(child, cancellationToken).ConfigureAwait(false);
+                    results.Add(PhysicalEntry(child, HistoryInventoryEntryKind.RegularFile, null, observed.Hash, observed.Length));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                { results.Add(PhysicalEntry(child, HistoryInventoryEntryKind.Unreadable, ex.Message)); }
+            }
+        }
+
+        HistoryInventoryPhysicalEntry PhysicalEntry(string path, HistoryInventoryEntryKind kind, string? detail,
+            Sha256Digest? integrity = null, long? length = null) => new(
+                new(Path.GetRelativePath(root, path).Replace(Path.DirectorySeparatorChar, '/')), kind, integrity, length, detail);
     }
 
     private static bool PathEntryExists(string path)
@@ -121,6 +191,19 @@ public sealed class ArchivePhysicalPublisher(IArchivePublishMetadataDurabilityBa
         }
         catch (FileNotFoundException) { return false; }
         catch (DirectoryNotFoundException) { return false; }
+    }
+
+    private static void ValidateOrdinaryAncestors(OutputRootLocalBinding root, RelativeStoragePath relativePath)
+    {
+        var current = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root.CanonicalPath));
+        var segments = relativePath.Value.Split('/');
+        for (var index = 0; index < segments.Length - 1; index++)
+        {
+            current = Path.Combine(current, segments[index]);
+            var attributes = File.GetAttributes(current);
+            if ((attributes & FileAttributes.Directory) == 0 || (attributes & (FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
+                throw new IOException($"History ancestor is not an ordinary directory: {segments[index]}");
+        }
     }
 
     private static async Task<PhysicalArchiveObservation> CopyVerifiedAsync(string source, string destination, Sha256Digest expected, long length, CancellationToken cancellationToken)

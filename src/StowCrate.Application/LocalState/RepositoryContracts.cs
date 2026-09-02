@@ -130,6 +130,8 @@ public readonly record struct RetentionSelectionId
 public enum RetentionDeletionStage { Prepared, Completed }
 public sealed record HistoryRetentionEntry(ArchiveVersion Archive, HistoryVersionPlacement Placement);
 public sealed record HistoryRetentionSnapshot(PlanId PlanId, ArchiveUnitId ArchiveUnitId, ImmutableArray<HistoryRetentionEntry> Entries);
+public sealed record HistoryInventorySnapshot(PlanId PlanId, ImmutableArray<HistoryRetentionEntry> Placements,
+    ImmutableArray<ArchiveVersion> SupersededVersions, ImmutableArray<RelativeStoragePath> LivePublishHistoryPaths);
 public sealed record RetentionDeletionIntent(
     RetentionSelectionId SelectionId, PlanId PlanId, ArchiveUnitId ArchiveUnitId, ArchiveVersionId ArchiveVersionId,
     RetentionDeletionStage Stage, RelativeStoragePath HistoryRelativePath, Sha256Digest ExpectedIntegrity, long ExpectedLength,
@@ -139,6 +141,7 @@ public sealed record RetentionDeletionIntent(
 public interface IHistoryRetentionDurableStore
 {
     Task<HistoryRetentionSnapshot> LoadRetentionSnapshotAsync(PlanId planId, ArchiveUnitId archiveUnitId, CancellationToken cancellationToken);
+    Task<HistoryInventorySnapshot> LoadHistoryInventorySnapshotAsync(PlanId planId, CancellationToken cancellationToken);
     Task BeginDeletionIntentsAsync(RetentionSelectionId selectionId, PlanId planId, ArchiveUnitId archiveUnitId,
         int keepLastVersionsCount, IReadOnlyCollection<HistoryRetentionEntry> victims, CancellationToken cancellationToken);
     Task<ImmutableArray<RetentionDeletionIntent>> ListDeletionIntentsAsync(bool includeCompleted, CancellationToken cancellationToken);

@@ -26,6 +26,70 @@ public interface IHistoryRetentionRecoveryCoordinator
     Task<HistoryRetentionRunResult> ReconcileAsync(PlanId planId, ArchiveUnitId unitId, OutputRootLocalBinding? historyRoot, CancellationToken cancellationToken);
 }
 
+public enum HistoryInventoryEntryKind { RegularFile, Directory, UnsupportedObject, Unreadable }
+public sealed record HistoryInventoryPhysicalEntry(RelativeStoragePath RelativePath, HistoryInventoryEntryKind Kind,
+    Sha256Digest? Integrity = null, long? Length = null, string? Detail = null);
+public interface IHistoryArtifactInventoryStore
+{
+    Task<ImmutableArray<HistoryInventoryPhysicalEntry>> InventoryManagedNamespaceAsync(OutputRootLocalBinding historyRoot, CancellationToken cancellationToken);
+}
+
+public enum HistoryReconciliationStatus { Healthy, HistoryMissing, HistoryCorruptOrReplaced, KnownUnplacedArtifact, UnknownOrAmbiguousOrphan }
+public sealed record HistoryReconciliationDiagnostic(HistoryReconciliationStatus Status, RelativeStoragePath RelativePath,
+    ArchiveUnitId? ArchiveUnitId, ArchiveVersionId? ArchiveVersionId, string? Detail = null);
+public sealed record HistoryReconciliationResult(PlanId PlanId, ImmutableArray<HistoryReconciliationDiagnostic> Diagnostics)
+{
+    public bool IsHealthy => Diagnostics.All(x => x.Status is HistoryReconciliationStatus.Healthy);
+    public MaintenanceStatus Status => IsHealthy ? MaintenanceStatus.Completed : MaintenanceStatus.OutOfSync;
+}
+public interface IHistoryOrphanReconciliationCoordinator
+{
+    Task<HistoryReconciliationResult> ReconcileAsync(PlanId planId, OutputRootLocalBinding historyRoot, CancellationToken cancellationToken);
+}
+
+public sealed class HistoryOrphanReconciliationWorkflow(IHistoryRetentionDurableStore durable, IHistoryArtifactInventoryStore physical)
+    : IHistoryOrphanReconciliationCoordinator
+{
+    public async Task<HistoryReconciliationResult> ReconcileAsync(PlanId planId, OutputRootLocalBinding historyRoot, CancellationToken cancellationToken)
+    {
+        var snapshot = await durable.LoadHistoryInventorySnapshotAsync(planId, cancellationToken).ConfigureAwait(false);
+        var physicalEntries = await physical.InventoryManagedNamespaceAsync(historyRoot, cancellationToken).ConfigureAwait(false);
+        var byPath = physicalEntries.ToDictionary(x => x.RelativePath);
+        var claimed = new HashSet<RelativeStoragePath>();
+        var diagnostics = ImmutableArray.CreateBuilder<HistoryReconciliationDiagnostic>();
+        foreach (var entry in snapshot.Placements)
+        {
+            claimed.Add(entry.Placement.RelativePath);
+            if (!byPath.TryGetValue(entry.Placement.RelativePath, out var observed))
+                diagnostics.Add(new(HistoryReconciliationStatus.HistoryMissing, entry.Placement.RelativePath, entry.Archive.ArchiveUnitId, entry.Archive.Id));
+            else if (observed.Kind is HistoryInventoryEntryKind.RegularFile && observed.Integrity == entry.Archive.Integrity && observed.Length == entry.Archive.Length)
+                diagnostics.Add(new(HistoryReconciliationStatus.Healthy, observed.RelativePath, entry.Archive.ArchiveUnitId, entry.Archive.Id));
+            else
+                diagnostics.Add(new(HistoryReconciliationStatus.HistoryCorruptOrReplaced, observed.RelativePath, entry.Archive.ArchiveUnitId, entry.Archive.Id, observed.Detail));
+        }
+
+        var deletionPaths = (await durable.ListDeletionIntentsAsync(true, cancellationToken).ConfigureAwait(false))
+            .Where(x => x.PlanId == planId).Select(x => x.HistoryRelativePath).ToHashSet();
+        claimed.UnionWith(deletionPaths); claimed.UnionWith(snapshot.LivePublishHistoryPaths);
+        var placedIds = snapshot.Placements.Select(x => x.Archive.Id).ToHashSet();
+        foreach (var archive in snapshot.SupersededVersions.Where(x => !placedIds.Contains(x.Id)))
+        {
+            var expectedPath = HistoryPhysicalLayoutV1.Create(archive.ArchiveUnitId, archive);
+            if (!claimed.Contains(expectedPath) && byPath.TryGetValue(expectedPath, out var observed))
+            {
+                claimed.Add(expectedPath);
+                diagnostics.Add(new(HistoryReconciliationStatus.KnownUnplacedArtifact, expectedPath, archive.ArchiveUnitId, archive.Id,
+                    observed.Kind is HistoryInventoryEntryKind.RegularFile && observed.Integrity == archive.Integrity && observed.Length == archive.Length
+                        ? "Known bytes have no placement or live workflow authority." : "Expected path does not match known immutable facts."));
+            }
+        }
+        diagnostics.AddRange(physicalEntries.Where(x => !claimed.Contains(x.RelativePath)
+                && !(x.Kind is HistoryInventoryEntryKind.Directory && claimed.Any(path => path.Value.StartsWith($"{x.RelativePath.Value}/", StringComparison.Ordinal))))
+            .Select(x => new HistoryReconciliationDiagnostic(HistoryReconciliationStatus.UnknownOrAmbiguousOrphan, x.RelativePath, null, null, x.Detail)));
+        return new(planId, diagnostics.ToImmutable());
+    }
+}
+
 public sealed class HistoryRetentionWorkflow(IHistoryRetentionDurableStore durable, IHistoryArtifactDeletionStore physical,
     IMaintenanceStateStore maintenance) : IHistoryRetentionRecoveryCoordinator
 {
