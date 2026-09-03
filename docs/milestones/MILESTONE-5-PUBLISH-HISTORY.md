@@ -51,3 +51,11 @@ Orphan reconciliation 不凭文件名、deterministic path 或裸 `ArchiveVersio
 最终实现提交为 `e872ed74c6f171d430d710ce660ff601a250bded`。本地 build 0 warning/error，334 项测试通过，EF model 无 pending change；GitHub Actions run `33628437400` 在 Windows、Ubuntu、macOS 全部通过。
 
 下一项：**M5.3 — Output Reorganization + Storage Relocation**。编码前必须先冻结跨 filesystem/SQLite relocation journal 与 crash recovery；同一 Archive Unit 存在 `PREPARED RetentionDeletionIntent` 时不得开始 History/Storage relocation。
+
+## M5.3 — Output Reorganization + Storage Relocation（IMPLEMENTING）
+
+按维护者最新授权，本阶段由 Codex 自行设计、实现和审查，不再等待外部 ChatGPT 评审。完成仍要求实现自审、build/tests 与跨平台 CI 证据。
+
+入口加固：普通 Local Binding 保存必须在事务内拒绝改变已有 placement 或恢复日志依赖的输出根，包含停用/省略；拒绝时不得部分更新 Source/External binding。无 placement/journal 的初始配置仍可编辑；保留原输出根时不阻止独立 Source/External 修改。该加固不表示物理 relocation 已实现。
+
+后续仍需冻结并实现 relocation journal、全量目标 verification、metadata authority switch、post-commit cleanup 及启动恢复；不得把 M3 的 metadata-only reorganization port 当作物理迁移用例，也不得标记本阶段 COMPLETE。

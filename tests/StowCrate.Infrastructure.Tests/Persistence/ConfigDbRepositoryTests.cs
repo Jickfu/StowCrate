@@ -224,6 +224,114 @@ public sealed class ConfigDbRepositoryTests
         Assert.NotNull(await database.Repository.LoadAsync(plan.Id, unit, TestContext.Current.CancellationToken));
     }
 
+    [Theory]
+    [InlineData("current", "CURRENT")]
+    [InlineData("history", "HISTORY")]
+    [InlineData("prepared", "CURRENT")]
+    [InlineData("prepared", "HISTORY")]
+    [InlineData("publish-completed", "HISTORY")]
+    [InlineData("retention-prepared", "HISTORY")]
+    [InlineData("retention-completed", "HISTORY")]
+    [InlineData("cleanup", "CURRENT")]
+    [InlineData("relocation", "HISTORY")]
+    [InlineData("reorganization", "CURRENT")]
+    public async Task OrdinaryBindingSaveCannotRedirectExistingStorageAuthority(string authority, string rootKind)
+    {
+        await using var database = await TestDatabase.Create();
+        var before = new DevicePlanLocalBindings(PlanId, DeviceId, [], new("/current", "/current", true), new("/history", "/history", true), []);
+        await database.Repository.SaveValidatedAggregateAsync(before, CancellationToken.None);
+        await SeedStorageAuthority(database, authority);
+        // inactive Plan 的 retained recovery state 也需要保护，不能用注销绕过迁移。
+        await database.Repository.SetActiveAsync(PlanId, false, CancellationToken.None);
+        var source = new SourceLocalBinding(new(Guid.NewGuid()), "/source", "/source", true);
+        var replacement = new OutputRootLocalBinding("/new-root", "/new-root", true);
+        var proposed = before with { Sources = [source], CurrentRoot = rootKind == "CURRENT" ? replacement : before.CurrentRoot,
+            HistoryRoot = rootKind == "HISTORY" ? replacement : before.HistoryRoot };
+
+        var error = await Assert.ThrowsAsync<StorageRelocationRequiredException>(() => database.Repository.SaveValidatedAggregateAsync(proposed, CancellationToken.None));
+        Assert.Equal(PlanId, error.PlanId);
+        Assert.Equal(rootKind, error.RootKind);
+        var reopened = await ConfigDbOpenCoordinator.OpenAsync(database.Path);
+        var unchanged = await reopened.LoadAsync(PlanId, CancellationToken.None);
+        Assert.Equal(before.CurrentRoot, unchanged!.CurrentRoot);
+        Assert.Equal(before.HistoryRoot, unchanged.HistoryRoot);
+        Assert.Empty(unchanged.Sources);
+
+        // 同一个 Plan 的其他 binding 修改不应被禁止。
+        await reopened.SaveValidatedAggregateAsync(before with { Sources = [source] }, CancellationToken.None);
+        Assert.Single((await reopened.LoadAsync(PlanId, CancellationToken.None))!.Sources);
+    }
+
+    [Theory]
+    [InlineData("omit")]
+    [InlineData("deactivate")]
+    [InlineData("key")]
+    [InlineData("path")]
+    public async Task ExistingCurrentRootCannotBeDisabledOrReinterpreted(string change)
+    {
+        await using var database = await TestDatabase.Create();
+        var before = new DevicePlanLocalBindings(PlanId, DeviceId, [], new("/current", "/current", true), null, []);
+        await database.Repository.SaveValidatedAggregateAsync(before, CancellationToken.None);
+        await SeedStorageAuthority(database, "current");
+        var root = before.CurrentRoot!;
+        var proposed = before with { CurrentRoot = change switch
+        {
+            "omit" => null,
+            "deactivate" => root with { IsActive = false },
+            "key" => root with { ComparisonKey = "/other" },
+            _ => root with { CanonicalPath = "/other" },
+        } };
+        await Assert.ThrowsAsync<StorageRelocationRequiredException>(() => database.Repository.SaveValidatedAggregateAsync(proposed, CancellationToken.None));
+        Assert.Equal(root, (await database.Repository.LoadAsync(PlanId, CancellationToken.None))!.CurrentRoot);
+    }
+
+    [Fact]
+    public async Task EmptyStorageRootsRemainEditableAndUnrelatedPlansDoNotBlock()
+    {
+        await using var database = await TestDatabase.Create();
+        await SeedStorageAuthority(database, "prepared");
+        var other = new PlanId(Guid.NewGuid());
+        await database.Repository.SaveFileBackedAsync(new(other, PlanAuthority.FileBacked, database.Path + ".other", true), CancellationToken.None);
+        var bindings = new DevicePlanLocalBindings(other, DeviceId, [], new("/first", "/first", true), new("/history", "/history", true), []);
+        await database.Repository.SaveValidatedAggregateAsync(bindings, CancellationToken.None);
+        var changed = bindings with { CurrentRoot = new("/second", "/second", true), HistoryRoot = null };
+        await database.Repository.SaveValidatedAggregateAsync(changed, CancellationToken.None);
+        var saved = await database.Repository.LoadAsync(other, CancellationToken.None);
+        Assert.Equal(changed.CurrentRoot, saved!.CurrentRoot);
+        Assert.False(saved.HistoryRoot!.IsActive);
+    }
+
+    private static async Task SeedStorageAuthority(TestDatabase database, string authority)
+    {
+        if (authority is "cleanup" or "relocation" or "reorganization")
+        {
+            var kind = authority == "cleanup" ? MaintenanceKind.OldCurrentPathCleanup
+                : authority == "relocation" ? MaintenanceKind.StorageRelocation : MaintenanceKind.OutputReorganization;
+            await database.Repository.SaveAsync(new MaintenanceState(PlanId, null, kind, MaintenanceStatus.OutOfSync, null, DateTimeOffset.UnixEpoch), CancellationToken.None);
+            return;
+        }
+        var prepared = Intent();
+        await database.Repository.BeginPublishAsync(prepared, CancellationToken.None);
+        if (authority == "prepared") return;
+        var published = prepared.MarkCurrentPublished(DateTimeOffset.UnixEpoch);
+        await database.Repository.SavePublishProgressAsync(published, CancellationToken.None);
+        await database.Repository.CompleteMetadataCommitAsync(published.RebuildMetadataCommitPlan(), CancellationToken.None);
+        if (authority == "publish-completed") return;
+        await database.Repository.CleanupCompletedPublishIntentsAsync(CancellationToken.None);
+        if (authority == "current") return;
+        await using var connection = database.Connection();
+        await connection.OpenAsync();
+        await Execute(connection, "DELETE FROM CommittedArchiveUnitBaseline; DELETE FROM CurrentVersion; UPDATE ArchiveVersion SET Lifecycle='SUPERSEDED'; INSERT INTO HistoryVersionPlacement SELECT ArchiveVersionId,PlanId,ArchiveUnitId,'history-v1/unit.7z' FROM ArchiveVersion");
+        if (authority == "history") return;
+        var snapshot = await database.Repository.LoadRetentionSnapshotAsync(PlanId, UnitId, CancellationToken.None);
+        await database.Repository.BeginDeletionIntentsAsync(new(Guid.NewGuid()), PlanId, UnitId, 1, snapshot.Entries, CancellationToken.None);
+        if (authority == "retention-completed")
+        {
+            var intent = Assert.Single(await database.Repository.ListDeletionIntentsAsync(false, CancellationToken.None));
+            await database.Repository.CompleteDeletionAsync(intent, DateTimeOffset.UnixEpoch, CancellationToken.None);
+        }
+    }
+
     private static PendingPublishIntent Intent()
         => Intent(PlanId, UnitId, VersionId);
 

@@ -60,6 +60,8 @@ Plan、Source、Archive Unit、External Source 与 Secret Slot 都具有与名�
 
 已有 Current/History 后改变 CurrentRoot 或 HistoryRoot 必须走受控 relocation：复制或 staging 到新 root、验证 SHA-256、发布完整目标后才提交 binding；失败继续以旧 root 为事实源。relocation 不重压缩、不创建新 ArchiveVersion、不推进 baseline。同一设备跨 Plan 还必须禁止任何 writable Current/History root 与其他 Plan 的 Source/Current/History root 重叠。
 
+普通路径设置不能通过省略、停用或改写输出根绕过上述迁移流程；已有备份位置或尚未收敛的恢复/清理工作依赖该根时，保存必须整体拒绝并报告需要受控迁移，保留原绑定。初次绑定及无此类持久状态的输出根仍可正常编辑。
+
 ### 4.2 归档箱与层级边界
 
 假设源树中 `B`、`D`、`F` 是 Archive Unit：

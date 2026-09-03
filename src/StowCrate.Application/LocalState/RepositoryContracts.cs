@@ -8,6 +8,12 @@ namespace StowCrate.Application.LocalState;
 public class LocalStateRepositoryException(string message, Exception? innerException = null) : Exception(message, innerException);
 public sealed class LocalStateConcurrencyException(string message, Exception? innerException = null) : LocalStateRepositoryException(message, innerException);
 public sealed class LocalStateCorruptionException(string message, Exception? innerException = null) : LocalStateRepositoryException(message, innerException);
+public sealed class StorageRelocationRequiredException(PlanId planId, string rootKind)
+    : LocalStateRepositoryException("Existing storage authority requires controlled relocation before changing an output root.")
+{
+    public PlanId PlanId { get; } = planId;
+    public string RootKind { get; } = rootKind;
+}
 public sealed class UnsupportedConfigDatabaseVersionException(int version)
     : LocalStateRepositoryException($"Config database schema version {version} is not supported.")
 {
@@ -46,6 +52,7 @@ public sealed record DevicePlanLocalBindings(PlanId PlanId, DeviceId DeviceId, I
 public interface IDevicePlanBindingStore
 {
     Task<DevicePlanLocalBindings?> LoadAsync(PlanId planId, CancellationToken cancellationToken);
+    /// <summary>普通保存不得重定向已有 placement 或恢复日志依赖的输出根；检查与写入必须在同一事务。</summary>
     Task SaveValidatedAggregateAsync(DevicePlanLocalBindings bindings, CancellationToken cancellationToken);
     Task<ImmutableArray<DevicePlanLocalBindings>> ListActiveRootFactsAsync(CancellationToken cancellationToken);
 }

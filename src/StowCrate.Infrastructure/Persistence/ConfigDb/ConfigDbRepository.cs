@@ -140,6 +140,7 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
         {
             var metadata = await db.DatabaseMetadata.AsNoTracking().SingleAsync(cancellationToken);
             if (DurableCodecs.Uuid(metadata.DeviceId) != bindings.DeviceId.Value) throw new LocalStateCorruptionException("Binding aggregate DeviceId differs from config database identity.");
+            await ValidateOutputRootChangesAsync(db, plan, bindings, cancellationToken);
             await UpsertBindings(db, plan, bindings, cancellationToken); await db.SaveChangesAsync(cancellationToken); await tx.CommitAsync(cancellationToken);
         }
         catch (Exception exception) { throw Translate(exception, "Local binding aggregate could not be saved."); }
@@ -521,6 +522,35 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
 
     private static async Task ReplaceBaseline(ConfigDbContext db, DurableUnitMetadataCommitPlan commit, CancellationToken token) { var plan = DurableCodecs.Uuid(commit.PublishedArchive.PlanId.Value); var unit = DurableCodecs.Uuid(commit.PublishedArchive.ArchiveUnitId.Value); await db.CommittedArchiveUnitBaselines.Where(x => x.PlanId == plan && x.ArchiveUnitId == unit).ExecuteDeleteAsync(token); var f = commit.BaselineCandidate.Fingerprints; var c = f.Components; db.CommittedArchiveUnitBaselines.Add(new() { PlanId = plan, ArchiveUnitId = unit, ArchiveVersionId = DurableCodecs.Uuid(commit.PublishedArchive.Id.Value), FingerprintEncodingVersion = f.EncodingVersion, RulesSemanticsVersion = f.Semantics.Rules, ArchiveSemanticsVersion = f.Semantics.Archive, OutputPathEncodingVersion = f.Semantics.OutputPathEncoding, EntrySetFingerprint = DurableCodecs.Digest(f.EntrySet.Digest), SelectionFingerprint = DurableCodecs.Digest(f.Selection.Digest), ArchiveSpecFingerprint = DurableCodecs.Digest(f.ArchiveSpec.Digest), RulesComponent = DurableCodecs.Digest(c.Rules.Digest), BoundaryComponent = DurableCodecs.Digest(c.Boundary.Digest), LinkPolicyComponent = DurableCodecs.Digest(c.LinkPolicy.Digest), ExternalMappingComponent = DurableCodecs.Digest(c.ExternalMapping.Digest), FormatComponent = DurableCodecs.Digest(c.Format.Digest), CompressionComponent = DurableCodecs.Digest(c.Compression.Digest), ProtectionComponent = DurableCodecs.Digest(c.Protection.Digest), ManifestComponent = DurableCodecs.Digest(c.Manifest.Digest) }); await db.SaveChangesAsync(token); }
     private static async Task ReplaceLayout(ConfigDbContext db, CommittedOutputLayoutState value, CancellationToken token) { var plan = DurableCodecs.Uuid(value.PlanId.Value); var unit = DurableCodecs.Uuid(value.ArchiveUnitId.Value); var row = await db.CommittedOutputLayoutStates.SingleOrDefaultAsync(x => x.PlanId == plan && x.ArchiveUnitId == unit, token); if (row is null) { row = new() { PlanId = plan, ArchiveUnitId = unit }; db.CommittedOutputLayoutStates.Add(row); } row.OutputLayoutFingerprint = DurableCodecs.Digest(value.Fingerprint.Digest); await db.SaveChangesAsync(token); }
+
+    private static async Task ValidateOutputRootChangesAsync(ConfigDbContext db, byte[] plan, DevicePlanLocalBindings value, CancellationToken token)
+    {
+        var roots = await db.OutputRootLocalBindings.AsNoTracking().Where(x => x.PlanId == plan).ToListAsync(token);
+        bool Changed(string kind, OutputRootLocalBinding? proposed)
+        {
+            var previous = roots.SingleOrDefault(x => x.RootKind == kind);
+            if (previous is null) return proposed is not null;
+            // 省略 root 的现有保存语义是停用而非删除；已停用且未改路径才是无变化。
+            if (proposed is null) return previous.IsActive != 0;
+            return previous.CanonicalPath != proposed.CanonicalPath || previous.ComparisonKey != proposed.ComparisonKey
+                || previous.IsActive != DurableCodecs.Boolean(proposed.IsActive);
+        }
+
+        var currentChanged = Changed("CURRENT", value.CurrentRoot);
+        var historyChanged = Changed("HISTORY", value.HistoryRoot);
+        if (!currentChanged && !historyChanged) return;
+
+        // 日志尚存时不能借普通 binding save 改变恢复时的 root 解释，包括已完成但尚未 compact 的删除授权。
+        // 此检查与 UpsertBindings 共用 SQLite 事务，不能依赖 UI 或事务外的预检查。
+        var hasJournal = await db.PublishIntents.AnyAsync(x => x.PlanId == plan, token)
+            || await db.RetentionDeletionIntents.AnyAsync(x => x.PlanId == plan, token)
+            || await db.MaintenanceStates.AnyAsync(x => x.PlanId == plan && x.Status != "COMPLETED"
+                && (x.Kind == "OLD_CURRENT_PATH_CLEANUP" || x.Kind == "STORAGE_RELOCATION" || x.Kind == "OUTPUT_REORGANIZATION"), token);
+        if (currentChanged && (hasJournal || await db.CurrentVersions.AnyAsync(x => x.PlanId == plan, token)))
+            throw new StorageRelocationRequiredException(value.PlanId, "CURRENT");
+        if (historyChanged && (hasJournal || await db.HistoryVersionPlacements.AnyAsync(x => x.PlanId == plan, token)))
+            throw new StorageRelocationRequiredException(value.PlanId, "HISTORY");
+    }
 
     private static async Task UpsertBindings(ConfigDbContext db, byte[] plan, DevicePlanLocalBindings value, CancellationToken token)
     {
