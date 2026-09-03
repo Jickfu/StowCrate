@@ -380,6 +380,8 @@ ArchiveVersion 的 durable identity 与 placement 分离：只记录 VersionId�
 
 # M5.2 retention durability boundary
 
+M5.3 Plan-scoped Output Reorganization / Storage Relocation 协议见 [`plan/STORAGE-MAINTENANCE-v1.md`](plan/STORAGE-MAINTENANCE-v1.md)。全量目标 durable 后才可原子切换 metadata，旧副本清理在 commit 后；当前按协议分层实现，不能把 progress kernel 或 metadata-only port 当作已交付物理迁移。
+
 History retention 是独立于 publish commit 的 destructive maintenance。每个自动删除必须先有 artifact-level durable intent；filesystem deletion 与 SQLite placement removal 不能假装是一个跨系统事务，而由 `PREPARED` journal、物理 absence/integrity observation、directory metadata durability barrier 和原子 metadata completion 实现可恢复性。粗粒度 `MaintenanceState` 只汇总健康状态，不能授权具体路径删除。
 
 未知 HistoryRoot 内容以及只有 identity/hash、没有活动 workflow journal 的 artifact 不具备删除或 metadata 修复授权。未来 History relocation 与同单元 active PREPARED retention intent 必须互斥。
