@@ -69,3 +69,5 @@ config.db v4 已增加 root relocation 的 pre-commit manifest/progress journal 
 切换事务已调用全量物理重验端口：重新验证 sealed manifest/progress 完整集合、空根、旧/新对象、目标目录 barrier 和 temp absence；不复用历史 proof 作为当前磁盘事实，不重建缺失路径。
 
 迁移专用配置观察入口不要求输入 binding、FILE_MANAGED discovery 或解密密钥。提交使用独立 identity/layout fingerprint：无关名称/调度/规则/压缩级别变更不阻断，相关变化则拒绝。完整 Plan fingerprint 仅用于发现变化，不作为提交授权。失败事务保留旧根；成功后旧副本、baseline/ArchiveVersion 与 reservation 保留，等待后续安全清理。
+
+提交后 exact old-copy 物理清理适配器已实现：匹配新副本与旧 identity/bytes 后仅删除 manifest 指定文件，完成目录 barrier/absence re-proof，未知文件与目录保留；支持删除后故障的 absence 重试。它尚不保存 cleanup progress 或释放 reservation，不能视为完整 cleanup workflow；启动恢复与持久化清理状态继续待办。

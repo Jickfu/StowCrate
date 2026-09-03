@@ -73,7 +73,17 @@ Application 负责不可变 progress kernel、事务编排、recovery classifica
 
 ## 6. 已实现的物理 pre-commit 适配器
 
-`StorageRelocationPhysicalStore` 只消费 repository 已恢复的 journal，提供 Stage 和 PublishTarget；上层必须先保存 staged proof，再以新的 journal 调用 PublishTarget。它不切换 metadata、不删除旧文件、不清理未知 temp，也没有默认接入 App/CLI。
+`StorageRelocationPhysicalStore` 只消费 repository 已恢复的 journal，提供 Stage 和 PublishTarget；上层必须先保存 staged proof，再以新的 journal 调用 PublishTarget。这两个 pre-commit 方法不切换 metadata、不删除旧文件、不清理未知 temp，也没有默认接入 App/CLI。提交后清理使用下面独立的接口。
+
+### 6.1 已提交旧副本物理清理
+
+`IStorageRelocationOldCopyStore.RemoveOldCopyAsync` 只接受 MetadataCommitted journal 与 manifest 内 VersionId，重验该条目的 old/new roots、no-follow ancestors、新副本 identity/SHA-256/length，再验证旧副本的原始 identity 与 bytes。先探测旧父目录 barrier，再重验目标/旧副本，最后只删除 exact old file；不删除目录、unknown temp 或未在 manifest 中列出的内容。已有 OldCopyAbsent 记录后旧路径重新出现，一律不再授权删除。
+
+删除后忽略 caller cancellation，完成旧父目录 barrier 与 absence re-proof 后返回关联 transaction/Plan/revision/artifact/old-root/old-object/target identity 的强类型 proof。删除前 barrier 不可用时保留旧文件；删除后 barrier 失败时不返回 proof，保留已提交日志，下一次按 absent 重新执行 barrier。missing ancestor/root drift 不当作可信 absence。新根不回滚。
+
+该物理接口不写 SQLite，不持久化 cleanup completion，也不释放 reservation；调用方必须从 durable repository 加载日志，并在未来清理编排中重验当前新 binding/placement。当前仅物理适配器和组合测试已接入，cleanup progress persistence、启动恢复编排与 compaction 仍待实现。基于 path 的最后 identity 重验检测正常替换，不宣称防御所有主动 hostile race。
+
+### 6.2 pre-commit 验证细节
 
 Stage 使用 destination-local CreateNew、流式 SHA-256/length、WriteThrough/flush-to-disk、创建时的 native temp identity，以及源/目标根与祖先 no-follow 重验。PublishTarget 只接受已记录的 staged identity，no-overwrite rename 后重做目录 barrier 和最终 integrity/identity 验证；如果 rename 已发生而 journal 落后，只有 target 是同一对象且 temp 已不存在才可补发证明。不同对象的相同 bytes 不构成 adoption authority。
 

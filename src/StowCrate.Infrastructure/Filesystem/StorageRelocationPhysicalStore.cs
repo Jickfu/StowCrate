@@ -7,8 +7,8 @@ using StowCrate.Core.Filesystem;
 
 namespace StowCrate.Infrastructure.Filesystem;
 
-/// <summary>只复制并发布目标；不切换 binding、不删除旧副本，也不清除缺少 durable identity 的临时文件。</summary>
-public sealed class StorageRelocationPhysicalStore(IArchivePublishMetadataDurabilityBarrier? durabilityBarrier = null) : IStorageRelocationPhysicalStore
+/// <summary>物理复制/发布及提交后的 exact old-copy cleanup；不切换 binding，也不清除未知临时文件或目录。</summary>
+public sealed class StorageRelocationPhysicalStore(IArchivePublishMetadataDurabilityBarrier? durabilityBarrier = null) : IStorageRelocationPhysicalStore, IStorageRelocationOldCopyStore
 {
     private readonly IArchivePublishMetadataDurabilityBarrier durability = durabilityBarrier ?? new PlatformArchivePublishMetadataDurabilityBarrier();
 
@@ -147,6 +147,54 @@ public sealed class StorageRelocationPhysicalStore(IArchivePublishMetadataDurabi
                 throw new IOException("Relocation temporary entry reappeared before commit.");
         }
         cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    public async Task<StorageRelocationOldCopyAbsenceProof> RemoveOldCopyAsync(StorageRelocationJournal journal,
+        ArchiveVersionId versionId, CancellationToken cancellationToken)
+    {
+        ValidateJournalSet(journal, StorageTransferStage.MetadataCommitted);
+        cancellationToken.ThrowIfCancellationRequested();
+        var entry = journal.Manifest.Entries.Single(x => x.Artifact.VersionId == versionId);
+        var progress = journal.Progress.Artifacts.Single(x => x.Artifact.VersionId == versionId);
+        var root = journal.Manifest.Roots.Single(x => x.Kind == entry.RootKind);
+        var targetIdentity = progress.StagedIdentity ?? throw new InvalidOperationException("Committed target identity is missing.");
+        var old = Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
+        var target = Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath);
+        await VerifyAsync(target, targetIdentity, entry.Artifact, cancellationToken).ConfigureAwait(false);
+        var existed = Exists(old);
+        if (existed)
+        {
+            // 已记录清理完成后再次出现的对象没有新的删除授权，不能凭旧 journal 重复认领。
+            if (progress.Stage == StorageTransferArtifactStage.OldCopyAbsent)
+                throw new IOException("Old relocation entry reappeared after recorded cleanup.");
+            await VerifyAsync(old, entry.OldIdentity, entry.Artifact, cancellationToken).ConfigureAwait(false);
+        }
+        var parent = Path.GetDirectoryName(old)!;
+        // 先验证该目录支持 barrier；能力不可用时尚未删除任何旧文件。
+        await BarrierAsync(parent, cancellationToken).ConfigureAwait(false);
+        Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath);
+        await VerifyAsync(target, targetIdentity, entry.Artifact, cancellationToken).ConfigureAwait(false);
+        Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
+        if (existed)
+        {
+            await VerifyAsync(old, entry.OldIdentity, entry.Artifact, cancellationToken).ConfigureAwait(false);
+            Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
+            RequireIdentity(old, false, entry.OldIdentity);
+            Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath);
+            RequireIdentity(target, false, targetIdentity);
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Delete(old);
+        }
+        else if (Exists(old)) throw new IOException("Old relocation entry appeared during absence reconciliation.");
+
+        // 删除后不响应 caller cancellation，直到 directory barrier 和 absence re-proof 收敛；失败仍保留 journal。
+        await BarrierAsync(parent, CancellationToken.None).ConfigureAwait(false);
+        Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
+        if (Exists(old)) throw new IOException("Old relocation entry is not absent after cleanup.");
+        Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath);
+        RequireIdentity(target, false, targetIdentity);
+        return new(journal.Manifest.TransactionId, journal.Manifest.PlanId, journal.Revision, entry.Artifact,
+            root.OldIdentity, entry.OldIdentity, targetIdentity);
     }
 
     private static void VerifyRoots(StorageRelocationJournal journal)

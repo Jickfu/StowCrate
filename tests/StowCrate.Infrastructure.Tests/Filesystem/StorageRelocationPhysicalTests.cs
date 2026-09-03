@@ -256,6 +256,126 @@ public sealed class StorageRelocationPhysicalTests
         return journal with { Progress = journal.Progress.SealTargets(), Revision = journal.Revision + 1 };
     }
 
+    [Fact]
+    public async Task CleanupDeletesOnlyCommittedExactOldCopyAndKeepsUnknownFiles()
+    {
+        using var fixture = new Fixture();
+        var journal = await CommittedPhysicalFixtureAsync(fixture);
+        var unknown = Path.Combine(Path.GetDirectoryName(fixture.Source)!, "unknown.txt");
+        await File.WriteAllTextAsync(unknown, "unowned");
+        var proof = await new StorageRelocationPhysicalStore(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, default);
+        Assert.False(File.Exists(fixture.Source));
+        Assert.True(Directory.Exists(Path.GetDirectoryName(fixture.Source)));
+        Assert.Equal("unowned", await File.ReadAllTextAsync(unknown));
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Target));
+        Assert.Equal(journal.Manifest.TransactionId, proof.TransactionId);
+        Assert.Equal(journal.Revision, proof.JournalRevision);
+        Assert.Equal(journal.Manifest.Entries[0].OldIdentity, proof.OldIdentity);
+        Assert.Equal(StorageTransferStage.MetadataCommitted, journal.Progress.Stage);
+    }
+
+    [Fact]
+    public async Task CleanupCannotUsePreCommitProgressAsDeletionAuthority()
+    {
+        using var fixture = new Fixture();
+        var journal = await PublishAllAsync(fixture.Journal);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new StorageRelocationPhysicalStore(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, default));
+        Assert.True(File.Exists(fixture.Source));
+    }
+
+    [Theory]
+    [InlineData("old-bytes")]
+    [InlineData("old-identity")]
+    [InlineData("target-bytes")]
+    [InlineData("target-identity")]
+    [InlineData("old-root")]
+    [InlineData("target-root")]
+    public async Task CleanupRefusesChangedOldOrNewObjects(string drift)
+    {
+        using var fixture = new Fixture();
+        var journal = await CommittedPhysicalFixtureAsync(fixture);
+        var root = journal.Manifest.Roots[0];
+        var survivingOld = fixture.Source;
+        switch (drift)
+        {
+            case "old-bytes": await File.WriteAllBytesAsync(fixture.Source, new byte[fixture.Bytes.Length]); break;
+            case "target-bytes": await File.WriteAllBytesAsync(fixture.Target, new byte[fixture.Bytes.Length]); break;
+            case "old-identity":
+                File.Move(fixture.Source, fixture.Source + ".held");
+                await File.WriteAllBytesAsync(fixture.Source, fixture.Bytes); break;
+            case "target-identity":
+                File.Move(fixture.Target, fixture.Target + ".held");
+                await File.WriteAllBytesAsync(fixture.Target, fixture.Bytes); break;
+            case "old-root":
+                Directory.Move(root.OldRoot.CanonicalPath, root.OldRoot.CanonicalPath + ".held");
+                Directory.CreateDirectory(root.OldRoot.CanonicalPath);
+                survivingOld = Path.Combine(root.OldRoot.CanonicalPath + ".held", "资料", "单元.7z"); break;
+            case "target-root":
+                Directory.Move(fixture.NewRoot, fixture.NewRoot + ".held");
+                Directory.CreateDirectory(fixture.NewRoot); break;
+        }
+        await Assert.ThrowsAnyAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, default));
+        Assert.True(File.Exists(survivingOld));
+    }
+
+    [Fact]
+    public async Task CleanupAfterDeleteBarrierFailureReconcilesAbsenceWithoutRollback()
+    {
+        using var fixture = new Fixture();
+        var journal = await CommittedPhysicalFixtureAsync(fixture);
+        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new FailSecondBarrier()).RemoveOldCopyAsync(journal, fixture.Version, default));
+        Assert.False(File.Exists(fixture.Source));
+        var proof = await new StorageRelocationPhysicalStore(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, default);
+        Assert.Equal(fixture.Version, proof.Artifact.VersionId);
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Target));
+    }
+
+    [Fact]
+    public async Task CleanupUnavailableBarrierAndPreCancellationPreserveOldCopy()
+    {
+        using var fixture = new Fixture();
+        var journal = await CommittedPhysicalFixtureAsync(fixture);
+        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier(false)).RemoveOldCopyAsync(journal, fixture.Version, default));
+        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new StorageRelocationPhysicalStore(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, cancellation.Token));
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
+    }
+
+    [Fact]
+    public async Task CleanupIgnoresCancellationAfterDeleteAndRejectsReappearedEntry()
+    {
+        using var fixture = new Fixture();
+        var journal = await CommittedPhysicalFixtureAsync(fixture);
+        using var cancellation = new CancellationTokenSource();
+        var store = new StorageRelocationPhysicalStore(new CancelAfterDeleteBarrier(fixture.Source, cancellation));
+        await store.RemoveOldCopyAsync(journal, fixture.Version, cancellation.Token);
+        Assert.True(cancellation.IsCancellationRequested);
+        await File.WriteAllBytesAsync(fixture.Source, fixture.Bytes);
+        var recorded = journal with { Progress = journal.Progress.RecordOldCopyAbsent(fixture.Version) };
+        await Assert.ThrowsAsync<IOException>(() => store.RemoveOldCopyAsync(recorded, fixture.Version, default));
+        Assert.True(File.Exists(fixture.Source));
+    }
+
+    // 物理适配器测试显式模拟已提交日志；真实 metadata commit 另有 SQLite 组合测试，不能由内存进度授权用户文件删除。
+    private static async Task<StorageRelocationJournal> CommittedPhysicalFixtureAsync(Fixture fixture)
+    {
+        var journal = await PublishAllAsync(fixture.Journal);
+        return journal with { Progress = journal.Progress.MarkMetadataCommitted(), Revision = journal.Revision + 1 };
+    }
+
+    private sealed class CancelAfterDeleteBarrier(string oldPath, CancellationTokenSource cancellation) : IArchivePublishMetadataDurabilityBarrier
+    {
+        public Task<PublishMetadataDurabilityProof> FlushDirectoryMetadataAsync(string path, CancellationToken token)
+        {
+            if (!File.Exists(oldPath))
+            {
+                cancellation.Cancel();
+                Assert.False(token.CanBeCanceled);
+            }
+            return Task.FromResult(new PublishMetadataDurabilityProof(true, "test-only"));
+        }
+    }
+
     private sealed class FailSecondBarrier : IArchivePublishMetadataDurabilityBarrier
     {
         private int calls;

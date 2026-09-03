@@ -52,6 +52,11 @@ public sealed class ConfigDbWorkflowIntegrationTests
         Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(oldRoot, path.Value)));
         Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(newRoot, path.Value)));
         Assert.Equivalent(state.Baseline, (await database.Repository.LoadAsync(plan.Id, unit.Id, default))!.Baseline);
+        var cleanupProof = await physical.RemoveOldCopyAsync(committed, version, default);
+        Assert.Equal(committed.Revision, cleanupProof.JournalRevision);
+        Assert.False(File.Exists(Path.Combine(oldRoot, path.Value)));
+        Assert.Equal(newRoot, (await database.Repository.LoadAsync(plan.Id, default))!.CurrentRoot!.CanonicalPath);
+        Assert.Equal(StorageTransferStage.MetadataCommitted, (await database.Repository.LoadRelocationAsync(plan.Id, default))!.Progress.Stage);
     }
 
     // 组合流程测试使用真实文件/SQLite，但注入 barrier，不声称证明平台突然断电持久性。
