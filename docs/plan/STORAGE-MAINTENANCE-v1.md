@@ -22,6 +22,10 @@ authoritative Plan 文档与 registration 必须有效；File-backed 文档即�
 
 ### 2.2 冻结集合
 
+维护者已确认配置漂移策略：外部编辑 File-backed 文档仅改变名称/描述、定时任务、过滤规则或压缩级别时，不阻断现有归档搬迁；改变 Plan/Source/Archive Unit identity、unit 的来源/path/规则来源、SourceOutputPath、输出编码或有效归档格式时，属于 identity/layout drift，保留旧 authority/journal 并拒绝提交。格式决定输出扩展名，不能与压缩级别混为一谈。停用、authority/registration path 改变及配置无效也拒绝；root/binding drift 继续由事务内冻结 binding 与 reservation 校验负责。
+
+`StorageRelocationConfigurationFingerprint` 使用独立 canonical domain `storage-relocation-configuration-v1`，固定编码版本 1；按 UUID 排序 Source 与 declared Unit，保存 identity/layout 投影，并保守纳入默认格式以覆盖离线时不可重新发现的未声明 FILE_MANAGED 单元。其他只影响未来归档内容或维护策略的配置不进入该指纹；此规则不放宽未完成迁移期间已有的数据库 mutation 互斥。`RevalidateAsync` 重读有效配置并比较该投影，不以完整 Plan fingerprint 或 Managed revision 的变化直接阻断。当前尚未把新指纹写入 journal，不重新解释既有 `ExecutionSemanticDigest`。
+
 `StorageRelocationConfigurationReader` 已提供独立的配置观察入口：复用 strict authoritative reader，每次重新取得 active Plan，并返回 authority/revision 与完整 `PlanSemanticFingerprint`。该指纹只用于发现配置变化，不是 `ExecutionSemanticDigest`，不裁定任意配置变化是否阻止迁移，也不单独构成 commit permission。入口不依赖 Source/External binding、FILE_MANAGED discovery 或 Secret material；root safety 与物理完整性仍由其他门槛负责。当前尚未把观察结果接入版本化 journal/原子切换事务。
 
 Begin transaction 必须重验 active registration、expected roots/placements/layout、迁移条目集合完整性及全设备 root safety。相同 Plan 不得有未完成 publish、PREPARED retention 或未完成 storage maintenance。COMPLETED retention 必须先完成旧根 absence reconciliation/compaction；旧路径 cleanup 必须先收敛。

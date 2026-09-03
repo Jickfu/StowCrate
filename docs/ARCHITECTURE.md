@@ -380,6 +380,8 @@ ArchiveVersion 的 durable identity 与 placement 分离：只记录 VersionId�
 
 # M5.2 retention durability boundary
 
+M5.3 配置 stale check 使用独立的 `StorageRelocationConfigurationFingerprint` identity/layout 投影，不复用 backup execution fingerprint。名称、定时、过滤规则、压缩级别变化不使迁移失效；authority、registration、identity/layout drift 则拒绝继续，root/binding safety 与 journal CAS 仍在事务边界独立重验。当前配置读取器已实现该比较，但新指纹尚未写入 durable manifest，metadata switch 仍待接入。
+
 M5.3 Plan-scoped Output Reorganization / Storage Relocation 协议见 [`plan/STORAGE-MAINTENANCE-v1.md`](plan/STORAGE-MAINTENANCE-v1.md)。全量目标 durable 后才可原子切换 metadata，旧副本清理在 commit 后；当前按协议分层实现，不能把 progress kernel 或 metadata-only port 当作已交付物理迁移。
 
 Root relocation 的前置检查必须与 backup execution readiness 分离：通过 authoritative document/registration 与 durable storage facts 验证迁移，不以 `ExecutionReadyArchive`、源扫描、FILE_MANAGED discovery、Secret Store 或归档解密能力为前提。原始 Source/External 离线不阻止已有归档搬迁；持久 local root safety facts 仍需重验，未知/冲突安全事实不得放行。旧/新 archive roots 与字节完整性必须现场验证。该许可不放宽正常备份的 source/secret readiness，也不允许 File-backed 文档缺失时回退缓存。

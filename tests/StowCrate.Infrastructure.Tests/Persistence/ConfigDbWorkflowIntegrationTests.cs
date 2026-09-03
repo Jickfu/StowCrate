@@ -58,11 +58,13 @@ public sealed class ConfigDbWorkflowIntegrationTests
         await File.WriteAllBytesAsync(path, source.Write(plan).CanonicalUtf8Payload.ToArray());
         await workflow.RegisterFileBackedAsync(path, default);
         var reader = new StorageRelocationConfigurationReader(workflow);
-        await reader.ReadAsync(plan.Id, default);
+        var captured = await reader.ReadAsync(plan.Id, default);
+        await File.WriteAllBytesAsync(path, source.Write(CopyWithName(plan, "renamed during relocation")).CanonicalUtf8Payload.ToArray());
+        Assert.Equal("renamed during relocation", (await reader.RevalidateAsync(captured, default)).Snapshot.Plan.Name);
         if (drift == "missing") File.Move(path, path + ".unavailable");
         else if (drift == "invalid") await File.WriteAllTextAsync(path, "{ invalid");
         else await File.WriteAllBytesAsync(path, source.Write(CloneWithNewIdentities(plan)).CanonicalUtf8Payload.ToArray());
-        await Assert.ThrowsAsync<BackupPlanDocumentSourceException>(() => reader.ReadAsync(plan.Id, default));
+        await Assert.ThrowsAsync<BackupPlanDocumentSourceException>(() => reader.RevalidateAsync(captured, default));
     }
 
     [Fact]
@@ -76,6 +78,13 @@ public sealed class ConfigDbWorkflowIntegrationTests
         var after = await reader.ReadAsync(plan.Id, default);
         Assert.NotEqual(before.ConfigurationFingerprint, after.ConfigurationFingerprint);
         Assert.NotEqual(before.Snapshot.ManagedRevision, after.Snapshot.ManagedRevision);
+        Assert.Equal(after.ConfigurationFingerprint, (await reader.RevalidateAsync(before, default)).ConfigurationFingerprint);
+        var changedLayout = new PortableBackupPlan(plan.Id, plan.Name, plan.Description, plan.Semantics,
+            [plan.Sources[0] with { SourceOutputPath = new("changed-output") }], plan.GlobalRules, plan.PlanRules,
+            plan.ArchiveSpecDefault, plan.ArchiveUnits, plan.SecretSlots, plan.LinkPolicy, plan.ChangeDetection,
+            plan.HistoryDefault, plan.Schedule, plan.ExternalSources);
+        await workflow.UpdateManagedAsync(changedLayout, after.Snapshot.ManagedRevision!.Value, default);
+        await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => reader.RevalidateAsync(before, default));
         await workflow.SetActiveAsync(plan.Id, false, default);
         await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => reader.ReadAsync(plan.Id, default));
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
