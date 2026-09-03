@@ -56,3 +56,11 @@ Journal 必须保存 transaction UUID、PlanId、DeviceId、kind、协议版本�
 Application 负责不可变 progress kernel、事务编排、recovery classification 与端口；Infrastructure 负责 SQLite manifest/CAS、reservation queries、native filesystem proof、copy/publish/cleanup；Core 不依赖 storage roots 或 OS。App/CLI 后续只调用用例。
 
 验收必须覆盖多 artifact 部分成功不能 commit、重复/串 transaction proof、非法 restore 状态、取消稳定边界、每个 filesystem/SQLite crash window、同/跨 filesystem、source/target/root replacement、目标冲突、case/file-directory collision、retention/publish 互斥、inactive retained placements、cross-Plan reservation、File-backed drift、post-commit cleanup failure，以及三平台真实 fixture。断电承诺限于 OS/filesystem 成功 durability barrier 的保证，不用普通进程故障测试冒充真实断电测试。
+
+## 6. 已实现的物理 pre-commit 适配器
+
+`StorageRelocationPhysicalStore` 只消费 repository 已恢复的 journal，提供 Stage 和 PublishTarget；上层必须先保存 staged proof，再以新的 journal 调用 PublishTarget。它不切换 metadata、不删除旧文件、不清理未知 temp，也没有默认接入 App/CLI。
+
+Stage 使用 destination-local CreateNew、流式 SHA-256/length、WriteThrough/flush-to-disk、创建时的 native temp identity，以及源/目标根与祖先 no-follow 重验。PublishTarget 只接受已记录的 staged identity，no-overwrite rename 后重做目录 barrier 和最终 integrity/identity 验证；如果 rename 已发生而 journal 落后，只有 target 是同一对象且 temp 已不存在才可补发证明。不同对象的相同 bytes 不构成 adoption authority。
+
+任何成功 proof 都要求 file data 与 namespace durability。平台 barrier 返回不可用时安全失败，尤其不能沿用旧 publisher 的 namespace-only 降级来声明 relocation durable。测试中的注入成功 barrier 仅验证控制流，不扩大平台能力；native barrier fixture 要么证明可用路径，要么验证拒绝。仍不宣称抵抗所有主动 hostile filesystem races，亦不将单机临时目录复制测试称为真实跨卷或突然断电验收。

@@ -1,0 +1,181 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using StowCrate.Application.Publishing;
+using StowCrate.Application.StorageMaintenance;
+using StowCrate.Core.ChangeDetection;
+using StowCrate.Core.Filesystem;
+
+namespace StowCrate.Infrastructure.Filesystem;
+
+/// <summary>只复制并发布目标；不切换 binding、不删除旧副本，也不清除缺少 durable identity 的临时文件。</summary>
+public sealed class StorageRelocationPhysicalStore(IArchivePublishMetadataDurabilityBarrier? durabilityBarrier = null) : IStorageRelocationPhysicalStore
+{
+    private readonly IArchivePublishMetadataDurabilityBarrier durability = durabilityBarrier ?? new PlatformArchivePublishMetadataDurabilityBarrier();
+
+    public static StorageObjectIdentity InspectIdentity(string path, bool directory)
+    {
+        var attributes = File.GetAttributes(path);
+        if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Device)) != 0
+            || ((attributes & FileAttributes.Directory) != 0) != directory
+            || NativeFileType.GetEntryKind(path, directory) != (directory ? FileSystemEntryKind.Directory : FileSystemEntryKind.File))
+            throw new IOException("Relocation requires an ordinary no-follow filesystem object.");
+        var identity = NativeFileType.GetIdentityNoFollow(path);
+        var provider = OperatingSystem.IsWindows() ? "windows-volume-file-id" : OperatingSystem.IsMacOS() ? "macos-device-inode" : OperatingSystem.IsLinux() ? "linux-device-inode" : throw new PlatformNotSupportedException();
+        return new(provider, 1, string.Create(CultureInfo.InvariantCulture, $"{identity.DeviceOrVolume:x16}:{identity.FileId:x16}"));
+    }
+
+    public async Task<StorageTransferProof> StageAsync(StorageRelocationJournal journal, ArchiveVersionId versionId, CancellationToken cancellationToken)
+    {
+        var (entry, root, progress) = ValidateJournal(journal, versionId);
+        if (progress.Stage is not StorageTransferArtifactStage.Pending) throw new InvalidOperationException("Artifact is not pending staging.");
+        cancellationToken.ThrowIfCancellationRequested();
+        var source = Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
+        RequireIdentity(source, false, entry.OldIdentity);
+        await EnsureParentsAsync(root, entry.RelativePath, cancellationToken).ConfigureAwait(false);
+        Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
+        RequireIdentity(source, false, entry.OldIdentity);
+        var target = Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath);
+        var temp = Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.TempRelativePath);
+        if (Exists(target) || Exists(temp)) throw new IOException("Relocation target or unowned temporary entry already exists.");
+
+        StorageObjectIdentity staged;
+        await using (var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, 131072, FileOptions.Asynchronous | FileOptions.SequentialScan))
+        await using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 131072, FileOptions.Asynchronous | FileOptions.WriteThrough))
+        {
+            // 创建后立即捕获对象 identity；不能关闭后才把同路径、同 hash 的替换对象认领为自己的 temp。
+            staged = InspectIdentity(temp, false);
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[131072]; long length = 0;
+            while (true)
+            {
+                var count = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                if (count == 0) break;
+                length = checked(length + count);
+                if (length > entry.Artifact.Length) throw new IOException("Relocation source length changed.");
+                hash.AppendData(buffer, 0, count);
+                await output.WriteAsync(buffer.AsMemory(0, count), cancellationToken).ConfigureAwait(false);
+            }
+            if (length != entry.Artifact.Length || new Sha256Digest(Convert.ToHexStringLower(hash.GetHashAndReset())) != entry.Artifact.Integrity)
+                throw new IOException("Relocation source integrity changed.");
+            await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+            output.Flush(flushToDisk: true);
+        }
+        Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
+        await VerifyAsync(source, entry.OldIdentity, entry.Artifact, cancellationToken).ConfigureAwait(false);
+        Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.TempRelativePath);
+        await VerifyAsync(temp, staged, entry.Artifact, cancellationToken).ConfigureAwait(false);
+        await BarrierAsync(Path.GetDirectoryName(temp)!, cancellationToken).ConfigureAwait(false);
+        Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.TempRelativePath);
+        RequireIdentity(temp, false, staged);
+        if (Exists(target)) throw new IOException("Relocation target appeared during staging.");
+        return Proof(journal, entry, staged);
+    }
+
+    public async Task<StorageTransferProof> PublishTargetAsync(StorageRelocationJournal journal, ArchiveVersionId versionId, CancellationToken cancellationToken)
+    {
+        var (entry, root, progress) = ValidateJournal(journal, versionId);
+        if (progress.Stage is not StorageTransferArtifactStage.Staged || progress.StagedIdentity is null)
+            throw new InvalidOperationException("Durably recorded staged identity is required before publish.");
+        cancellationToken.ThrowIfCancellationRequested();
+        var source = Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
+        await VerifyAsync(source, entry.OldIdentity, entry.Artifact, cancellationToken).ConfigureAwait(false);
+        Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
+        var target = Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath);
+        var temp = Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.TempRelativePath);
+        if (Exists(target))
+        {
+            // rename 后 journal 尚未来得及推进：必须是已记录的同一对象；hash 相同的外来目标不予采用。
+            if (Exists(temp)) throw new IOException("Both relocation temp and target exist; recovery is ambiguous.");
+            await VerifyAsync(target, progress.StagedIdentity, entry.Artifact, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await VerifyAsync(temp, progress.StagedIdentity, entry.Artifact, cancellationToken).ConfigureAwait(false);
+            Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.TempRelativePath);
+            RequireIdentity(temp, false, progress.StagedIdentity);
+            Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
+            RequireIdentity(source, false, entry.OldIdentity);
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temp, target, overwrite: false);
+        }
+        // namespace mutation 后必须收敛为可恢复的 durable proof，不再接受本次 caller cancellation。
+        await BarrierAsync(Path.GetDirectoryName(target)!, CancellationToken.None).ConfigureAwait(false);
+        Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath);
+        await VerifyAsync(target, progress.StagedIdentity, entry.Artifact, CancellationToken.None).ConfigureAwait(false);
+        Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath);
+        Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
+        RequireIdentity(source, false, entry.OldIdentity);
+        return Proof(journal, entry, progress.StagedIdentity);
+    }
+
+    private static (StorageRelocationEntry Entry, StorageRelocationRoot Root, StorageTransferArtifactProgress Progress) ValidateJournal(StorageRelocationJournal journal, ArchiveVersionId versionId)
+    {
+        ArgumentNullException.ThrowIfNull(journal);
+        if (journal.Revision < 1 || journal.Manifest.TransactionId != journal.Progress.TransactionId || journal.Manifest.PlanId != journal.Progress.PlanId
+            || journal.Progress.Stage is not StorageTransferStage.Prepared) throw new InvalidOperationException("Journal is not a valid prepared relocation.");
+        var entry = journal.Manifest.Entries.Single(x => x.Artifact.VersionId == versionId);
+        var progress = journal.Progress.Artifacts.Single(x => x.Artifact.VersionId == versionId);
+        if (entry.Artifact != progress.Artifact) throw new InvalidOperationException("Journal manifest and progress disagree.");
+        return (entry, journal.Manifest.Roots.Single(x => x.Kind == entry.RootKind), progress);
+    }
+
+    private async Task EnsureParentsAsync(StorageRelocationRoot root, RelativeStoragePath relative, CancellationToken token)
+    {
+        RequireIdentity(root.NewRoot.CanonicalPath, true, root.NewIdentity);
+        var parent = root.NewRoot.CanonicalPath;
+        var segments = relative.Value.Split('/');
+        for (var i = 0; i < segments.Length - 1; i++)
+        {
+            token.ThrowIfCancellationRequested();
+            Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, new(string.Join('/', segments.Take(i + 1))));
+            var child = Path.Combine(parent, segments[i]);
+            if (!Exists(child))
+            {
+                Directory.CreateDirectory(child);
+            }
+            _ = InspectIdentity(child, true);
+            // 先前尝试可能创建目录后在 barrier 处中断；已有目录也必须重新证明父 namespace durable。
+            await BarrierAsync(parent, token).ConfigureAwait(false);
+            parent = child;
+        }
+        Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, relative);
+    }
+
+    private async Task BarrierAsync(string path, CancellationToken token)
+    {
+        var proof = await durability.FlushDirectoryMetadataAsync(path, token).ConfigureAwait(false);
+        if (!proof.BarrierCompleted) throw new IOException("Relocation directory durability is unavailable; no durable proof can be issued.");
+    }
+
+    private static string Namespace(string root, StorageObjectIdentity identity, RelativeStoragePath relative)
+    {
+        RequireIdentity(root, true, identity);
+        var parts = relative.Value.Split('/'); var path = root;
+        for (var i = 0; i < parts.Length; i++)
+        {
+            path = Path.Combine(path, parts[i]);
+            if (i < parts.Length - 1) _ = InspectIdentity(path, true);
+        }
+        return path;
+    }
+    private static void RequireIdentity(string path, bool directory, StorageObjectIdentity expected)
+    {
+        if (InspectIdentity(path, directory) != expected) throw new IOException("Relocation filesystem object identity changed.");
+    }
+    private static bool Exists(string path)
+    {
+        try { _ = File.GetAttributes(path); return true; }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+    }
+    private static async Task VerifyAsync(string path, StorageObjectIdentity identity, StorageTransferArtifact artifact, CancellationToken token)
+    {
+        RequireIdentity(path, false, identity);
+        await using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 131072, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        if (input.Length != artifact.Length || new Sha256Digest(Convert.ToHexStringLower(await SHA256.HashDataAsync(input, token).ConfigureAwait(false))) != artifact.Integrity)
+            throw new IOException("Relocation artifact integrity mismatch.");
+        RequireIdentity(path, false, identity);
+    }
+    private static StorageTransferProof Proof(StorageRelocationJournal journal, StorageRelocationEntry entry, StorageObjectIdentity identity)
+        => new(journal.Manifest.TransactionId, journal.Manifest.PlanId, entry.Artifact.VersionId, entry.Artifact.Integrity, entry.Artifact.Length, identity, true, true);
+}

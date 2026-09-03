@@ -62,4 +62,6 @@ Orphan reconciliation 不凭文件名、deterministic path 或裸 `ArchiveVersio
 
 已冻结 Plan-scoped transfer protocol，见 [`STORAGE-MAINTENANCE-v1.md`](../plan/STORAGE-MAINTENANCE-v1.md)：copy → staged identity durable record → no-overwrite target publish → 全部目标 durable → 单事务 metadata switch → exact old-copy cleanup。Application 已有 immutable progress kernel 与恢复状态校验测试；该内核不执行 I/O，不独立授予删除权限。
 
-config.db v4 已增加 root relocation 的 pre-commit manifest/progress journal 和 root reservations：Begin 验证完整 tracked set、旧根与互斥条件；progress 使用 expected revision CAS；重开时验证 canonical payload/digest、manifest identity 与 reservation 投影。普通配置/绑定/publish/retention/identity mutation 不能绕过 reservation。当前仅支持 PREPARED/TARGETS_DURABLE 的持久化；Output Reorganization manifest、metadata switch、物理适配器、启动恢复编排与 post-commit cleanup 仍未实现，也没有用户可调用的物理迁移入口。
+config.db v4 已增加 root relocation 的 pre-commit manifest/progress journal 和 root reservations：Begin 验证完整 tracked set、旧根与互斥条件；progress 使用 expected revision CAS；重开时验证 canonical payload/digest、manifest identity 与 reservation 投影。普通配置/绑定/publish/retention/identity mutation 不能绕过 reservation。当前仅支持 PREPARED/TARGETS_DURABLE 的持久化；Output Reorganization manifest、metadata switch、启动恢复编排与 post-commit cleanup 仍未实现，也没有用户可调用的物理迁移入口。
+
+物理 pre-commit 适配器已实现 Stage/PublishTarget（包括 rename 后 journal 落后的同对象恢复），严格要求目录 barrier 成功才签发 proof，原归档始终保留。仍未接入完整运行编排；metadata switch、Output Reorganization、post-commit cleanup 和最终恢复验收继续待办，不能标为 COMPLETE。
