@@ -60,4 +60,6 @@ Orphan reconciliation 不凭文件名、deterministic path 或裸 `ArchiveVersio
 
 后续仍需实现完整 relocation journal、全量目标 verification、metadata authority switch、post-commit cleanup 及启动恢复；不得把 M3 的 metadata-only reorganization port 当作物理迁移用例，也不得标记本阶段 COMPLETE。
 
-已冻结 Plan-scoped transfer protocol，见 [`STORAGE-MAINTENANCE-v1.md`](../plan/STORAGE-MAINTENANCE-v1.md)：copy → staged identity durable record → no-overwrite target publish → 全部目标 durable → 单事务 metadata switch → exact old-copy cleanup。Application 已有 immutable progress kernel 与恢复状态校验测试；该内核不执行 I/O，不独立授予删除权限。完整 manifest 的 schema v4、repository CAS/root reservation、物理适配器和启动恢复仍未实现。
+已冻结 Plan-scoped transfer protocol，见 [`STORAGE-MAINTENANCE-v1.md`](../plan/STORAGE-MAINTENANCE-v1.md)：copy → staged identity durable record → no-overwrite target publish → 全部目标 durable → 单事务 metadata switch → exact old-copy cleanup。Application 已有 immutable progress kernel 与恢复状态校验测试；该内核不执行 I/O，不独立授予删除权限。
+
+config.db v4 已增加 root relocation 的 pre-commit manifest/progress journal 和 root reservations：Begin 验证完整 tracked set、旧根与互斥条件；progress 使用 expected revision CAS；重开时验证 canonical payload/digest、manifest identity 与 reservation 投影。普通配置/绑定/publish/retention/identity mutation 不能绕过 reservation。当前仅支持 PREPARED/TARGETS_DURABLE 的持久化；Output Reorganization manifest、metadata switch、物理适配器、启动恢复编排与 post-commit cleanup 仍未实现，也没有用户可调用的物理迁移入口。

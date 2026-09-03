@@ -139,7 +139,7 @@ public sealed class SecretAndMaintenanceIntegrationTests
         await using var database = await MaintenanceDatabase.Create(); var service = new ConfigDatabaseMaintenanceService();
         var snapshot = Path.Combine(database.DirectoryPath, "future.snapshot.db"); await service.CreateSnapshotAsync(database.Path, snapshot, CancellationToken.None);
         await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = snapshot }.ConnectionString))
-        { await connection.OpenAsync(); await using var command = connection.CreateCommand(); command.CommandText = "UPDATE DatabaseMetadata SET SchemaVersion=4"; await command.ExecuteNonQueryAsync(); }
+        { await connection.OpenAsync(); await using var command = connection.CreateCommand(); command.CommandText = "UPDATE DatabaseMetadata SET SchemaVersion=$version"; command.Parameters.AddWithValue("$version", ConfigDbOpenCoordinator.SupportedSchemaVersion + 1); await command.ExecuteNonQueryAsync(); }
 
         var candidate = await new ConfigDatabaseRecoveryWorkflow(service, new ConfigDatabaseSessionOpener()).DiscoverValidatedCandidateAsync(snapshot, CancellationToken.None);
         Assert.Null(candidate);

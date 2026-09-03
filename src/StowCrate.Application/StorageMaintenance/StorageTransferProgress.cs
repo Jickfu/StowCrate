@@ -4,8 +4,9 @@ using StowCrate.Core.ChangeDetection;
 
 namespace StowCrate.Application.StorageMaintenance;
 
-public enum StorageTransferStage { Prepared, TargetsDurable, MetadataCommitted, Completed }
-public enum StorageTransferArtifactStage { Pending, Staged, TargetDurable, OldCopyAbsent }
+// v1 durable payload 使用固定数值，新增阶段不得重排既有编码。
+public enum StorageTransferStage { Prepared = 0, TargetsDurable = 1, MetadataCommitted = 2, Completed = 3 }
+public enum StorageTransferArtifactStage { Pending = 0, Staged = 1, TargetDurable = 2, OldCopyAbsent = 3 }
 
 /// <summary>仅供 transaction manifest 中真正需要 copy 的条目使用；原位验证项不进入清理集合。</summary>
 public sealed record StorageTransferArtifact(ArchiveVersionId VersionId, Sha256Digest Integrity, long Length);

@@ -20,7 +20,7 @@ Begin transaction 必须重验 active registration、expected roots/placements/l
 
 Journal 必须保存 transaction UUID、PlanId、DeviceId、kind、协议版本、old/new root canonical path/comparison key/native identity、expected source/layout facts、全部 artifact 的 ArchiveVersionId/UnitId/slot/old path/new path/temp path、SHA-256/length 和旧对象 identity。根与对象 identity 是带平台/编码版本的 opaque Infrastructure evidence，不进入 Core、portable document 或 baseline。
 
-这些字段是不可变 transaction manifest，不是通用 JSON extension bag。schema v4 实现前需将具体表、FK、CHECK 和 CAS 约束同步至 config.db schema design；本协议不声称 v4 migration 已存在。
+这些字段是不可变 transaction manifest，不是通用 JSON extension bag。config.db v4 已实现 root relocation 的 pre-commit journal/reservation；具体字段、FK、CHECK、canonical codec 与 CAS 约束见 `CONFIG-DB-v1-SCHEMA-DESIGN.md` v4 addendum。Output Reorganization 清单和 post-commit persistence 仍待实现，不能把当前 v4 当作完整迁移落地。
 
 ## 3. 顺序与持久点
 

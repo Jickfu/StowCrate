@@ -10,11 +10,11 @@ using StowCrate.Infrastructure.Configuration.BackupPlans.V1;
 
 namespace StowCrate.Infrastructure.Persistence.ConfigDb;
 
-internal enum MetadataCommitFaultPoint { AfterNewArchive, AfterHistory, AfterCurrent, AfterBaseline, AfterLayout, AfterIntentCompletion, AfterRetentionCompletionMutation }
+internal enum MetadataCommitFaultPoint { AfterNewArchive, AfterHistory, AfterCurrent, AfterBaseline, AfterLayout, AfterIntentCompletion, AfterRetentionCompletionMutation, AfterRelocationIntent, AfterRelocationProgress }
 internal interface IMetadataCommitFaultInjector { void ThrowIfRequested(MetadataCommitFaultPoint point); }
 internal sealed class NoMetadataCommitFaultInjector : IMetadataCommitFaultInjector { public static NoMetadataCommitFaultInjector Instance { get; } = new(); public void ThrowIfRequested(MetadataCommitFaultPoint point) { } }
 
-public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegistrationStore, IDevicePlanBindingStore,
+public sealed partial class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegistrationStore, IDevicePlanBindingStore,
     ISecretBindingMetadataStore, IFileManagedArchiveUnitRegistrationStore, IArchiveUnitDurableStateStore, IScheduleInstallationStore, IMaintenanceStateStore,
     IHistoryRetentionDurableStore
 {
@@ -68,12 +68,15 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
 
     public async Task SetActiveAsync(PlanId planId, bool isActive, CancellationToken cancellationToken)
     {
-        await using var db = factory.Create(); var id = DurableCodecs.Uuid(planId.Value);
+        await using var db = factory.Create(); await using var tx = await db.Database.BeginTransactionAsync(cancellationToken); var id = DurableCodecs.Uuid(planId.Value);
         try
         {
+            await EnsureNoRelocationAsync(db, id, cancellationToken);
+            if (isActive) await EnsureActivationReservationsSafeAsync(db, id, cancellationToken);
             var changed = await db.PlanRegistrations.Where(x => x.PlanId == id)
                 .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.IsActive, DurableCodecs.Boolean(isActive)), cancellationToken);
             if (changed != 1) throw new LocalStateConcurrencyException("Plan registration does not exist.");
+            await tx.CommitAsync(cancellationToken);
         }
         catch (Exception exception) { throw Translate(exception, "Plan activation state could not be changed."); }
     }
@@ -85,7 +88,10 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
         await using var db = factory.Create(); await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
-            var id = DurableCodecs.Uuid(registration.PlanId.Value); var plan = await db.PlanRegistrations.SingleOrDefaultAsync(x => x.PlanId == id, cancellationToken);
+            var id = DurableCodecs.Uuid(registration.PlanId.Value);
+            await EnsureNoRelocationAsync(db, id, cancellationToken);
+            if (registration.IsActive) await EnsureActivationReservationsSafeAsync(db, id, cancellationToken);
+            var plan = await db.PlanRegistrations.SingleOrDefaultAsync(x => x.PlanId == id, cancellationToken);
             if (plan is null) { plan = new() { PlanId = id, RegisteredAtUtcMs = DurableCodecs.Utc(DateTimeOffset.UtcNow) }; db.PlanRegistrations.Add(plan); }
             plan.Authority = "MANAGED"; plan.FileDocumentPath = null; plan.IsActive = DurableCodecs.Boolean(registration.IsActive);
             var document = await db.ManagedPlanDocuments.SingleOrDefaultAsync(x => x.PlanId == id, cancellationToken);
@@ -105,7 +111,10 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
         await using var db = factory.Create(); await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
-            var id = DurableCodecs.Uuid(registration.PlanId.Value); var row = await db.PlanRegistrations.SingleOrDefaultAsync(x => x.PlanId == id, cancellationToken);
+            var id = DurableCodecs.Uuid(registration.PlanId.Value);
+            await EnsureNoRelocationAsync(db, id, cancellationToken);
+            if (registration.IsActive) await EnsureActivationReservationsSafeAsync(db, id, cancellationToken);
+            var row = await db.PlanRegistrations.SingleOrDefaultAsync(x => x.PlanId == id, cancellationToken);
             if (row is null) { row = new() { PlanId = id, RegisteredAtUtcMs = DurableCodecs.Utc(DateTimeOffset.UtcNow) }; db.PlanRegistrations.Add(row); }
             var document = await db.ManagedPlanDocuments.SingleOrDefaultAsync(x => x.PlanId == id, cancellationToken); if (document is not null) db.ManagedPlanDocuments.Remove(document);
             row.Authority = "FILE_BACKED"; row.FileDocumentPath = registration.FileDocumentPath; row.IsActive = DurableCodecs.Boolean(registration.IsActive);
@@ -140,6 +149,10 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
         {
             var metadata = await db.DatabaseMetadata.AsNoTracking().SingleAsync(cancellationToken);
             if (DurableCodecs.Uuid(metadata.DeviceId) != bindings.DeviceId.Value) throw new LocalStateCorruptionException("Binding aggregate DeviceId differs from config database identity.");
+            await EnsureNoRelocationAsync(db, plan, cancellationToken);
+            await EnsureReservationsSafeAsync(db, bindings.Sources.Where(x => x.IsActive).Select(x => new ResolvedPhysicalPath(x.CanonicalPath, x.ComparisonKey))
+                .Concat(new[] { bindings.CurrentRoot, bindings.HistoryRoot }.OfType<OutputRootLocalBinding>().Where(x => x.IsActive)
+                    .Select(x => new ResolvedPhysicalPath(x.CanonicalPath, x.ComparisonKey))), cancellationToken);
             await ValidateOutputRootChangesAsync(db, plan, bindings, cancellationToken);
             await UpsertBindings(db, plan, bindings, cancellationToken); await db.SaveChangesAsync(cancellationToken); await tx.CommitAsync(cancellationToken);
         }
@@ -175,13 +188,15 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
 
     public async Task<SecretBindingMetadata> DeactivateAsync(PlanId planId, SecretSlotId slotId, SecretRevision expectedRevision, CancellationToken cancellationToken)
     {
-        await using var db = factory.Create(); var plan = DurableCodecs.Uuid(planId.Value); var slot = DurableCodecs.Uuid(slotId.Value);
+        await using var db = factory.Create(); await using var tx = await db.Database.BeginTransactionAsync(cancellationToken); var plan = DurableCodecs.Uuid(planId.Value); var slot = DurableCodecs.Uuid(slotId.Value);
         try
         {
+            await EnsureNoRelocationAsync(db, plan, cancellationToken);
             var changed = await db.SecretBindings.Where(x => x.PlanId == plan && x.SecretSlotId == slot && x.SecretRevision == expectedRevision.Value && x.IsActive == 1)
                 .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.IsActive, 0L), cancellationToken);
             if (changed != 1) throw new LocalStateConcurrencyException("Secret binding deactivate CAS failed.");
             var row = await db.SecretBindings.AsNoTracking().SingleAsync(x => x.PlanId == plan && x.SecretSlotId == slot, cancellationToken);
+            await tx.CommitAsync(cancellationToken);
             return MapSecret(row);
         }
         catch (Exception exception) { throw Translate(exception, "Secret binding could not be deactivated."); }
@@ -196,6 +211,7 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
     public async Task ReplaceActiveRegistrationsAsync(PlanId planId, IReadOnlyCollection<FileManagedArchiveUnitRegistration> registrations, CancellationToken cancellationToken)
     {
         await using var db = factory.Create(); await using var tx = await db.Database.BeginTransactionAsync(cancellationToken); var id = DurableCodecs.Uuid(planId.Value); var rows = await db.FileManagedArchiveUnitRegistrations.Where(x => x.PlanId == id).ToListAsync(cancellationToken); foreach (var row in rows) row.IsActive = 0;
+        await EnsureNoRelocationAsync(db, id, cancellationToken);
         foreach (var item in registrations) { var unit = DurableCodecs.Uuid(item.ArchiveUnitId.Value); var row = rows.SingleOrDefault(x => x.ArchiveUnitId.SequenceEqual(unit)); if (row is null) { row = new() { PlanId = id, ArchiveUnitId = unit }; db.FileManagedArchiveUnitRegistrations.Add(row); } row.SourceId = DurableCodecs.Uuid(item.SourceId.Value); row.LogicalUnitPath = DurableCodecs.LogicalPath(item.LogicalUnitPath); row.IdentityOrigin = item.IdentityOriginToken; row.IsActive = DurableCodecs.Boolean(item.IsActive); }
         await SaveAsync(db, "FILE_MANAGED registrations could not be saved.", cancellationToken); await tx.CommitAsync(cancellationToken);
     }
@@ -283,6 +299,8 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
         var projected = DurableUnitMetadataCommit.ConfirmCommitted(commit); await using var db = factory.Create(); await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            await EnsureNoRelocationAsync(db, DurableCodecs.Uuid(commit.CurrentVersion.PlanId.Value), cancellationToken);
+            await EnsureActivationReservationsSafeAsync(db, DurableCodecs.Uuid(commit.CurrentVersion.PlanId.Value), cancellationToken);
             db.ArchiveVersions.Add(MapArchive(commit.PublishedArchive)); await db.SaveChangesAsync(cancellationToken); faultInjector.ThrowIfRequested(MetadataCommitFaultPoint.AfterNewArchive);
             if (commit.SupersededArchive is not null && commit.HistoryPlacement is not null) { var oldId = DurableCodecs.Uuid(commit.SupersededArchive.Id.Value); var old = await db.ArchiveVersions.SingleAsync(x => x.ArchiveVersionId == oldId, cancellationToken); ApplyArchive(old, commit.SupersededArchive); db.HistoryVersionPlacements.Add(MapHistory(commit.HistoryPlacement)); await db.SaveChangesAsync(cancellationToken); }
             faultInjector.ThrowIfRequested(MetadataCommitFaultPoint.AfterHistory);
@@ -299,6 +317,7 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
     public async Task CommitOutputReorganizationAsync(OutputReorganizationResult reorganization, CancellationToken cancellationToken)
     {
         await using var db = factory.Create(); await using var tx = await db.Database.BeginTransactionAsync(cancellationToken); var plan = DurableCodecs.Uuid(reorganization.CurrentVersion.PlanId.Value); var unit = DurableCodecs.Uuid(reorganization.CurrentVersion.ArchiveUnitId.Value);
+        await EnsureNoRelocationAsync(db, plan, cancellationToken);
         var current = await db.CurrentVersions.SingleOrDefaultAsync(x => x.PlanId == plan && x.ArchiveUnitId == unit, cancellationToken) ?? throw new LocalStateConcurrencyException("CurrentVersion is missing.");
         if (!current.ArchiveVersionId.SequenceEqual(DurableCodecs.Uuid(reorganization.CurrentVersion.ArchiveVersionId.Value))) throw new LocalStateConcurrencyException("Current ArchiveVersion changed during reorganization.");
         current.CurrentRelativePath = DurableCodecs.RelativePath(reorganization.CurrentVersion.RelativePath.Value); await ReplaceLayout(db, reorganization.OutputLayout, cancellationToken); await db.SaveChangesAsync(cancellationToken); await tx.CommitAsync(cancellationToken);
@@ -367,6 +386,7 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
         ArgumentOutOfRangeException.ThrowIfLessThan(keepLastVersionsCount, 1); if (victims.Count == 0) return;
         await using var db = factory.Create(); await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         var plan = DurableCodecs.Uuid(planId.Value); var unit = DurableCodecs.Uuid(archiveUnitId.Value); var now = DateTimeOffset.UtcNow;
+        await EnsureNoRelocationAsync(db, plan, cancellationToken);
         foreach (var victim in victims)
         {
             if (victim.Archive.PlanId != planId || victim.Archive.ArchiveUnitId != archiveUnitId || victim.Archive.Lifecycle is not ArchiveVersionLifecycle.Superseded
@@ -462,6 +482,8 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
         await using var db = factory.Create(); await using var tx = await db.Database.BeginTransactionAsync(cancellationToken); var plan = DurableCodecs.Uuid(intent.PlanId.Value); var unit = DurableCodecs.Uuid(intent.ArchiveUnitId.Value);
         try
         {
+            await EnsureNoRelocationAsync(db, plan, cancellationToken);
+            await EnsureActivationReservationsSafeAsync(db, plan, cancellationToken);
             var existing = await db.PublishIntents.SingleOrDefaultAsync(x => x.PlanId == plan && x.ArchiveUnitId == unit, cancellationToken);
             if (expectedPrevious is null) { if (existing is not null && existing.Stage != "METADATA_COMMITTED") throw new LocalStateConcurrencyException("A non-complete PublishIntent already exists for this unit."); if (existing is not null) { var payload = await db.PublishIntentBaselines.SingleAsync(x => x.PlanId == plan && x.ArchiveUnitId == unit, cancellationToken); db.PublishIntentBaselines.Remove(payload); db.PublishIntents.Remove(existing); await db.SaveChangesAsync(cancellationToken); existing = null; } }
             else if (existing is null || existing.Stage != DurableCodecs.Token(expectedPrevious.Value)) throw new LocalStateConcurrencyException("PublishIntent stage CAS failed.");
@@ -568,6 +590,7 @@ public sealed class ConfigDbRepository : IConfigDatabaseIdentityStore, IPlanRegi
         var plan = DurableCodecs.Uuid(planId.Value); var slot = DurableCodecs.Uuid(slotId.Value);
         try
         {
+            await EnsureNoRelocationAsync(db, plan, cancellationToken);
             var row = await db.SecretBindings.SingleOrDefaultAsync(x => x.PlanId == plan && x.SecretSlotId == slot, cancellationToken);
             if (expectedRevision is null)
             {

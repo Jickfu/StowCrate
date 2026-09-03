@@ -22,6 +22,8 @@ public sealed class ConfigDbContext(DbContextOptions<ConfigDbContext> options) :
     internal DbSet<ScheduleInstallationEntity> ScheduleInstallations => Set<ScheduleInstallationEntity>();
     internal DbSet<MaintenanceStateEntity> MaintenanceStates => Set<MaintenanceStateEntity>();
     internal DbSet<RetentionDeletionIntentEntity> RetentionDeletionIntents => Set<RetentionDeletionIntentEntity>();
+    internal DbSet<StorageRelocationIntentEntity> StorageRelocationIntents => Set<StorageRelocationIntentEntity>();
+    internal DbSet<StorageRelocationRootReservationEntity> StorageRelocationRootReservations => Set<StorageRelocationRootReservationEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -30,6 +32,31 @@ public sealed class ConfigDbContext(DbContextOptions<ConfigDbContext> options) :
         ConfigureArchiveState(modelBuilder);
         ConfigureJournal(modelBuilder);
         ConfigureLocalState(modelBuilder);
+        ConfigureRelocation(modelBuilder);
+    }
+
+    private static void ConfigureRelocation(ModelBuilder model)
+    {
+        var journal = model.Entity<StorageRelocationIntentEntity>();
+        journal.ToTable("StorageRelocationIntent", table =>
+        {
+            table.HasCheckConstraint("CK_Relocation_Ids", "length(TransactionId)=16 AND length(PlanId)=16 AND length(DeviceId)=16");
+            table.HasCheckConstraint("CK_Relocation_Protocol", "ProtocolVersion=1 AND Revision>=1");
+            table.HasCheckConstraint("CK_Relocation_Stage", "Stage IN ('PREPARED','TARGETS_DURABLE')");
+            table.HasCheckConstraint("CK_Relocation_Payload", "length(ManifestPayload)>0 AND length(ProgressPayload)>0 AND length(ManifestSha256)=32 AND length(ProgressSha256)=32");
+        });
+        journal.HasKey(x => x.TransactionId);
+        journal.HasIndex(x => x.PlanId).IsUnique();
+        journal.Property(x => x.Revision).IsConcurrencyToken();
+        journal.HasOne<PlanRegistrationEntity>().WithMany().HasForeignKey(x => x.PlanId).OnDelete(DeleteBehavior.Restrict);
+        var roots = model.Entity<StorageRelocationRootReservationEntity>();
+        roots.ToTable("StorageRelocationRootReservation", table =>
+        {
+            table.HasCheckConstraint("CK_RelocationRoot_Slot", "Slot IN ('CURRENT_OLD','CURRENT_NEW','HISTORY_OLD','HISTORY_NEW')");
+            table.HasCheckConstraint("CK_RelocationRoot_Path", "length(CanonicalPath)>0 AND length(ComparisonKey)>0");
+        });
+        roots.HasKey(x => new { x.TransactionId, x.Slot });
+        roots.HasOne<StorageRelocationIntentEntity>().WithMany().HasForeignKey(x => x.TransactionId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureIdentity(ModelBuilder model)

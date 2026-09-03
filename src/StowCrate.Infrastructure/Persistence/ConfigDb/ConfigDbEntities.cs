@@ -1,5 +1,26 @@
 namespace StowCrate.Infrastructure.Persistence.ConfigDb;
 
+internal sealed class StorageRelocationIntentEntity
+{
+    public byte[] TransactionId { get; set; } = [];
+    public byte[] PlanId { get; set; } = [];
+    public byte[] DeviceId { get; set; } = [];
+    public long ProtocolVersion { get; set; }
+    public long Revision { get; set; }
+    public string Stage { get; set; } = "";
+    public byte[] ManifestPayload { get; set; } = [];
+    public byte[] ManifestSha256 { get; set; } = [];
+    public byte[] ProgressPayload { get; set; } = [];
+    public byte[] ProgressSha256 { get; set; } = [];
+}
+internal sealed class StorageRelocationRootReservationEntity
+{
+    public byte[] TransactionId { get; set; } = [];
+    public string Slot { get; set; } = "";
+    public string CanonicalPath { get; set; } = "";
+    public string ComparisonKey { get; set; } = "";
+}
+
 internal sealed class DatabaseMetadataEntity { public long SingletonKey { get; set; } public long SchemaVersion { get; set; } public byte[] DatabaseId { get; set; } = []; public byte[] DeviceId { get; set; } = []; public long CreatedAtUtcMs { get; set; } }
 internal sealed class PlanRegistrationEntity { public byte[] PlanId { get; set; } = []; public string Authority { get; set; } = ""; public string? FileDocumentPath { get; set; } public long IsActive { get; set; } public long RegisteredAtUtcMs { get; set; } }
 internal sealed class ManagedPlanDocumentEntity { public byte[] PlanId { get; set; } = []; public long Revision { get; set; } public byte[] CanonicalUtf8Payload { get; set; } = []; public byte[] PayloadSha256 { get; set; } = []; public long UpdatedAtUtcMs { get; set; } }

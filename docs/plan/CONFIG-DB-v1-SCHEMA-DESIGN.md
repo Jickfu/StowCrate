@@ -253,3 +253,13 @@ M5.2 把 schema 从 v2 提升到 v3；v1/v2 migration 保持不可变。新增 a
 该表是 destructive authorization/recovery journal，不是 History placement，也不替代 unit-level `MaintenanceState(HISTORY_RETENTION)`。它 FK 到 immutable `ArchiveVersion`，但不 FK 到 `HistoryVersionPlacement`，因为完成事务会有意删除 placement 并保留 completed intent。完成事务原子验证 PREPARED intent、exact placement 与同一 SUPERSEDED version，然后删除 placement并将 intent更新为COMPLETED；ArchiveVersion 不删除、不增加 Deleted lifecycle。
 
 一次 retention evaluation 使用 `SelectionId` 分组，并在同一事务中重验所有 victims 后全部插入或全部拒绝。恢复不得读取当前 Plan 决定旧 intent 是否仍应执行。
+
+# config.db schema v4 addendum — Storage relocation pre-commit journal
+
+新增 `StorageRelocationIntent`：TransactionId BLOB(16) PK、PlanId BLOB(16) UNIQUE/FK registration RESTRICT、DeviceId BLOB(16)、ProtocolVersion=1、Revision>=1、Stage（本次仅 PREPARED/TARGETS_DURABLE）、ManifestPayload/ManifestSha256 与 ProgressPayload/ProgressSha256。payload 是独立 version-specific closed-world canonical UTF-8 DTO，不是 portable Backup Plan DTO 或 extension bag。reader 验证 SHA-256、必填字段、未知字段、canonical round-trip（拒绝重复字段及非 canonical encoding）、manifest/progress identity 与合法状态组合。Manifest 永不被 progress update 改写。
+
+新增 `StorageRelocationRootReservation`：TransactionId + Slot PK、CanonicalPath、ComparisonKey；FK intent RESTRICT。Slot 固定 CURRENT_OLD/CURRENT_NEW/HISTORY_OLD/HISTORY_NEW。该表是 manifest 根集合的可查询投影，加载必须逐项核对，不能形成第二套 authority。Begin 在一个事务中保存 intent 与全部 reservation，并重验完整 tracked placement、integrity、old root binding、device、active Plan、既有 publish/retention/maintenance 互斥与所有 active roots。snapshot progress update 按 TransactionId + expected Revision CAS，仅允许 kernel 的 staged/target/seal 转移。
+
+本次 schema 只支持 relocation 的 pre-commit durability，不提供 metadata commit、abort、delete 或 compact API；没有物理 workflow 调用入口。挂起 intent 保留 root reservation；同 Plan 的配置/绑定/publish/retention/identity mutation 和跨 Plan 冲突的 binding/activation 都必须拒绝。后续 metadata switch 与 cleanup 需要显式 schema/port 扩展，禁止把任意 progress save 当作 metadata commit。
+
+v1 payload 的 enum 编码固定：RootKind Current=0/History=1；transfer stage Prepared=0/TargetsDurable=1（kernel 的 2/3 尚不允许持久化）；artifact stage Pending=0/Staged=1/TargetDurable=2（OldCopyAbsent=3 尚不允许在 v4 pre-commit journal 中出现）。字段顺序、UTF-8 serializer 格式与有序 root/entry 数组是内部 codec v1 的一部分，升级必须新增 version-specific reader，不可静默改写既有 payload。该 JSON 只在 config.db 中使用，不改变公开 portable Schema。

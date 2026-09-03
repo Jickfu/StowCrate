@@ -9,7 +9,7 @@ namespace StowCrate.Infrastructure.Persistence.ConfigDb;
 
 public sealed class ConfigDbOpenCoordinator
 {
-    public const int SupportedSchemaVersion = 3;
+    public const int SupportedSchemaVersion = 4;
 
     public static async Task<ConfigDbRepository> OpenAsync(string databasePath, Guid? newDatabaseId = null, DeviceId? newDeviceId = null, CancellationToken cancellationToken = default)
     {
