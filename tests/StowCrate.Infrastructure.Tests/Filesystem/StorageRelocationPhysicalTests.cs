@@ -135,6 +135,109 @@ public sealed class StorageRelocationPhysicalTests
         Assert.True((await new StorageRelocationPhysicalStore(new Barrier()).StageAsync(fixture.Journal, fixture.Version, default)).NamespaceDurable);
     }
 
+    [Fact]
+    public async Task CommitVerificationRequiresSealedCompleteSetAndPreservesProgress()
+    {
+        using var fixture = new Fixture();
+        var store = new StorageRelocationPhysicalStore(new Barrier());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.VerifyForCommitAsync(fixture.Journal, default));
+        var sealedJournal = await PublishAllAsync(fixture.Journal);
+        await store.VerifyForCommitAsync(sealedJournal, default);
+        Assert.Equal(StorageTransferStage.TargetsDurable, sealedJournal.Progress.Stage);
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
+        var incomplete = sealedJournal with { Progress = StorageTransferProgress.Prepare(sealedJournal.Manifest.TransactionId, sealedJournal.Manifest.PlanId, []).SealTargets() };
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.VerifyForCommitAsync(incomplete, default));
+    }
+
+    [Theory]
+    [InlineData("source-bytes")]
+    [InlineData("target-bytes")]
+    [InlineData("target-identity")]
+    [InlineData("temp")]
+    [InlineData("missing-parent")]
+    public async Task CommitVerificationRejectsDriftAfterDurableRecord(string drift)
+    {
+        using var fixture = new Fixture();
+        var journal = await PublishAllAsync(fixture.Journal);
+        switch (drift)
+        {
+            case "source-bytes": await File.WriteAllBytesAsync(fixture.Source, new byte[fixture.Bytes.Length]); break;
+            case "target-bytes": await File.WriteAllBytesAsync(fixture.Target, new byte[fixture.Bytes.Length]); break;
+            case "target-identity":
+                File.Move(fixture.Target, fixture.Target + ".held");
+                await File.WriteAllBytesAsync(fixture.Target, fixture.Bytes);
+                break;
+            case "temp": await File.WriteAllBytesAsync(fixture.Temp, fixture.Bytes); break;
+            case "missing-parent": Directory.Move(Path.GetDirectoryName(fixture.Target)!, Path.GetDirectoryName(fixture.Target)! + ".held"); break;
+        }
+        await Assert.ThrowsAnyAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier()).VerifyForCommitAsync(journal, default));
+        Assert.True(File.Exists(fixture.Source));
+        if (drift == "missing-parent") Assert.False(Directory.Exists(Path.GetDirectoryName(fixture.Target)));
+    }
+
+    [Fact]
+    public async Task CommitVerificationRequiresBarrierAndHonorsCancellation()
+    {
+        using var fixture = new Fixture();
+        var journal = await PublishAllAsync(fixture.Journal);
+        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier(false)).VerifyForCommitAsync(journal, default));
+        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new StorageRelocationPhysicalStore(new Barrier()).VerifyForCommitAsync(journal, cancellation.Token));
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Target));
+    }
+
+    [Fact]
+    public async Task CommitVerificationChecksEmptyRelocatedRootIdentity()
+    {
+        using var fixture = new Fixture();
+        var original = fixture.Journal.Manifest;
+        var manifest = new StorageRelocationManifest(original.TransactionId, original.PlanId, original.DeviceId,
+            original.ExecutionSemanticDigest, original.Roots, []);
+        var journal = new StorageRelocationJournal(manifest, StorageTransferProgress.Prepare(manifest.TransactionId, manifest.PlanId, []).SealTargets(), 2);
+        var store = new StorageRelocationPhysicalStore(new Barrier());
+        await store.VerifyForCommitAsync(journal, default);
+        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier(false)).VerifyForCommitAsync(journal, default));
+        Directory.Move(fixture.NewRoot, fixture.NewRoot + ".held");
+        Directory.CreateDirectory(fixture.NewRoot);
+        await Assert.ThrowsAsync<IOException>(() => store.VerifyForCommitAsync(journal, default));
+    }
+
+    [Fact]
+    public async Task CommitVerificationChecksEveryArtifactInSet()
+    {
+        using var fixture = new Fixture();
+        var original = fixture.Journal.Manifest;
+        var version = new ArchiveVersionId(Guid.NewGuid());
+        var relative = new RelativeStoragePath("second.7z");
+        var source = Path.Combine(original.Roots[0].OldRoot.CanonicalPath, relative.Value);
+        await File.WriteAllBytesAsync(source, fixture.Bytes);
+        var second = new StorageRelocationEntry(new(Guid.NewGuid()), StorageRootKind.Current,
+            new(version, Sha256Digest.Hash(fixture.Bytes), fixture.Bytes.Length), relative,
+            StorageRelocationTempLayout.Create(original.TransactionId, version, relative), StorageRelocationPhysicalStore.InspectIdentity(source, false));
+        var manifest = new StorageRelocationManifest(original.TransactionId, original.PlanId, original.DeviceId,
+            original.ExecutionSemanticDigest, original.Roots, original.Entries.Add(second));
+        var journal = await PublishAllAsync(new(manifest, StorageTransferProgress.Prepare(manifest.TransactionId, manifest.PlanId, manifest.Entries.Select(x => x.Artifact)), 1));
+        var store = new StorageRelocationPhysicalStore(new Barrier());
+        await store.VerifyForCommitAsync(journal, default);
+        await File.WriteAllBytesAsync(Path.Combine(fixture.NewRoot, relative.Value), new byte[fixture.Bytes.Length]);
+        await Assert.ThrowsAsync<IOException>(() => store.VerifyForCommitAsync(journal, default));
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(source));
+    }
+
+    // 该 fixture 仅模拟 durable store 返回的连续状态，不宣称已接入真实 SQLite/物理迁移编排。
+    private static async Task<StorageRelocationJournal> PublishAllAsync(StorageRelocationJournal journal)
+    {
+        var store = new StorageRelocationPhysicalStore(new Barrier());
+        foreach (var entry in journal.Manifest.Entries)
+        {
+            var staged = await store.StageAsync(journal, entry.Artifact.VersionId, default);
+            journal = journal with { Progress = journal.Progress.RecordStaged(staged), Revision = journal.Revision + 1 };
+            var published = await store.PublishTargetAsync(journal, entry.Artifact.VersionId, default);
+            journal = journal with { Progress = journal.Progress.RecordTargetDurable(published), Revision = journal.Revision + 1 };
+        }
+        return journal with { Progress = journal.Progress.SealTargets(), Revision = journal.Revision + 1 };
+    }
+
     private sealed class FailSecondBarrier : IArchivePublishMetadataDurabilityBarrier
     {
         private int calls;

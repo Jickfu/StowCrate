@@ -65,3 +65,5 @@ Orphan reconciliation 不凭文件名、deterministic path 或裸 `ArchiveVersio
 config.db v4 已增加 root relocation 的 pre-commit manifest/progress journal 和 root reservations：Begin 验证完整 tracked set、旧根与互斥条件；progress 使用 expected revision CAS；重开时验证 canonical payload/digest、manifest identity 与 reservation 投影。普通配置/绑定/publish/retention/identity mutation 不能绕过 reservation。当前仅支持 PREPARED/TARGETS_DURABLE 的持久化；Output Reorganization manifest、metadata switch、启动恢复编排与 post-commit cleanup 仍未实现，也没有用户可调用的物理迁移入口。
 
 物理 pre-commit 适配器已实现 Stage/PublishTarget（包括 rename 后 journal 落后的同对象恢复），严格要求目录 barrier 成功才签发 proof，原归档始终保留。仍未接入完整运行编排；metadata switch、Output Reorganization、post-commit cleanup 和最终恢复验收继续待办，不能标为 COMPLETE。
+
+已补齐切换前全量物理重验端口：重新验证 sealed manifest/progress 完整集合、空根、旧/新对象、目标目录 barrier 和 temp absence；不复用历史 proof 作为当前磁盘事实，不重建缺失路径，不切换 metadata。该门槛仍须由后续原子提交编排调用。

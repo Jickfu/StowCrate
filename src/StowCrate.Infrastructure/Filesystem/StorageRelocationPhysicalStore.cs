@@ -108,11 +108,70 @@ public sealed class StorageRelocationPhysicalStore(IArchivePublishMetadataDurabi
         return Proof(journal, entry, progress.StagedIdentity);
     }
 
-    private static (StorageRelocationEntry Entry, StorageRelocationRoot Root, StorageTransferArtifactProgress Progress) ValidateJournal(StorageRelocationJournal journal, ArchiveVersionId versionId)
+    public async Task VerifyForCommitAsync(StorageRelocationJournal journal, CancellationToken cancellationToken)
+    {
+        ValidateJournalSet(journal, StorageTransferStage.TargetsDurable);
+        cancellationToken.ThrowIfCancellationRequested();
+        VerifyRoots(journal);
+        foreach (var root in journal.Manifest.Roots)
+            await BarrierAsync(root.NewRoot.CanonicalPath, cancellationToken).ConfigureAwait(false);
+        foreach (var entry in journal.Manifest.Entries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var root = journal.Manifest.Roots.Single(x => x.Kind == entry.RootKind);
+            var identity = journal.Progress.Artifacts.Single(x => x.Artifact.VersionId == entry.Artifact.VersionId).StagedIdentity!;
+            var source = Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
+            var target = Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath);
+            var temp = Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.TempRelativePath);
+            if (Exists(temp)) throw new IOException("Relocation temporary entry reappeared before commit.");
+            await VerifyAsync(source, entry.OldIdentity, entry.Artifact, cancellationToken).ConfigureAwait(false);
+            await VerifyAsync(target, identity, entry.Artifact, cancellationToken).ConfigureAwait(false);
+            // 重验阶段不创建缺失目录；由内向外刷新已有 namespace，覆盖此前重启后的目录持久性。
+            var parents = new List<string> { root.NewRoot.CanonicalPath };
+            foreach (var segment in entry.RelativePath.Value.Split('/').SkipLast(1))
+                parents.Add(Path.Combine(parents[^1], segment));
+            for (var i = parents.Count - 1; i >= 0; i--)
+                await BarrierAsync(parents[i], cancellationToken).ConfigureAwait(false);
+            await VerifyAsync(target, identity, entry.Artifact, cancellationToken).ConfigureAwait(false);
+        }
+        // 后续条目的 I/O 期间，先前条目也可能发生正常替换；返回前再检查整个 namespace 和 native identity。
+        VerifyRoots(journal);
+        foreach (var entry in journal.Manifest.Entries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var root = journal.Manifest.Roots.Single(x => x.Kind == entry.RootKind);
+            RequireIdentity(Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath), false, entry.OldIdentity);
+            RequireIdentity(Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath), false,
+                journal.Progress.Artifacts.Single(x => x.Artifact.VersionId == entry.Artifact.VersionId).StagedIdentity!);
+            if (Exists(Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.TempRelativePath)))
+                throw new IOException("Relocation temporary entry reappeared before commit.");
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    private static void VerifyRoots(StorageRelocationJournal journal)
+    {
+        // 即使某个迁移根没有 placement，也不能因空循环而漏掉根替换检查。
+        foreach (var root in journal.Manifest.Roots)
+        {
+            RequireIdentity(root.OldRoot.CanonicalPath, true, root.OldIdentity);
+            RequireIdentity(root.NewRoot.CanonicalPath, true, root.NewIdentity);
+        }
+    }
+
+    private static void ValidateJournalSet(StorageRelocationJournal journal, StorageTransferStage expectedStage)
     {
         ArgumentNullException.ThrowIfNull(journal);
         if (journal.Revision < 1 || journal.Manifest.TransactionId != journal.Progress.TransactionId || journal.Manifest.PlanId != journal.Progress.PlanId
-            || journal.Progress.Stage is not StorageTransferStage.Prepared) throw new InvalidOperationException("Journal is not a valid prepared relocation.");
+            || journal.Progress.Stage != expectedStage) throw new InvalidOperationException("Journal is not in the required relocation stage.");
+        if (journal.Manifest.Entries.Length != journal.Progress.Artifacts.Length
+            || journal.Manifest.Entries.Any(entry => !journal.Progress.Artifacts.Any(x => x.Artifact == entry.Artifact)))
+            throw new InvalidOperationException("Journal manifest and progress sets disagree.");
+    }
+
+    private static (StorageRelocationEntry Entry, StorageRelocationRoot Root, StorageTransferArtifactProgress Progress) ValidateJournal(StorageRelocationJournal journal, ArchiveVersionId versionId)
+    {
+        ValidateJournalSet(journal, StorageTransferStage.Prepared);
         var entry = journal.Manifest.Entries.Single(x => x.Artifact.VersionId == versionId);
         var progress = journal.Progress.Artifacts.Single(x => x.Artifact.VersionId == versionId);
         if (entry.Artifact != progress.Artifact) throw new InvalidOperationException("Journal manifest and progress disagree.");

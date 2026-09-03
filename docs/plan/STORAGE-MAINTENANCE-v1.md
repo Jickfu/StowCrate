@@ -64,3 +64,5 @@ Application 负责不可变 progress kernel、事务编排、recovery classifica
 Stage 使用 destination-local CreateNew、流式 SHA-256/length、WriteThrough/flush-to-disk、创建时的 native temp identity，以及源/目标根与祖先 no-follow 重验。PublishTarget 只接受已记录的 staged identity，no-overwrite rename 后重做目录 barrier 和最终 integrity/identity 验证；如果 rename 已发生而 journal 落后，只有 target 是同一对象且 temp 已不存在才可补发证明。不同对象的相同 bytes 不构成 adoption authority。
 
 任何成功 proof 都要求 file data 与 namespace durability。平台 barrier 返回不可用时安全失败，尤其不能沿用旧 publisher 的 namespace-only 降级来声明 relocation durable。测试中的注入成功 barrier 仅验证控制流，不扩大平台能力；native barrier fixture 要么证明可用路径，要么验证拒绝。仍不宣称抵抗所有主动 hostile filesystem races，亦不将单机临时目录复制测试称为真实跨卷或突然断电验收。
+
+`VerifyForCommitAsync` 已提供 `TARGETS_DURABLE` 后的全量物理重验：严格匹配 manifest/progress artifact set，检查所有旧/新根（含空集合）、源和目标 identity/SHA-256/length、temp absence，并重新执行目标目录及祖先 barrier。缺失目录不会重建；失败不修改 journal 或文件。返回前再次检查整个集合的 namespace/identity，防止后续条目 I/O 期间较早条目被正常替换。它不生成可缓存或持久复用的 commit authority，也不宣称跨文件瞬时快照；上层仍须紧接着重验 authoritative semantics、reservation、expected metadata 与 revision CAS 后才能原子切换。数据库 metadata switch 尚未接入。
