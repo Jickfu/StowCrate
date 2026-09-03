@@ -67,3 +67,5 @@ config.db v4 已增加 root relocation 的 pre-commit manifest/progress journal 
 物理 pre-commit 适配器已实现 Stage/PublishTarget（包括 rename 后 journal 落后的同对象恢复），严格要求目录 barrier 成功才签发 proof，原归档始终保留。仍未接入完整运行编排；metadata switch、Output Reorganization、post-commit cleanup 和最终恢复验收继续待办，不能标为 COMPLETE。
 
 已补齐切换前全量物理重验端口：重新验证 sealed manifest/progress 完整集合、空根、旧/新对象、目标目录 barrier 和 temp absence；不复用历史 proof 作为当前磁盘事实，不重建缺失路径，不切换 metadata。该门槛仍须由后续原子提交编排调用。
+
+迁移专用配置观察入口已实现并通过真实 config.db/文档集成测试：Managed/File-backed 均不要求输入 binding、FILE_MANAGED discovery 或解密密钥；每次重读有效且 active 的 authoritative Plan，配置丢失/损坏/PlanId 漂移时失败。返回的完整配置指纹仅用于发现变化，尚不是版本化迁移语义 guard 或 metadata switch 授权。

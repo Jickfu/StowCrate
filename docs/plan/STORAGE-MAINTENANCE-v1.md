@@ -22,6 +22,8 @@ authoritative Plan 文档与 registration 必须有效；File-backed 文档即�
 
 ### 2.2 冻结集合
 
+`StorageRelocationConfigurationReader` 已提供独立的配置观察入口：复用 strict authoritative reader，每次重新取得 active Plan，并返回 authority/revision 与完整 `PlanSemanticFingerprint`。该指纹只用于发现配置变化，不是 `ExecutionSemanticDigest`，不裁定任意配置变化是否阻止迁移，也不单独构成 commit permission。入口不依赖 Source/External binding、FILE_MANAGED discovery 或 Secret material；root safety 与物理完整性仍由其他门槛负责。当前尚未把观察结果接入版本化 journal/原子切换事务。
+
 Begin transaction 必须重验 active registration、expected roots/placements/layout、迁移条目集合完整性及全设备 root safety。相同 Plan 不得有未完成 publish、PREPARED retention 或未完成 storage maintenance。COMPLETED retention 必须先完成旧根 absence reconciliation/compaction；旧路径 cleanup 必须先收敛。
 
 从 Begin 到 cleanup 完成期间持久保留 old/new root reservation；其他 Plan 的激活、binding 保存与执行也必须检查 reservation。仅依赖进程锁不够。该 Plan 的 publish、retention、另一次 relocation/reorganization、影响迁移的 binding/configuration/identity mutation 均拒绝。File-backed 外部文件不能锁住，commit 前必须重读并验证冻结的 relevant semantics；变更只产生 out-of-sync，不重新解释旧 journal。

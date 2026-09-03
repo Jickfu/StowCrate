@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using StowCrate.Application.BackupPlans.Documents;
 using StowCrate.Application.BackupPlans.Resolution;
 using StowCrate.Application.LocalState;
+using StowCrate.Application.StorageMaintenance;
 using StowCrate.Core.BackupPlans;
 using StowCrate.Core.ChangeDetection;
 using StowCrate.Infrastructure.Configuration.BackupPlans;
@@ -14,6 +15,73 @@ namespace StowCrate.Infrastructure.Tests.Persistence;
 
 public sealed class ConfigDbWorkflowIntegrationTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RelocationConfigurationReadRequiresNeitherInputBindingsNorSecrets(bool fileBacked)
+    {
+        await using var database = await WorkflowDatabase.Create(registerDefaultPlan: false);
+        var source = new BackupPlanDocumentSource(); var basis = await ReadFixturePlan();
+        var slot = new SecretSlotId(Guid.NewGuid());
+        var plan = new PortableBackupPlan(basis.Id, basis.Name, basis.Description, basis.Semantics, basis.Sources,
+            basis.GlobalRules, basis.PlanRules, basis.ArchiveSpecDefault with { Protection = new SecureProtection(slot) },
+            [new FileManagedArchiveUnit(basis.ArchiveUnits[0].Id, basis.Sources[0].Id, basis.ArchiveUnits[0].Path, null, null)],
+            [new(slot, "offline-secret")], basis.LinkPolicy, basis.ChangeDetection, basis.HistoryDefault, basis.Schedule, basis.ExternalSources);
+        var workflow = new AuthoritativePlanWorkflow(database.Repository, source);
+        if (fileBacked)
+        {
+            var path = Path.Combine(database.DirectoryPath, "relocation.backupplan");
+            await File.WriteAllBytesAsync(path, source.Write(plan).CanonicalUtf8Payload.ToArray());
+            await workflow.RegisterFileBackedAsync(path, default);
+        }
+        else await workflow.CreateManagedAsync(plan, default);
+        var observation = await new StorageRelocationConfigurationReader(workflow).ReadAsync(plan.Id, default);
+        Assert.Equal(plan.Id, observation.Snapshot.Plan.Id);
+        Assert.IsType<SecureProtection>(observation.Snapshot.Plan.ArchiveSpecDefault.Protection);
+        Assert.IsType<FileManagedArchiveUnit>(observation.Snapshot.Plan.ArchiveUnits[0]);
+        // 根本未提供 Source/Secret binding；这只证明配置读取不依赖备份 readiness，不代表迁移整体已就绪。
+        var bindings = await database.Repository.LoadAsync(plan.Id, default);
+        Assert.True(bindings is null || bindings.Sources.IsEmpty);
+        Assert.Empty(await ((ISecretBindingMetadataStore)database.Repository).LoadAsync(plan.Id, default));
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("invalid")]
+    [InlineData("identity")]
+    public async Task RelocationConfigurationNeverFallsBackAfterFileChanges(string drift)
+    {
+        await using var database = await WorkflowDatabase.Create(registerDefaultPlan: false);
+        var source = new BackupPlanDocumentSource(); var plan = await ReadFixturePlan();
+        var workflow = new AuthoritativePlanWorkflow(database.Repository, source);
+        var path = Path.Combine(database.DirectoryPath, "relocation.backupplan");
+        await File.WriteAllBytesAsync(path, source.Write(plan).CanonicalUtf8Payload.ToArray());
+        await workflow.RegisterFileBackedAsync(path, default);
+        var reader = new StorageRelocationConfigurationReader(workflow);
+        await reader.ReadAsync(plan.Id, default);
+        if (drift == "missing") File.Move(path, path + ".unavailable");
+        else if (drift == "invalid") await File.WriteAllTextAsync(path, "{ invalid");
+        else await File.WriteAllBytesAsync(path, source.Write(CloneWithNewIdentities(plan)).CanonicalUtf8Payload.ToArray());
+        await Assert.ThrowsAsync<BackupPlanDocumentSourceException>(() => reader.ReadAsync(plan.Id, default));
+    }
+
+    [Fact]
+    public async Task RelocationConfigurationRereadsSemanticChangesAndRejectsInactivePlan()
+    {
+        await using var database = await WorkflowDatabase.Create(); var (plan, _) = await database.RegisterFixturePlan();
+        var workflow = new AuthoritativePlanWorkflow(database.Repository, new BackupPlanDocumentSource());
+        var reader = new StorageRelocationConfigurationReader(workflow);
+        var before = await reader.ReadAsync(plan.Id, default);
+        await workflow.UpdateManagedAsync(CopyWithName(plan, plan.Name + " changed"), before.Snapshot.ManagedRevision!.Value, default);
+        var after = await reader.ReadAsync(plan.Id, default);
+        Assert.NotEqual(before.ConfigurationFingerprint, after.ConfigurationFingerprint);
+        Assert.NotEqual(before.Snapshot.ManagedRevision, after.Snapshot.ManagedRevision);
+        await workflow.SetActiveAsync(plan.Id, false, default);
+        await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => reader.ReadAsync(plan.Id, default));
+        using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => reader.ReadAsync(plan.Id, cancelled.Token));
+    }
+
     [Fact]
     public async Task StartupReopensDatabaseAndCompletesCurrentPublishedMetadataFromJournalOnly()
     {
