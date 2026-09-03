@@ -15,6 +15,52 @@ namespace StowCrate.Infrastructure.Tests.Persistence;
 
 public sealed class ConfigDbWorkflowIntegrationTests
 {
+    [Fact]
+    public async Task RelocationCopiesRealBytesAndAtomicallySwitchesBindingWithOldCopyRetained()
+    {
+        await using var database = await WorkflowDatabase.Create(); var (plan, unit) = await database.RegisterFixturePlan();
+        var oldRoot = Directory.CreateDirectory(Path.Combine(database.DirectoryPath, "old-root")).FullName;
+        var newRoot = Directory.CreateDirectory(Path.Combine(database.DirectoryPath, "new-root")).FullName;
+        var bytes = "0123456789"u8.ToArray();
+        await File.WriteAllBytesAsync(Path.Combine(oldRoot, "unit.7z"), bytes);
+        var device = (await database.Repository.LoadAsync(default))!.DeviceId;
+        await database.Repository.SaveValidatedAggregateAsync(new(plan.Id, device, [], new(oldRoot, Key(oldRoot), true), null, []), default);
+        var intent = Intent(plan.Id, unit.Id, new(Guid.NewGuid()), Sha256Digest.Hash(bytes));
+        await database.Repository.BeginPublishAsync(intent, default);
+        var published = intent.MarkCurrentPublished(DateTimeOffset.UnixEpoch);
+        await database.Repository.SavePublishProgressAsync(published, default);
+        await database.Repository.CompleteMetadataCommitAsync(published.RebuildMetadataCommitPlan(), default);
+        await database.Repository.CleanupCompletedPublishIntentsAsync(default);
+        var state = (await database.Repository.LoadAsync(plan.Id, unit.Id, default))!;
+        var version = state.Current!.ArchiveVersionId; var transaction = Guid.NewGuid(); var path = new RelativeStoragePath("unit.7z");
+        var configuration = await new StorageRelocationConfigurationReader(new(database.Repository, new BackupPlanDocumentSource())).ReadAsync(plan.Id, default);
+        var manifest = new StorageRelocationManifest(transaction, plan.Id, device, configuration.ConfigurationFingerprint.Digest,
+            [new(StorageRootKind.Current, new(oldRoot, Key(oldRoot)), new(newRoot, Key(newRoot)),
+                StorageRelocationPhysicalStore.InspectIdentity(oldRoot, true), StorageRelocationPhysicalStore.InspectIdentity(newRoot, true))],
+            [new(unit.Id, StorageRootKind.Current, new(version, Sha256Digest.Hash(bytes), bytes.Length), path,
+                StorageRelocationTempLayout.Create(transaction, version, path), StorageRelocationPhysicalStore.InspectIdentity(Path.Combine(oldRoot, path.Value), false))]);
+        var journal = await database.Repository.BeginRelocationAsync(manifest, configuration, default);
+        var physical = new StorageRelocationPhysicalStore(new RelocationTestBarrier());
+        var staged = await physical.StageAsync(journal, version, default);
+        journal = await database.Repository.RecordRelocationStagedAsync(transaction, journal.Revision, staged, default);
+        var target = await physical.PublishTargetAsync(journal, version, default);
+        journal = await database.Repository.RecordRelocationTargetAsync(transaction, journal.Revision, target, default);
+        journal = await database.Repository.SealRelocationTargetsAsync(transaction, journal.Revision, default);
+        var committed = await database.Repository.CommitRelocationAsync(transaction, journal.Revision, physical, default);
+        Assert.Equal(StorageTransferStage.MetadataCommitted, committed.Progress.Stage);
+        Assert.Equal(newRoot, (await database.Repository.LoadAsync(plan.Id, default))!.CurrentRoot!.CanonicalPath);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(oldRoot, path.Value)));
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(newRoot, path.Value)));
+        Assert.Equivalent(state.Baseline, (await database.Repository.LoadAsync(plan.Id, unit.Id, default))!.Baseline);
+    }
+
+    // 组合流程测试使用真实文件/SQLite，但注入 barrier，不声称证明平台突然断电持久性。
+    private sealed class RelocationTestBarrier : StowCrate.Application.Publishing.IArchivePublishMetadataDurabilityBarrier
+    {
+        public Task<StowCrate.Application.Publishing.PublishMetadataDurabilityProof> FlushDirectoryMetadataAsync(string path, CancellationToken token)
+            => Task.FromResult(new StowCrate.Application.Publishing.PublishMetadataDurabilityProof(true, "test-only"));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

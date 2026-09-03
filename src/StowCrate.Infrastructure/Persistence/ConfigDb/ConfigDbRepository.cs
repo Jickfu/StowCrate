@@ -10,7 +10,7 @@ using StowCrate.Infrastructure.Configuration.BackupPlans.V1;
 
 namespace StowCrate.Infrastructure.Persistence.ConfigDb;
 
-internal enum MetadataCommitFaultPoint { AfterNewArchive, AfterHistory, AfterCurrent, AfterBaseline, AfterLayout, AfterIntentCompletion, AfterRetentionCompletionMutation, AfterRelocationIntent, AfterRelocationProgress }
+internal enum MetadataCommitFaultPoint { AfterNewArchive, AfterHistory, AfterCurrent, AfterBaseline, AfterLayout, AfterIntentCompletion, AfterRetentionCompletionMutation, AfterRelocationIntent, AfterRelocationProgress, AfterRelocationBindingSwitch }
 internal interface IMetadataCommitFaultInjector { void ThrowIfRequested(MetadataCommitFaultPoint point); }
 internal sealed class NoMetadataCommitFaultInjector : IMetadataCommitFaultInjector { public static NoMetadataCommitFaultInjector Instance { get; } = new(); public void ThrowIfRequested(MetadataCommitFaultPoint point) { } }
 

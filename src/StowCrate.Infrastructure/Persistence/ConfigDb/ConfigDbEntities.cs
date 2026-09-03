@@ -12,6 +12,8 @@ internal sealed class StorageRelocationIntentEntity
     public byte[] ManifestSha256 { get; set; } = [];
     public byte[] ProgressPayload { get; set; } = [];
     public byte[] ProgressSha256 { get; set; } = [];
+    public byte[]? ConfigurationPayload { get; set; }
+    public byte[]? ConfigurationSha256 { get; set; }
 }
 internal sealed class StorageRelocationRootReservationEntity
 {

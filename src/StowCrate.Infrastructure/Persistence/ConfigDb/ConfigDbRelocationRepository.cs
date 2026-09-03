@@ -9,7 +9,16 @@ namespace StowCrate.Infrastructure.Persistence.ConfigDb;
 
 public sealed partial class ConfigDbRepository : IStorageRelocationJournalStore
 {
-    public async Task<StorageRelocationJournal> BeginRelocationAsync(StorageRelocationManifest manifest, CancellationToken cancellationToken)
+    public Task<StorageRelocationJournal> BeginRelocationAsync(StorageRelocationManifest manifest, CancellationToken cancellationToken)
+        => BeginRelocationCoreAsync(manifest, null, cancellationToken);
+
+    public Task<StorageRelocationJournal> BeginRelocationAsync(StorageRelocationManifest manifest, StorageRelocationConfigurationObservation configuration, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        return BeginRelocationCoreAsync(manifest, configuration, cancellationToken);
+    }
+
+    private async Task<StorageRelocationJournal> BeginRelocationCoreAsync(StorageRelocationManifest manifest, StorageRelocationConfigurationObservation? configuration, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         await using var db = factory.Create();
@@ -52,6 +61,17 @@ public sealed partial class ConfigDbRepository : IStorageRelocationJournalStore
             if (allRoots.Any(x => occupied.Any(x.Overlaps))) throw new LocalStateConcurrencyException("Relocation roots overlap active storage or sources.");
             await ValidateRelocationPlacementsAsync(db, manifest, cancellationToken);
 
+            byte[]? configurationPayload = null;
+            if (configuration is not null)
+            {
+                if (!configuration.Snapshot.IsActive || configuration.Snapshot.Plan.Id != manifest.PlanId)
+                    throw new LocalStateConcurrencyException("Relocation configuration identity changed.");
+                var captured = ConfigurationCheckpoint(configuration.Snapshot);
+                var current = await ReadConfigurationCheckpointAsync(db, plan, cancellationToken);
+                if (captured != current) throw new LocalStateConcurrencyException("Relocation configuration changed before Begin.");
+                configurationPayload = StorageRelocationCodec.Encode(current);
+            }
+
             var progress = StorageTransferProgress.Prepare(manifest.TransactionId, manifest.PlanId, manifest.Entries.Select(x => x.Artifact));
             var payload = StorageRelocationCodec.Encode(manifest);
             var state = StorageRelocationCodec.Encode(progress);
@@ -67,6 +87,8 @@ public sealed partial class ConfigDbRepository : IStorageRelocationJournalStore
                 ManifestSha256 = SHA256.HashData(payload),
                 ProgressPayload = state,
                 ProgressSha256 = SHA256.HashData(state),
+                ConfigurationPayload = configurationPayload,
+                ConfigurationSha256 = configurationPayload is null ? null : SHA256.HashData(configurationPayload),
             });
             await db.SaveChangesAsync(cancellationToken);
             faultInjector.ThrowIfRequested(MetadataCommitFaultPoint.AfterRelocationIntent);
@@ -153,6 +175,10 @@ public sealed partial class ConfigDbRepository : IStorageRelocationJournalStore
         {
             var manifest = StorageRelocationCodec.ReadManifest(row.ManifestPayload, row.ManifestSha256);
             var progress = StorageRelocationCodec.ReadProgress(manifest, row.ProgressPayload, row.ProgressSha256);
+            if (row.ConfigurationPayload is not null && row.ConfigurationSha256 is not null)
+                _ = StorageRelocationCodec.ReadConfiguration(row.ConfigurationPayload, row.ConfigurationSha256);
+            else if (row.ConfigurationPayload is not null || row.ConfigurationSha256 is not null || progress.IsMetadataCommitted)
+                throw new LocalStateCorruptionException("Relocation configuration checkpoint is missing.");
             var device = await db.DatabaseMetadata.AsNoTracking().SingleAsync(token);
             if (row.ProtocolVersion != 1 || row.Revision < 1 || DurableCodecs.Uuid(row.TransactionId) != manifest.TransactionId
                 || DurableCodecs.Uuid(row.PlanId) != manifest.PlanId.Value || DurableCodecs.Uuid(row.DeviceId) != manifest.DeviceId.Value
@@ -176,7 +202,7 @@ public sealed partial class ConfigDbRepository : IStorageRelocationJournalStore
         }
     }
     private static string RootToken(StorageRootKind kind) => kind switch { StorageRootKind.Current => "CURRENT", StorageRootKind.History => "HISTORY", _ => throw new ArgumentOutOfRangeException(nameof(kind)) };
-    private static string StageToken(StorageTransferStage stage) => stage switch { StorageTransferStage.Prepared => "PREPARED", StorageTransferStage.TargetsDurable => "TARGETS_DURABLE", _ => throw new LocalStateCorruptionException("Unsupported persisted relocation stage.") };
+    private static string StageToken(StorageTransferStage stage) => stage switch { StorageTransferStage.Prepared => "PREPARED", StorageTransferStage.TargetsDurable => "TARGETS_DURABLE", StorageTransferStage.MetadataCommitted => "METADATA_COMMITTED", _ => throw new LocalStateCorruptionException("Unsupported persisted relocation stage.") };
     private static Exception TranslateRelocation(Exception exception) => exception is System.Text.Json.JsonException or KeyNotFoundException or NullReferenceException
         ? new LocalStateCorruptionException("Relocation journal payload is invalid.", exception) : Translate(exception, "Relocation journal operation failed.");
 

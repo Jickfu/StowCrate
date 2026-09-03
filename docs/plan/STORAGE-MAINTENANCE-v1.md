@@ -24,9 +24,9 @@ authoritative Plan 文档与 registration 必须有效；File-backed 文档即�
 
 维护者已确认配置漂移策略：外部编辑 File-backed 文档仅改变名称/描述、定时任务、过滤规则或压缩级别时，不阻断现有归档搬迁；改变 Plan/Source/Archive Unit identity、unit 的来源/path/规则来源、SourceOutputPath、输出编码或有效归档格式时，属于 identity/layout drift，保留旧 authority/journal 并拒绝提交。格式决定输出扩展名，不能与压缩级别混为一谈。停用、authority/registration path 改变及配置无效也拒绝；root/binding drift 继续由事务内冻结 binding 与 reservation 校验负责。
 
-`StorageRelocationConfigurationFingerprint` 使用独立 canonical domain `storage-relocation-configuration-v1`，固定编码版本 1；按 UUID 排序 Source 与 declared Unit，保存 identity/layout 投影，并保守纳入默认格式以覆盖离线时不可重新发现的未声明 FILE_MANAGED 单元。其他只影响未来归档内容或维护策略的配置不进入该指纹；此规则不放宽未完成迁移期间已有的数据库 mutation 互斥。`RevalidateAsync` 重读有效配置并比较该投影，不以完整 Plan fingerprint 或 Managed revision 的变化直接阻断。当前尚未把新指纹写入 journal，不重新解释既有 `ExecutionSemanticDigest`。
+`StorageRelocationConfigurationFingerprint` 使用独立 canonical domain `storage-relocation-configuration-v1`，固定编码版本 1；按 UUID 排序 Source 与 declared Unit，保存 identity/layout 投影，并保守纳入默认格式以覆盖离线时不可重新发现的未声明 FILE_MANAGED 单元。其他只影响未来归档内容或维护策略的配置不进入该指纹；此规则不放宽未完成迁移期间已有的数据库 mutation 互斥。`RevalidateAsync` 重读有效配置并比较该投影，不以完整 Plan fingerprint 或 Managed revision 的变化直接阻断。schema v5 已把新指纹写入独立 configuration checkpoint，不重新解释既有 `ExecutionSemanticDigest`。
 
-`StorageRelocationConfigurationReader` 已提供独立的配置观察入口：复用 strict authoritative reader，每次重新取得 active Plan，并返回 authority/revision 与完整 `PlanSemanticFingerprint`。该指纹只用于发现配置变化，不是 `ExecutionSemanticDigest`，不裁定任意配置变化是否阻止迁移，也不单独构成 commit permission。入口不依赖 Source/External binding、FILE_MANAGED discovery 或 Secret material；root safety 与物理完整性仍由其他门槛负责。当前尚未把观察结果接入版本化 journal/原子切换事务。
+`StorageRelocationConfigurationReader` 已提供独立的配置观察入口：复用 strict authoritative reader，每次重新取得 active Plan，并返回 authority/revision 与完整 `PlanSemanticFingerprint`。该指纹只用于发现配置变化，不是 `ExecutionSemanticDigest`，不裁定任意配置变化是否阻止迁移，也不单独构成 commit permission。入口不依赖 Source/External binding、FILE_MANAGED discovery 或 Secret material；root safety 与物理完整性仍由其他门槛负责。带 configuration observation 的 Begin 重验后冻结独立 checkpoint，供原子切换事务校验。
 
 Begin transaction 必须重验 active registration、expected roots/placements/layout、迁移条目集合完整性及全设备 root safety。相同 Plan 不得有未完成 publish、PREPARED retention 或未完成 storage maintenance。COMPLETED retention 必须先完成旧根 absence reconciliation/compaction；旧路径 cleanup 必须先收敛。
 
@@ -34,7 +34,7 @@ Begin transaction 必须重验 active registration、expected roots/placements/l
 
 Journal 必须保存 transaction UUID、PlanId、DeviceId、kind、协议版本、old/new root canonical path/comparison key/native identity、expected source/layout facts、全部 artifact 的 ArchiveVersionId/UnitId/slot/old path/new path/temp path、SHA-256/length 和旧对象 identity。根与对象 identity 是带平台/编码版本的 opaque Infrastructure evidence，不进入 Core、portable document 或 baseline。
 
-这些字段是不可变 transaction manifest，不是通用 JSON extension bag。config.db v4 已实现 root relocation 的 pre-commit journal/reservation；具体字段、FK、CHECK、canonical codec 与 CAS 约束见 `CONFIG-DB-v1-SCHEMA-DESIGN.md` v4 addendum。Output Reorganization 清单和 post-commit persistence 仍待实现，不能把当前 v4 当作完整迁移落地。
+这些字段是不可变 transaction manifest，不是通用 JSON extension bag。config.db v4 已实现 root relocation 的 pre-commit journal/reservation；具体字段、FK、CHECK、canonical codec 与 CAS 约束见 `CONFIG-DB-v1-SCHEMA-DESIGN.md` v4 addendum。v5 已扩展 configuration checkpoint 与 metadata commit；Output Reorganization 清单和 post-commit cleanup persistence 仍待实现，不能把当前实现当作完整迁移落地。
 
 ## 3. 顺序与持久点
 
@@ -79,4 +79,4 @@ Stage 使用 destination-local CreateNew、流式 SHA-256/length、WriteThrough/
 
 任何成功 proof 都要求 file data 与 namespace durability。平台 barrier 返回不可用时安全失败，尤其不能沿用旧 publisher 的 namespace-only 降级来声明 relocation durable。测试中的注入成功 barrier 仅验证控制流，不扩大平台能力；native barrier fixture 要么证明可用路径，要么验证拒绝。仍不宣称抵抗所有主动 hostile filesystem races，亦不将单机临时目录复制测试称为真实跨卷或突然断电验收。
 
-`VerifyForCommitAsync` 已提供 `TARGETS_DURABLE` 后的全量物理重验：严格匹配 manifest/progress artifact set，检查所有旧/新根（含空集合）、源和目标 identity/SHA-256/length、temp absence，并重新执行目标目录及祖先 barrier。缺失目录不会重建；失败不修改 journal 或文件。返回前再次检查整个集合的 namespace/identity，防止后续条目 I/O 期间较早条目被正常替换。它不生成可缓存或持久复用的 commit authority，也不宣称跨文件瞬时快照；上层仍须紧接着重验 authoritative semantics、reservation、expected metadata 与 revision CAS 后才能原子切换。数据库 metadata switch 尚未接入。
+`VerifyForCommitAsync` 已提供 `TARGETS_DURABLE` 后的全量物理重验：严格匹配 manifest/progress artifact set，检查所有旧/新根（含空集合）、源和目标 identity/SHA-256/length、temp absence，并重新执行目标目录及祖先 barrier。缺失目录不会重建；失败不修改 journal 或文件。返回前再次检查整个集合的 namespace/identity，防止后续条目 I/O 期间较早条目被正常替换。它不生成可缓存或持久复用的 commit authority，也不宣称跨文件瞬时快照；上层仍须紧接着重验 authoritative semantics、reservation、expected metadata 与 revision CAS 后才能原子切换。schema v5 的 CommitRelocationAsync 已在切换事务内调用该门槛。

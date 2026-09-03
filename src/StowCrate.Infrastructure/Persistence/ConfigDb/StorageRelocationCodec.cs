@@ -20,6 +20,20 @@ internal static class StorageRelocationCodec
     private sealed record ManifestDto(int Version, Guid TransactionId, Guid PlanId, Guid DeviceId, string ExecutionDigest, RootDto[] Roots, EntryDto[] Entries);
     private sealed record ProgressEntryDto(Guid VersionId, int Stage, StorageObjectIdentity? Identity);
     private sealed record ProgressDto(int Version, int Stage, ProgressEntryDto[] Entries);
+    internal sealed record ConfigurationDto(int Version, int FingerprintVersion, string Authority, string? Path, string Digest);
+
+    internal static byte[] Encode(ConfigurationDto value) => JsonSerializer.SerializeToUtf8Bytes(value, Options);
+    internal static ConfigurationDto ReadConfiguration(byte[] bytes, byte[] digest)
+    {
+        var value = Read<ConfigurationDto>(bytes, digest);
+        if (value.Version != 1 || value.FingerprintVersion != StorageRelocationConfigurationFingerprint.EncodingVersion
+            || value.Authority is not ("MANAGED" or "FILE_BACKED")
+            || (value.Authority == "MANAGED" ? value.Path is not null : string.IsNullOrWhiteSpace(value.Path)))
+            throw new LocalStateCorruptionException("Invalid relocation configuration checkpoint.");
+        _ = new StowCrate.Core.ChangeDetection.Sha256Digest(value.Digest);
+        RequireCanonical(bytes, Encode(value));
+        return value;
+    }
 
     public static byte[] Encode(StorageRelocationManifest value) => JsonSerializer.SerializeToUtf8Bytes(new ManifestDto(1,
         value.TransactionId, value.PlanId.Value, value.DeviceId.Value, value.ExecutionSemanticDigest.Value,
@@ -28,7 +42,7 @@ internal static class StorageRelocationCodec
         [.. value.Entries.Select(x => new EntryDto(x.UnitId.Value, (int)x.RootKind, x.Artifact.VersionId.Value, x.Artifact.Integrity.Value,
             x.Artifact.Length, x.RelativePath.Value, x.TempRelativePath.Value, x.OldIdentity))]), Options);
 
-    public static byte[] Encode(StorageTransferProgress value) => JsonSerializer.SerializeToUtf8Bytes(new ProgressDto(1, (int)value.Stage,
+    public static byte[] Encode(StorageTransferProgress value) => JsonSerializer.SerializeToUtf8Bytes(new ProgressDto(value.Stage == StorageTransferStage.MetadataCommitted ? 2 : 1, (int)value.Stage,
         [.. value.Artifacts.Select(x => new ProgressEntryDto(x.Artifact.VersionId.Value, (int)x.Stage, x.StagedIdentity))]), Options);
 
     public static StorageRelocationManifest ReadManifest(byte[] bytes, byte[] digest)
@@ -46,7 +60,8 @@ internal static class StorageRelocationCodec
     public static StorageTransferProgress ReadProgress(StorageRelocationManifest manifest, byte[] bytes, byte[] digest)
     {
         var dto = Read<ProgressDto>(bytes, digest);
-        if (dto.Version != 1 || dto.Entries.Length != manifest.Entries.Length) throw new LocalStateCorruptionException("Relocation progress manifest mismatch.");
+        if (!(dto.Version == 1 && dto.Stage is 0 or 1 || dto.Version == 2 && dto.Stage == 2 && dto.Entries.All(x => x.Stage == 2))
+            || dto.Entries.Length != manifest.Entries.Length) throw new LocalStateCorruptionException("Relocation progress manifest mismatch.");
         var items = manifest.Entries.ToDictionary(x => x.Artifact.VersionId.Value);
         var value = StorageTransferProgress.Restore(manifest.TransactionId, manifest.PlanId, (StorageTransferStage)dto.Stage,
             dto.Entries.Select(x => new StorageTransferArtifactProgress(items[x.VersionId].Artifact, (StorageTransferArtifactStage)x.Stage, x.Identity)));

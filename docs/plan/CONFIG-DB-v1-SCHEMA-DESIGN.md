@@ -263,3 +263,9 @@ M5.2 把 schema 从 v2 提升到 v3；v1/v2 migration 保持不可变。新增 a
 本次 schema 只支持 relocation 的 pre-commit durability，不提供 metadata commit、abort、delete 或 compact API；没有物理 workflow 调用入口。挂起 intent 保留 root reservation；同 Plan 的配置/绑定/publish/retention/identity mutation 和跨 Plan 冲突的 binding/activation 都必须拒绝。后续 metadata switch 与 cleanup 需要显式 schema/port 扩展，禁止把任意 progress save 当作 metadata commit。
 
 v1 payload 的 enum 编码固定：RootKind Current=0/History=1；transfer stage Prepared=0/TargetsDurable=1（kernel 的 2/3 尚不允许持久化）；artifact stage Pending=0/Staged=1/TargetDurable=2（OldCopyAbsent=3 尚不允许在 v4 pre-commit journal 中出现）。字段顺序、UTF-8 serializer 格式与有序 root/entry 数组是内部 codec v1 的一部分，升级必须新增 version-specific reader，不可静默改写既有 payload。该 JSON 只在 config.db 中使用，不改变公开 portable Schema。
+
+## config.db schema v5 — relocation metadata commit
+
+StorageRelocationIntent 新增 nullable ConfigurationPayload/ConfigurationSha256；两者必须同时为 NULL（legacy）或为非空 payload/32-byte digest。closed-world canonical configuration checkpoint v1 保存 authority、registration path、迁移配置 fingerprint encoding version 与 digest；事务内 Begin 重读配置确认后与 journal 一起保存，不允许事后补签 legacy journal。既有 manifest bytes/ExecutionSemanticDigest 不变、不重解释。旧日志继续可读和执行 pre-commit 恢复，但缺少 checkpoint 时不能 metadata commit。
+
+Stage 新增 METADATA_COMMITTED。progress codec v1 仍只读取 pre-commit，新增 version 2 只读取 MetadataCommitted + 全部 TargetDurable；不自动升级旧 progress。commit 事务重验 revision、配置 checkpoint、完整 placement/ArchiveVersion、old bindings、reservation 与跨 Plan root safety，执行全量 physical verification，再重读 File-backed 配置；仅更新选定 root path/key 和 journal stage/revision。baseline、ArchiveVersion、Current/History relative placements、旧文件、root reservations 均保留。任何异常整体回滚；metadata switch 后不能返回 pre-commit 状态。cleanup/completion/compaction 暂不开放。

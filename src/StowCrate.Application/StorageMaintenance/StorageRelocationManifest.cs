@@ -82,10 +82,12 @@ public static class StorageRelocationTempLayout
 
 public sealed record StorageRelocationJournal(StorageRelocationManifest Manifest, StorageTransferProgress Progress, long Revision);
 
-/// <summary>Pre-commit journal port；尚不提供 metadata switch/cleanup，禁止调用者用 progress save 冒充提交。</summary>
+/// <summary>事务形状端口；有配置 checkpoint 的日志才可提交。cleanup 尚未开放。</summary>
 public interface IStorageRelocationJournalStore
 {
     Task<StorageRelocationJournal> BeginRelocationAsync(StorageRelocationManifest manifest, CancellationToken cancellationToken);
+    Task<StorageRelocationJournal> BeginRelocationAsync(StorageRelocationManifest manifest, StorageRelocationConfigurationObservation configuration, CancellationToken cancellationToken);
+    Task<StorageRelocationJournal> CommitRelocationAsync(Guid transactionId, long expectedRevision, IStorageRelocationPhysicalStore physical, CancellationToken cancellationToken);
     Task<StorageRelocationJournal?> LoadRelocationAsync(PlanId planId, CancellationToken cancellationToken);
     Task<StorageRelocationJournal> RecordRelocationStagedAsync(Guid transactionId, long expectedRevision, StorageTransferProof proof, CancellationToken cancellationToken);
     Task<StorageRelocationJournal> RecordRelocationTargetAsync(Guid transactionId, long expectedRevision, StorageTransferProof proof, CancellationToken cancellationToken);
