@@ -14,6 +14,14 @@ Output Reorganization 与 Storage Relocation 使用同一 Plan-scoped transfer p
 
 ## 2. 冻结事实和互斥
 
+### 2.1 原始输入离线边界
+
+维护者已确认：原始 Backup Source/External input 离线时允许迁移已有归档，不要求解密密钥。协议中的 copy source/旧源指旧 Current/History 归档，不是原始输入树；旧归档和目标根不可访问仍必须失败。迁移按 immutable ArchiveVersion 的 SHA-256/length 验证 opaque bytes，不调用扫描、FILE_MANAGED discovery、备份 Candidate/readiness、Archiver 或 Secret material 服务。
+
+authoritative Plan 文档与 registration 必须有效；File-backed 文档即使恰好位于离线输入盘，也不得回退到缓存。仍检查已有 Source/External binding 与全设备 output/reservation 安全事实；不可证明路径安全时阻止，不因输入缺失而把其命名空间视为空闲。提交前的 configuration guard 必须独立于 unit backup ExecutionSemanticSnapshot；现有 manifest 的 `ExecutionSemanticDigest` 尚未接入该 guard，不能直接拿备份指纹或任意摘要充当迁移授权。后续接入时必须显式版本化，不能静默重解释旧 journal。
+
+### 2.2 冻结集合
+
 Begin transaction 必须重验 active registration、expected roots/placements/layout、迁移条目集合完整性及全设备 root safety。相同 Plan 不得有未完成 publish、PREPARED retention 或未完成 storage maintenance。COMPLETED retention 必须先完成旧根 absence reconciliation/compaction；旧路径 cleanup 必须先收敛。
 
 从 Begin 到 cleanup 完成期间持久保留 old/new root reservation；其他 Plan 的激活、binding 保存与执行也必须检查 reservation。仅依赖进程锁不够。该 Plan 的 publish、retention、另一次 relocation/reorganization、影响迁移的 binding/configuration/identity mutation 均拒绝。File-backed 外部文件不能锁住，commit 前必须重读并验证冻结的 relevant semantics；变更只产生 out-of-sync，不重新解释旧 journal。

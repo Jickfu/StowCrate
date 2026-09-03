@@ -10,6 +10,24 @@ namespace StowCrate.Infrastructure.Tests.Filesystem;
 public sealed class StorageRelocationPhysicalTests
 {
     [Fact]
+    public async Task TransfersOpaqueArchiveBytesWithoutOriginalInputsOrDecryption()
+    {
+        using var fixture = new Fixture();
+        var original = Path.Combine(Path.GetDirectoryName(fixture.NewRoot)!, "original-input");
+        Directory.CreateDirectory(original);
+        await File.WriteAllTextAsync(Path.Combine(original, "document.txt"), "original source content");
+        // 模拟原始输入盘不可访问；旧归档仍在线。仅操作 fixture 私有目录，不动真实用户输入。
+        Directory.Move(original, original + ".disconnected");
+        var journal = await PublishAllAsync(fixture.Journal);
+        await new StorageRelocationPhysicalStore(new Barrier()).VerifyForCommitAsync(journal, default);
+        Assert.False(Directory.Exists(original));
+        // fixture 为不透明字节而非可解码归档：迁移不能偷偷要求格式解析或密码。
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Target));
+        Assert.Equal(StorageTransferStage.TargetsDurable, journal.Progress.Stage);
+    }
+
+    [Fact]
     public async Task CopiesAndPublishesNestedUnicodeTargetWithoutMovingOldArchive()
     {
         using var fixture = new Fixture();

@@ -612,6 +612,8 @@ ExecutionBindingFingerprint 是一次运行的一致性输入，至少包含：
 
 v1 只支持完整 History relocation，不支持 old/new multi-store History。relocation 不生成新 ArchiveVersion、不改变 VersionId/PublishedAt、不推进 baseline。ArchiveVersion 不拥有 slot/path；CurrentVersion 与 HistoryVersionPlacement 分别保存唯一 relative placement，实际路径由对应 binding root + relative path 解析。
 
+已有归档的 relocation 独立于 backup-run readiness：原始 SourceRoot/External input 离线或 Secure Secret 暂不可用，不单独阻止搬迁现有归档。不得要求重新执行 Scanner、FILE_MANAGED discovery、Candidate 构造、Archiver capability 检查或 Secret material acquisition；SHA-256/length 验证针对归档文件原始字节，不解密或重新做格式测试。File-backed authoritative document 仍必须可读、有效且 PlanId 匹配，不能用缓存配置替代。已有 local binding 的 canonical path/comparison key 仍参与全设备 root safety，源离线不授权忽略冲突或把缺失路径当作可写空间；安全事实不足时失败而非猜测。
+
 ### 18.8 Root overlap safety
 
 单 Plan 的 SourceRoot、CurrentRoot、HistoryRoot 继续两两不重叠。同一 DeviceId 上，任一 active writable CurrentRoot/HistoryRoot 还不得等于、包含或位于任何其他 active Plan 的 SourceRoot、CurrentRoot 或 HistoryRoot 之下；验证同时使用 lexical 与 physical-canonical path。不同 Plan 的 SourceRoot 可重叠，因为均为只读输入；共享父目录下互不包含的 sibling plan storage roots 合法。
