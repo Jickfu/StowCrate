@@ -269,3 +269,7 @@ v1 payload 的 enum 编码固定：RootKind Current=0/History=1；transfer stage
 StorageRelocationIntent 新增 nullable ConfigurationPayload/ConfigurationSha256；两者必须同时为 NULL（legacy）或为非空 payload/32-byte digest。closed-world canonical configuration checkpoint v1 保存 authority、registration path、迁移配置 fingerprint encoding version 与 digest；事务内 Begin 重读配置确认后与 journal 一起保存，不允许事后补签 legacy journal。既有 manifest bytes/ExecutionSemanticDigest 不变、不重解释。旧日志继续可读和执行 pre-commit 恢复，但缺少 checkpoint 时不能 metadata commit。
 
 Stage 新增 METADATA_COMMITTED。progress codec v1 仍只读取 pre-commit，新增 version 2 只读取 MetadataCommitted + 全部 TargetDurable；不自动升级旧 progress。commit 事务重验 revision、配置 checkpoint、完整 placement/ArchiveVersion、old bindings、reservation 与跨 Plan root safety，执行全量 physical verification，再重读 File-backed 配置；仅更新选定 root path/key 和 journal stage/revision。baseline、ArchiveVersion、Current/History relative placements、旧文件、root reservations 均保留。任何异常整体回滚；metadata switch 后不能返回 pre-commit 状态。cleanup/completion/compaction 暂不开放。
+
+## config.db schema v6 — relocation cleanup
+
+v6 保持 manifest/configuration 与 progress v1/v2 不变，增加 progress v3：MetadataCommitted 可含 OldCopyAbsent，Completed 必须全部 OldCopyAbsent。只有 repository 在同一事务加载 journal、重验新 binding/placement/reservation、调用物理清理并匹配完整 absence proof 后才能写入。物理成功后的日志保存与提交不再响应 caller cancellation；失败允许下次以真实 absence 补记。完成前重新证明全部旧路径 absence。COMPLETED 不释放 journal/reservation，普通变更继续受互锁保护。v6 降级 v5 时拒绝任何 v3/Completed 记录，避免丢失清理进度语义。

@@ -202,7 +202,7 @@ public sealed partial class ConfigDbRepository : IStorageRelocationJournalStore
         }
     }
     private static string RootToken(StorageRootKind kind) => kind switch { StorageRootKind.Current => "CURRENT", StorageRootKind.History => "HISTORY", _ => throw new ArgumentOutOfRangeException(nameof(kind)) };
-    private static string StageToken(StorageTransferStage stage) => stage switch { StorageTransferStage.Prepared => "PREPARED", StorageTransferStage.TargetsDurable => "TARGETS_DURABLE", StorageTransferStage.MetadataCommitted => "METADATA_COMMITTED", _ => throw new LocalStateCorruptionException("Unsupported persisted relocation stage.") };
+    private static string StageToken(StorageTransferStage stage) => stage switch { StorageTransferStage.Prepared => "PREPARED", StorageTransferStage.TargetsDurable => "TARGETS_DURABLE", StorageTransferStage.MetadataCommitted => "METADATA_COMMITTED", StorageTransferStage.Completed => "COMPLETED", _ => throw new LocalStateCorruptionException("Unsupported persisted relocation stage.") };
     private static Exception TranslateRelocation(Exception exception) => exception is System.Text.Json.JsonException or KeyNotFoundException or NullReferenceException
         ? new LocalStateCorruptionException("Relocation journal payload is invalid.", exception) : Translate(exception, "Relocation journal operation failed.");
 

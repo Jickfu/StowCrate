@@ -82,9 +82,11 @@ public static class StorageRelocationTempLayout
 
 public sealed record StorageRelocationJournal(StorageRelocationManifest Manifest, StorageTransferProgress Progress, long Revision);
 
-/// <summary>事务形状端口；有配置 checkpoint 的日志才可提交。cleanup 尚未开放。</summary>
+/// <summary>事务形状端口；清理只消费 durable committed journal，完成不释放 reservation。</summary>
 public interface IStorageRelocationJournalStore
 {
+    Task<StorageRelocationJournal> CleanupRelocationEntryAsync(Guid transactionId, long expectedRevision, ArchiveVersionId versionId, IStorageRelocationOldCopyStore physical, CancellationToken cancellationToken);
+    Task<StorageRelocationJournal> CompleteRelocationAsync(Guid transactionId, long expectedRevision, IStorageRelocationOldCopyStore physical, CancellationToken cancellationToken);
     Task<StorageRelocationJournal> BeginRelocationAsync(StorageRelocationManifest manifest, CancellationToken cancellationToken);
     Task<StorageRelocationJournal> BeginRelocationAsync(StorageRelocationManifest manifest, StorageRelocationConfigurationObservation configuration, CancellationToken cancellationToken);
     Task<StorageRelocationJournal> CommitRelocationAsync(Guid transactionId, long expectedRevision, IStorageRelocationPhysicalStore physical, CancellationToken cancellationToken);

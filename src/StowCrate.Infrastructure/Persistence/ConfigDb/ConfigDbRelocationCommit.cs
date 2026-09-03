@@ -90,15 +90,16 @@ public sealed partial class ConfigDbRepository
         catch (Exception exception) { throw TranslateRelocation(exception); }
     }
 
-    private static async Task<List<OutputRootLocalBindingEntity>> ValidateCommitRootsAsync(ConfigDbContext db, StorageRelocationManifest manifest, CancellationToken token)
+    private static async Task<List<OutputRootLocalBindingEntity>> ValidateCommitRootsAsync(ConfigDbContext db, StorageRelocationManifest manifest, CancellationToken token, bool committed = false)
     {
         var plan = DurableCodecs.Uuid(manifest.PlanId.Value);
         var roots = await db.OutputRootLocalBindings.Where(x => x.PlanId == plan).ToListAsync(token);
         foreach (var root in manifest.Roots)
         {
             var old = roots.SingleOrDefault(x => x.RootKind == RootToken(root.Kind));
-            if (old is null || old.IsActive != 1 || old.CanonicalPath != root.OldRoot.CanonicalPath || old.ComparisonKey != root.OldRoot.ComparisonKey)
-                throw new LocalStateConcurrencyException("Relocation old binding changed.");
+            var expected = committed ? root.NewRoot : root.OldRoot;
+            if (old is null || old.IsActive != 1 || old.CanonicalPath != expected.CanonicalPath || old.ComparisonKey != expected.ComparisonKey)
+                throw new LocalStateConcurrencyException("Relocation binding changed.");
         }
         var proposed = manifest.Roots.SelectMany(x => new[] { x.OldRoot, x.NewRoot }).ToArray();
         foreach (var other in await db.StorageRelocationIntents.AsNoTracking().Where(x => x.TransactionId != DurableCodecs.Uuid(manifest.TransactionId)).ToListAsync(token))

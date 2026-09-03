@@ -81,7 +81,7 @@ Application 负责不可变 progress kernel、事务编排、recovery classifica
 
 删除后忽略 caller cancellation，完成旧父目录 barrier 与 absence re-proof 后返回关联 transaction/Plan/revision/artifact/old-root/old-object/target identity 的强类型 proof。删除前 barrier 不可用时保留旧文件；删除后 barrier 失败时不返回 proof，保留已提交日志，下一次按 absent 重新执行 barrier。missing ancestor/root drift 不当作可信 absence。新根不回滚。
 
-该物理接口不写 SQLite，不持久化 cleanup completion，也不释放 reservation；调用方必须从 durable repository 加载日志，并在未来清理编排中重验当前新 binding/placement。当前仅物理适配器和组合测试已接入，cleanup progress persistence、启动恢复编排与 compaction 仍待实现。基于 path 的最后 identity 重验检测正常替换，不宣称防御所有主动 hostile race。
+该物理接口不写 SQLite。repository 清理事务按 revision CAS 加载 durable journal，重验新 binding、完整 placement 集合与 reservation 后调用物理接口，严格匹配返回 proof 的全部字段，再持久化 OldCopyAbsent。物理成功后日志保存忽略 caller cancellation；数据库故障仍可能留下 absent 但日志落后的状态，下次重新证明 absence，不回滚新根。全部条目已有 OldCopyAbsent 后，再逐项重新证明 absence 才写 COMPLETED；重新出现的旧文件不得再次删除。COMPLETED 仍保留 journal 和所有 reservation，直到独立 reconciliation/compaction。启动恢复编排与 compaction 仍待实现。基于 path 的最后 identity 重验检测正常替换，不宣称防御所有主动 hostile race。
 
 ### 6.2 pre-commit 验证细节
 

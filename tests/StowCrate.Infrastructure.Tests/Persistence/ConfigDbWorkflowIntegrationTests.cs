@@ -15,8 +15,12 @@ namespace StowCrate.Infrastructure.Tests.Persistence;
 
 public sealed class ConfigDbWorkflowIntegrationTests
 {
-    [Fact]
-    public async Task RelocationCopiesRealBytesAndAtomicallySwitchesBindingWithOldCopyRetained()
+    [Theory]
+    [InlineData("normal")]
+    [InlineData("database-fault")]
+    [InlineData("cancel-after-delete")]
+    [InlineData("old-reappeared")]
+    public async Task RelocationCopiesCommitsAndDurablyReconcilesOldCopy(string scenario)
     {
         await using var database = await WorkflowDatabase.Create(); var (plan, unit) = await database.RegisterFixturePlan();
         var oldRoot = Directory.CreateDirectory(Path.Combine(database.DirectoryPath, "old-root")).FullName;
@@ -52,11 +56,53 @@ public sealed class ConfigDbWorkflowIntegrationTests
         Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(oldRoot, path.Value)));
         Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(newRoot, path.Value)));
         Assert.Equivalent(state.Baseline, (await database.Repository.LoadAsync(plan.Id, unit.Id, default))!.Baseline);
-        var cleanupProof = await physical.RemoveOldCopyAsync(committed, version, default);
-        Assert.Equal(committed.Revision, cleanupProof.JournalRevision);
+        using var cancellation = new CancellationTokenSource();
+        var cleanupStore = new CleanupObserver(physical, () => { if (scenario == "cancel-after-delete") cancellation.Cancel(); });
+        if (scenario == "database-fault")
+        {
+            var faulty = new ConfigDbRepository(new(database.Path), new CleanupJournalFault());
+            await Assert.ThrowsAsync<IOException>(() => faulty.CleanupRelocationEntryAsync(transaction, committed.Revision, version, cleanupStore, default));
+            Assert.False(File.Exists(Path.Combine(oldRoot, path.Value)));
+            Assert.Equal(committed.Revision, (await database.Repository.LoadRelocationAsync(plan.Id, default))!.Revision);
+        }
+        var reopened = await ConfigDbOpenCoordinator.OpenAsync(database.Path);
+        var cleaned = await reopened.CleanupRelocationEntryAsync(transaction, committed.Revision, version, cleanupStore, cancellation.Token);
+        Assert.Equal(StorageTransferArtifactStage.OldCopyAbsent, cleaned.Progress.Artifacts[0].Stage);
         Assert.False(File.Exists(Path.Combine(oldRoot, path.Value)));
-        Assert.Equal(newRoot, (await database.Repository.LoadAsync(plan.Id, default))!.CurrentRoot!.CanonicalPath);
-        Assert.Equal(StorageTransferStage.MetadataCommitted, (await database.Repository.LoadRelocationAsync(plan.Id, default))!.Progress.Stage);
+        if (scenario == "old-reappeared")
+        {
+            await File.WriteAllBytesAsync(Path.Combine(oldRoot, path.Value), bytes);
+            await Assert.ThrowsAsync<IOException>(() => reopened.CompleteRelocationAsync(transaction, cleaned.Revision, physical, default));
+            Assert.True(File.Exists(Path.Combine(oldRoot, path.Value)));
+            Assert.Equal(cleaned.Revision, (await reopened.LoadRelocationAsync(plan.Id, default))!.Revision);
+        }
+        else
+        {
+            var completed = await reopened.CompleteRelocationAsync(transaction, cleaned.Revision, physical, default);
+            Assert.Equal(StorageTransferStage.Completed, completed.Progress.Stage);
+            Assert.Equal(StorageTransferStage.Completed, (await reopened.LoadRelocationAsync(plan.Id, default))!.Progress.Stage);
+        }
+        Assert.Equal(newRoot, (await reopened.LoadAsync(plan.Id, default))!.CurrentRoot!.CanonicalPath);
+        Assert.Equivalent(state.Baseline, (await reopened.LoadAsync(plan.Id, unit.Id, default))!.Baseline);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(newRoot, path.Value)));
+        await using var db = new ConfigDbContextFactory(database.Path).Create();
+        Assert.Equal(2, await db.StorageRelocationRootReservations.CountAsync());
+    }
+
+    private sealed class CleanupJournalFault : IMetadataCommitFaultInjector
+    {
+        public void ThrowIfRequested(MetadataCommitFaultPoint point)
+        { if (point == MetadataCommitFaultPoint.AfterRelocationProgress) throw new IOException("injected journal failure after deletion"); }
+    }
+
+    private sealed class CleanupObserver(IStorageRelocationOldCopyStore inner, Action afterProof) : IStorageRelocationOldCopyStore
+    {
+        public async Task<StorageRelocationOldCopyAbsenceProof> RemoveOldCopyAsync(StorageRelocationJournal journal, ArchiveVersionId version, CancellationToken token)
+        {
+            var proof = await inner.RemoveOldCopyAsync(journal, version, token);
+            afterProof();
+            return proof;
+        }
     }
 
     // 组合流程测试使用真实文件/SQLite，但注入 barrier，不声称证明平台突然断电持久性。

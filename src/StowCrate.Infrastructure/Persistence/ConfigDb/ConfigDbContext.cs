@@ -42,7 +42,7 @@ public sealed class ConfigDbContext(DbContextOptions<ConfigDbContext> options) :
         {
             table.HasCheckConstraint("CK_Relocation_Ids", "length(TransactionId)=16 AND length(PlanId)=16 AND length(DeviceId)=16");
             table.HasCheckConstraint("CK_Relocation_Protocol", "ProtocolVersion=1 AND Revision>=1");
-            table.HasCheckConstraint("CK_Relocation_Stage", "Stage IN ('PREPARED','TARGETS_DURABLE','METADATA_COMMITTED')");
+            table.HasCheckConstraint("CK_Relocation_Stage", "Stage IN ('PREPARED','TARGETS_DURABLE','METADATA_COMMITTED','COMPLETED')");
             table.HasCheckConstraint("CK_Relocation_Configuration", "(ConfigurationPayload IS NULL AND ConfigurationSha256 IS NULL) OR (ConfigurationPayload IS NOT NULL AND ConfigurationSha256 IS NOT NULL AND length(ConfigurationPayload)>0 AND length(ConfigurationSha256)=32)");
             table.HasCheckConstraint("CK_Relocation_Payload", "length(ManifestPayload)>0 AND length(ProgressPayload)>0 AND length(ManifestSha256)=32 AND length(ProgressSha256)=32");
         });

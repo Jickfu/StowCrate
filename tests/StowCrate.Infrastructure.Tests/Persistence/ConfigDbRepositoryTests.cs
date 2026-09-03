@@ -22,8 +22,8 @@ public sealed class ConfigDbRepositoryTests
     public async Task InitialMigrationUsesDurablePragmasAndPartialMaintenanceIndexes()
     {
         await using var database = await TestDatabase.Create();
-        Assert.Equal(5, (await database.Repository.LoadAsync(TestContext.Current.CancellationToken))!.SchemaVersion);
-        Assert.Equal(5, (await (await ConfigDbOpenCoordinator.OpenAsync(database.Path)).LoadAsync(TestContext.Current.CancellationToken))!.SchemaVersion);
+        Assert.Equal(6, (await database.Repository.LoadAsync(TestContext.Current.CancellationToken))!.SchemaVersion);
+        Assert.Equal(6, (await (await ConfigDbOpenCoordinator.OpenAsync(database.Path)).LoadAsync(TestContext.Current.CancellationToken))!.SchemaVersion);
         await using var connection = database.Connection(); await connection.OpenAsync();
         Assert.Equal("wal", await Scalar(connection, "PRAGMA journal_mode"));
         Assert.Equal(1L, await Scalar(connection, "PRAGMA foreign_keys"));
@@ -48,7 +48,7 @@ public sealed class ConfigDbRepositoryTests
                 await context.GetService<IMigrator>().MigrateAsync("20260901180347_AddPublishIntentHistoryRequirementV2");
             }
             var repository = await ConfigDbOpenCoordinator.OpenAsync(path);
-            Assert.Equal(5, (await repository.LoadAsync(CancellationToken.None))!.SchemaVersion);
+            Assert.Equal(6, (await repository.LoadAsync(CancellationToken.None))!.SchemaVersion);
         }
         finally { SqliteConnection.ClearAllPools(); if (File.Exists(path)) File.Delete(path); }
     }
@@ -85,7 +85,7 @@ public sealed class ConfigDbRepositoryTests
             _ = await ConfigDbOpenCoordinator.OpenAsync(path);
 
             await using var connection = new SqliteConnection($"Data Source={path};Pooling=False"); await connection.OpenAsync();
-            Assert.Equal(5L, await Scalar(connection, "SELECT SchemaVersion FROM DatabaseMetadata WHERE SingletonKey=1"));
+            Assert.Equal(6L, await Scalar(connection, "SELECT SchemaVersion FROM DatabaseMetadata WHERE SingletonKey=1"));
             Assert.Equal(1L, await Scalar(connection, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='RetentionDeletionIntent'"));
             Assert.Equal(1L, await Scalar(connection, "SELECT count(*) FROM pragma_table_info('PublishIntent') WHERE name='HistoryCaptureRequirement'"));
         }

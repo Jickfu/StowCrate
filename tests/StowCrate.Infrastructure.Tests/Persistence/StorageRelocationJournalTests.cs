@@ -164,7 +164,7 @@ public sealed class StorageRelocationJournalTests
                 await db.Database.ExecuteSqlRawAsync("INSERT INTO DatabaseMetadata VALUES(1,3,randomblob(16),randomblob(16),0)");
             }
             var repository = await ConfigDbOpenCoordinator.OpenAsync(path);
-            Assert.Equal(5, (await repository.LoadAsync(default))!.SchemaVersion);
+            Assert.Equal(6, (await repository.LoadAsync(default))!.SchemaVersion);
             await using var current = new ConfigDbContextFactory(path).Create();
             Assert.Empty(await current.StorageRelocationIntents.ToListAsync());
         }
@@ -248,7 +248,16 @@ public sealed class StorageRelocationJournalTests
             journal = await fixture.Repository.RecordRelocationTargetAsync(manifest.TransactionId, journal.Revision, proof, default);
         }
         journal = await fixture.Repository.SealRelocationTargetsAsync(manifest.TransactionId, journal.Revision, default);
-        await fixture.Repository.CommitRelocationAsync(manifest.TransactionId, journal.Revision, new CommitProbe(), default);
+        journal = await fixture.Repository.CommitRelocationAsync(manifest.TransactionId, journal.Revision, new CommitProbe(), default);
+        var absence = new AbsenceProbe();
+        journal = await fixture.Repository.CleanupRelocationEntryAsync(manifest.TransactionId, journal.Revision, fixture.Version, absence, default);
+        var partial = (await fixture.Repository.LoadRelocationAsync(Plan, default))!;
+        Assert.Single(partial.Progress.Artifacts.Where(x => x.Stage == StorageTransferArtifactStage.OldCopyAbsent));
+        await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => fixture.Repository.CompleteRelocationAsync(manifest.TransactionId, partial.Revision, absence, default));
+        journal = await fixture.Repository.CleanupRelocationEntryAsync(manifest.TransactionId, journal.Revision, historyVersion, absence, default);
+        journal = await fixture.Repository.CompleteRelocationAsync(manifest.TransactionId, journal.Revision, absence, default);
+        Assert.Equal(StorageTransferStage.Completed, journal.Progress.Stage);
+        Assert.Equal(4, await check.StorageRelocationRootReservations.CountAsync());
         var switched = (await fixture.Repository.LoadAsync(Plan, default))!;
         Assert.Equal("/new", switched.CurrentRoot!.CanonicalPath);
         Assert.Equal("/new-history", switched.HistoryRoot!.CanonicalPath);
@@ -345,8 +354,114 @@ public sealed class StorageRelocationJournalTests
         var journal = await Seal(fixture, false);
         await using (var db = new ConfigDbContextFactory(fixture.Path).Create())
             await Assert.ThrowsAsync<SqliteException>(() => db.GetService<IMigrator>().MigrateAsync("20260903091419_AddStorageRelocationJournalV4"));
+        // EF 按 migration 提交：v6 -> v5 合法，但 v5 -> v4 被 checkpoint 拒绝。
         Assert.Equal(5, (await fixture.Repository.LoadAsync(default))!.SchemaVersion);
+        var reopened = await ConfigDbOpenCoordinator.OpenAsync(fixture.Path);
+        Assert.Equal(6, (await reopened.LoadAsync(default))!.SchemaVersion);
         Assert.Equal(journal.Revision, (await fixture.Repository.LoadRelocationAsync(Plan, default))!.Revision);
+    }
+
+    [Theory]
+    [InlineData("transaction")]
+    [InlineData("plan")]
+    [InlineData("revision")]
+    [InlineData("artifact")]
+    [InlineData("old-root")]
+    [InlineData("old-object")]
+    [InlineData("target")]
+    public async Task CleanupRejectsMismatchedProof(string mismatch)
+    {
+        await using var fixture = await Fixture.Create();
+        var journal = await Seal(fixture, false);
+        journal = await fixture.Repository.CommitRelocationAsync(journal.Manifest.TransactionId, journal.Revision, new CommitProbe(), default);
+        var probe = new AbsenceProbe(proof => mismatch switch
+        {
+            "transaction" => proof with { TransactionId = Guid.NewGuid() },
+            "plan" => proof with { PlanId = new(Guid.NewGuid()) },
+            "revision" => proof with { JournalRevision = proof.JournalRevision + 1 },
+            "artifact" => proof with { Artifact = proof.Artifact with { Length = 43 } },
+            "old-root" => proof with { OldRootIdentity = Identity("wrong") },
+            "old-object" => proof with { OldIdentity = Identity("wrong") },
+            _ => proof with { TargetIdentity = Identity("wrong") }
+        });
+        await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => fixture.Repository.CleanupRelocationEntryAsync(
+            journal.Manifest.TransactionId, journal.Revision, fixture.Version, probe, default));
+        Assert.Equal(journal.Revision, (await fixture.Repository.LoadRelocationAsync(Plan, default))!.Revision);
+        Assert.Equal("/new", (await fixture.Repository.LoadAsync(Plan, default))!.CurrentRoot!.CanonicalPath);
+    }
+
+    [Theory]
+    [InlineData("precommit")]
+    [InlineData("revision")]
+    [InlineData("binding")]
+    [InlineData("placement")]
+    [InlineData("reservation")]
+    [InlineData("version")]
+    [InlineData("incomplete")]
+    public async Task CleanupChecksDurableAuthorityBeforePhysicalCall(string failure)
+    {
+        await using var fixture = await Fixture.Create();
+        var journal = await Seal(fixture, false);
+        if (failure != "precommit")
+            journal = await fixture.Repository.CommitRelocationAsync(journal.Manifest.TransactionId, journal.Revision, new CommitProbe(), default);
+        await using (var db = new ConfigDbContextFactory(fixture.Path).Create())
+        {
+            if (failure == "binding") (await db.OutputRootLocalBindings.SingleAsync()).CanonicalPath = "/changed";
+            if (failure == "placement") (await db.CurrentVersions.SingleAsync()).CurrentRelativePath = "changed.7z";
+            if (failure == "reservation") db.StorageRelocationRootReservations.Remove(await db.StorageRelocationRootReservations.FirstAsync());
+            await db.SaveChangesAsync();
+        }
+        var probe = new AbsenceProbe();
+        await Assert.ThrowsAnyAsync<Exception>(() => failure == "incomplete"
+            ? fixture.Repository.CompleteRelocationAsync(journal.Manifest.TransactionId, journal.Revision, probe, default)
+            : fixture.Repository.CleanupRelocationEntryAsync(journal.Manifest.TransactionId,
+                journal.Revision + (failure == "revision" ? 1 : 0), failure == "version" ? new(Guid.NewGuid()) : fixture.Version, probe, default));
+        Assert.Equal(0, probe.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CleanupProgressSurvivesReopenAndCannotDowngrade(bool complete)
+    {
+        await using var fixture = await Fixture.Create();
+        var journal = await Seal(fixture, false);
+        journal = await fixture.Repository.CommitRelocationAsync(journal.Manifest.TransactionId, journal.Revision, new CommitProbe(), default);
+        // v5 的已提交记录应原字节跨升级保存，不推断任何清理已完成。
+        await using (var db = new ConfigDbContextFactory(fixture.Path).Create())
+            await db.GetService<IMigrator>().MigrateAsync("20260903155016_AddRelocationCommitV5");
+        var reopened = await ConfigDbOpenCoordinator.OpenAsync(fixture.Path);
+        Assert.Equal(StorageTransferArtifactStage.TargetDurable, (await reopened.LoadRelocationAsync(Plan, default))!.Progress.Artifacts[0].Stage);
+        File.Delete(fixture.Path + ".backupplan"); // 提交后清理不再依赖原始配置文件。
+        var probe = new AbsenceProbe();
+        journal = await reopened.CleanupRelocationEntryAsync(journal.Manifest.TransactionId, journal.Revision, fixture.Version, probe, default);
+        if (complete) journal = await reopened.CompleteRelocationAsync(journal.Manifest.TransactionId, journal.Revision, probe, default);
+        Assert.Equal(complete ? 2 : 1, probe.Calls);
+        await using (var db = new ConfigDbContextFactory(fixture.Path).Create())
+        {
+            Assert.Equal(2, await db.StorageRelocationRootReservations.CountAsync());
+            await Assert.ThrowsAsync<SqliteException>(() => db.GetService<IMigrator>().MigrateAsync("20260903155016_AddRelocationCommitV5"));
+        }
+        reopened = await ConfigDbOpenCoordinator.OpenAsync(fixture.Path);
+        var restored = (await reopened.LoadRelocationAsync(Plan, default))!;
+        Assert.Equal(journal.Revision, restored.Revision);
+        Assert.Equal(journal.Progress.Stage, restored.Progress.Stage);
+        Assert.Equal(StorageTransferArtifactStage.OldCopyAbsent, restored.Progress.Artifacts[0].Stage);
+        await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => reopened.SetActiveAsync(Plan, false, default));
+    }
+
+    private sealed class AbsenceProbe(Func<StorageRelocationOldCopyAbsenceProof, StorageRelocationOldCopyAbsenceProof>? transform = null) : IStorageRelocationOldCopyStore
+    {
+        public int Calls { get; private set; }
+        public Task<StorageRelocationOldCopyAbsenceProof> RemoveOldCopyAsync(StorageRelocationJournal journal, ArchiveVersionId version, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested(); Calls++;
+            var entry = journal.Manifest.Entries.Single(x => x.Artifact.VersionId == version);
+            var proof = new StorageRelocationOldCopyAbsenceProof(journal.Manifest.TransactionId, journal.Manifest.PlanId, journal.Revision,
+                entry.Artifact, journal.Manifest.Roots.Single(x => x.Kind == entry.RootKind).OldIdentity, entry.OldIdentity,
+                journal.Progress.Artifacts.Single(x => x.Artifact.VersionId == version).StagedIdentity!);
+            return Task.FromResult(transform is null ? proof : transform(proof));
+        }
     }
 
     private static async Task<StorageRelocationJournal> Seal(Fixture fixture, bool legacy)
