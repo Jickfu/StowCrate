@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using StowCrate.Core.BackupPlans;
 using StowCrate.Core.ChangeDetection;
 using StowCrate.Application.Publishing;
+using StowCrate.Application.StorageMaintenance;
 
 namespace StowCrate.Application.LocalState;
 
@@ -16,21 +17,39 @@ public sealed record HistoryRetentionStartupResult(PlanId PlanId, ArchiveUnitId 
 public sealed record HistoryOrphanStartupResult(PlanId PlanId, ImmutableArray<HistoryReconciliationDiagnostic> Diagnostics);
 public sealed record ConfigDatabaseStartupResult(ConfigDatabaseIdentity Identity, ImmutableArray<PlanRegistration> ActivePlans,
     ImmutableArray<UnitStartupRecoveryResult> UnitRecoveries, ImmutableArray<HistoryRetentionStartupResult> RetentionRecoveries = default,
-    ImmutableArray<HistoryOrphanStartupResult> HistoryReconciliations = default);
+    ImmutableArray<HistoryOrphanStartupResult> HistoryReconciliations = default,
+    ImmutableArray<StorageRelocationRecoveryResult> RelocationRecoveries = default);
 
 public sealed class ConfigDatabaseStartupCoordinator(IConfigDatabaseSessionOpener opener, ICurrentArtifactRecoveryProbe probe,
     IPublishIntentRecoveryCoordinator? publishRecovery = null, IHistoryRetentionRecoveryCoordinator? retentionRecovery = null,
-    IHistoryOrphanReconciliationCoordinator? historyReconciliation = null)
+    IHistoryOrphanReconciliationCoordinator? historyReconciliation = null,
+    IStorageRelocationOldCopyStore? relocationCleanup = null)
 {
     public async Task<ConfigDatabaseStartupResult> StartAsync(ConfigDatabaseOpenRequest request, CancellationToken cancellationToken)
     {
         var session = await opener.OpenAsync(request, cancellationToken).ConfigureAwait(false);
         var registrations = await session.Plans.ListRegisteredAsync(activeOnly: true, cancellationToken).ConfigureAwait(false);
+        var relocationRecoveries = ImmutableArray.CreateBuilder<StorageRelocationRecoveryResult>();
+        var relocations = await session.Relocations.ListRelocationsAsync(cancellationToken).ConfigureAwait(false);
+        var reservedPlans = relocations.Select(x => x.Manifest.PlanId).ToHashSet();
+        var relocationRecovery = new StorageRelocationRecoveryWorkflow(session.Relocations, relocationCleanup);
+        foreach (var relocation in relocations)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            relocationRecoveries.Add(await relocationRecovery.RecoverAsync(relocation.Manifest.PlanId, cancellationToken).ConfigureAwait(false));
+        }
         var intents = await session.ArchiveUnits.ListIncompletePublishIntentsAsync(cancellationToken).ConfigureAwait(false);
         var recoveries = ImmutableArray.CreateBuilder<UnitStartupRecoveryResult>();
 
         foreach (var intent in intents)
         {
+            // 即使数据库来自异常恢复组合，也不能让旧 publish recovery 绕过迁移 reservation 做物理修改。
+            if (reservedPlans.Contains(intent.PlanId))
+            {
+                recoveries.Add(new(intent.PlanId, intent.ArchiveUnitId, UnitStartupRecoveryStatus.ResumeOrAbortRequired,
+                    "Storage relocation reservation blocks publish recovery."));
+                continue;
+            }
             var bindings = await session.Bindings.LoadAsync(intent.PlanId, cancellationToken).ConfigureAwait(false);
             if (bindings is not null && publishRecovery is not null)
             {
@@ -66,6 +85,12 @@ public sealed class ConfigDatabaseStartupCoordinator(IConfigDatabaseSessionOpene
             var deletionIntents = await session.HistoryRetention.ListDeletionIntentsAsync(true, cancellationToken).ConfigureAwait(false);
             foreach (var group in deletionIntents.GroupBy(x => (x.PlanId, x.ArchiveUnitId)))
             {
+                if (reservedPlans.Contains(group.Key.PlanId))
+                {
+                    retentionRecoveries.Add(new(group.Key.PlanId, group.Key.ArchiveUnitId, 0, group.Count(),
+                        ["Storage relocation reservation blocks retention recovery."]));
+                    continue;
+                }
                 var bindings = await session.Bindings.LoadAsync(group.Key.PlanId, cancellationToken).ConfigureAwait(false);
                 var result = await retentionRecovery.ReconcileAsync(group.Key.PlanId, group.Key.ArchiveUnitId, bindings?.HistoryRoot, cancellationToken).ConfigureAwait(false);
                 retentionRecoveries.Add(new(group.Key.PlanId, group.Key.ArchiveUnitId, result.Completed, result.Pending.Length, result.Diagnostics));
@@ -76,12 +101,13 @@ public sealed class ConfigDatabaseStartupCoordinator(IConfigDatabaseSessionOpene
         {
             foreach (var registration in registrations)
             {
+                if (reservedPlans.Contains(registration.PlanId)) continue;
                 var binding = await session.Bindings.LoadAsync(registration.PlanId, cancellationToken).ConfigureAwait(false);
                 if (binding?.HistoryRoot is null) continue;
                 var result = await historyReconciliation.ReconcileAsync(registration.PlanId, binding.HistoryRoot, cancellationToken).ConfigureAwait(false);
                 historyReconciliations.Add(new(registration.PlanId, result.Diagnostics));
             }
         }
-        return new(session.Identity, registrations, recoveries.ToImmutable(), retentionRecoveries.ToImmutable(), historyReconciliations.ToImmutable());
+        return new(session.Identity, registrations, recoveries.ToImmutable(), retentionRecoveries.ToImmutable(), historyReconciliations.ToImmutable(), relocationRecoveries.ToImmutable());
     }
 }

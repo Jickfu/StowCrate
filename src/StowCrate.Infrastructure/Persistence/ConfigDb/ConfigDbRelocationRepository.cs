@@ -9,6 +9,20 @@ namespace StowCrate.Infrastructure.Persistence.ConfigDb;
 
 public sealed partial class ConfigDbRepository : IStorageRelocationJournalStore
 {
+    public async Task<System.Collections.Immutable.ImmutableArray<StorageRelocationJournal>> ListRelocationsAsync(CancellationToken cancellationToken)
+    {
+        await using var db = factory.Create();
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var result = System.Collections.Immutable.ImmutableArray.CreateBuilder<StorageRelocationJournal>();
+            foreach (var row in await db.StorageRelocationIntents.AsNoTracking().OrderBy(x => x.TransactionId).ToListAsync(cancellationToken))
+                result.Add(await ReadRelocationAsync(db, row, cancellationToken));
+            return result.ToImmutable();
+        }
+        catch (Exception exception) { throw TranslateRelocation(exception); }
+    }
+
     public Task<StorageRelocationJournal> BeginRelocationAsync(StorageRelocationManifest manifest, CancellationToken cancellationToken)
         => BeginRelocationCoreAsync(manifest, null, cancellationToken);
 

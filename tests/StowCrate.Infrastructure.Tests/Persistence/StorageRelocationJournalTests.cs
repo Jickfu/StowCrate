@@ -450,6 +450,61 @@ public sealed class StorageRelocationJournalTests
         await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => reopened.SetActiveAsync(Plan, false, default));
     }
 
+    [Fact]
+    public async Task RecoveryWithNoJournalDoesNotCallPhysicalStore()
+    {
+        await using var fixture = await Fixture.Create();
+        var physical = new AbsenceProbe();
+        var result = await new StorageRelocationRecoveryWorkflow(fixture.Repository, physical).RecoverAsync(Plan, default);
+        Assert.Equal(StorageRelocationRecoveryStatus.NotFound, result.Status);
+        Assert.Equal(0, physical.Calls);
+        Assert.Empty(await fixture.Repository.ListRelocationsAsync(default));
+    }
+
+    [Theory]
+    [InlineData("io")]
+    [InlineData("access")]
+    [InlineData("database")]
+    [InlineData("concurrency")]
+    [InlineData("cancel")]
+    [InlineData("corruption")]
+    [InlineData("foreign-cancel")]
+    public async Task RecoveryDistinguishesPendingCleanupFromCorruption(string failure)
+    {
+        await using var fixture = await Fixture.Create();
+        var journal = await Seal(fixture, false);
+        journal = await fixture.Repository.CommitRelocationAsync(journal.Manifest.TransactionId, journal.Revision, new CommitProbe(), default);
+        using var cancellation = new CancellationTokenSource();
+        var physical = new AbsenceProbe(proof =>
+        {
+            if (failure == "cancel") { cancellation.Cancel(); return proof; }
+            throw failure switch
+            {
+                "io" => new IOException("sensitive-path"),
+                "access" => new UnauthorizedAccessException("sensitive-path"),
+                "database" => new LocalStateRepositoryException("sensitive-path"),
+                "concurrency" => new LocalStateConcurrencyException("sensitive-path"),
+                "corruption" => new LocalStateCorruptionException("corrupt"),
+                _ => new OperationCanceledException()
+            };
+        });
+        var workflow = new StorageRelocationRecoveryWorkflow(fixture.Repository, physical);
+        if (failure == "corruption")
+            await Assert.ThrowsAsync<LocalStateCorruptionException>(() => workflow.RecoverAsync(Plan, cancellation.Token));
+        else if (failure == "foreign-cancel")
+            await Assert.ThrowsAsync<OperationCanceledException>(() => workflow.RecoverAsync(Plan, cancellation.Token));
+        else
+        {
+            var result = await workflow.RecoverAsync(Plan, cancellation.Token);
+            Assert.Equal(StorageRelocationRecoveryStatus.CleanupPending, result.Status);
+            Assert.DoesNotContain("sensitive-path", result.Diagnostic!);
+        }
+        var restored = (await fixture.Repository.LoadRelocationAsync(Plan, default))!;
+        Assert.Equal(StorageTransferStage.MetadataCommitted, restored.Progress.Stage);
+        Assert.Equal(failure == "cancel" ? journal.Revision + 1 : journal.Revision, restored.Revision);
+        Assert.Equal("/new", (await fixture.Repository.LoadAsync(Plan, default))!.CurrentRoot!.CanonicalPath);
+    }
+
     private sealed class AbsenceProbe(Func<StorageRelocationOldCopyAbsenceProof, StorageRelocationOldCopyAbsenceProof>? transform = null) : IStorageRelocationOldCopyStore
     {
         public int Calls { get; private set; }

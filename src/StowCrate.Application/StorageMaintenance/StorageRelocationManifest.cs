@@ -85,6 +85,7 @@ public sealed record StorageRelocationJournal(StorageRelocationManifest Manifest
 /// <summary>事务形状端口；清理只消费 durable committed journal，完成不释放 reservation。</summary>
 public interface IStorageRelocationJournalStore
 {
+    Task<ImmutableArray<StorageRelocationJournal>> ListRelocationsAsync(CancellationToken cancellationToken);
     Task<StorageRelocationJournal> CleanupRelocationEntryAsync(Guid transactionId, long expectedRevision, ArchiveVersionId versionId, IStorageRelocationOldCopyStore physical, CancellationToken cancellationToken);
     Task<StorageRelocationJournal> CompleteRelocationAsync(Guid transactionId, long expectedRevision, IStorageRelocationOldCopyStore physical, CancellationToken cancellationToken);
     Task<StorageRelocationJournal> BeginRelocationAsync(StorageRelocationManifest manifest, CancellationToken cancellationToken);

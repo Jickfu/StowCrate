@@ -20,6 +20,16 @@ public sealed class ConfigDbWorkflowIntegrationTests
     [InlineData("database-fault")]
     [InlineData("cancel-after-delete")]
     [InlineData("old-reappeared")]
+    [InlineData("startup-prepared")]
+    [InlineData("startup-staged")]
+    [InlineData("startup-sealed")]
+    [InlineData("startup-committed")]
+    [InlineData("startup-absent")]
+    [InlineData("startup-no-adapter")]
+    [InlineData("startup-inactive")]
+    [InlineData("startup-drift")]
+    [InlineData("startup-corrupt")]
+    [InlineData("startup-publish-conflict")]
     public async Task RelocationCopiesCommitsAndDurablyReconcilesOldCopy(string scenario)
     {
         await using var database = await WorkflowDatabase.Create(); var (plan, unit) = await database.RegisterFixturePlan();
@@ -33,6 +43,9 @@ public sealed class ConfigDbWorkflowIntegrationTests
         await database.Repository.BeginPublishAsync(intent, default);
         var published = intent.MarkCurrentPublished(DateTimeOffset.UnixEpoch);
         await database.Repository.SavePublishProgressAsync(published, default);
+        await using var captureDb = new ConfigDbContextFactory(database.Path).Create();
+        var capturedPublish = await captureDb.PublishIntents.AsNoTracking().SingleAsync();
+        var capturedBaseline = await captureDb.PublishIntentBaselines.AsNoTracking().SingleAsync();
         await database.Repository.CompleteMetadataCommitAsync(published.RebuildMetadataCommitPlan(), default);
         await database.Repository.CleanupCompletedPublishIntentsAsync(default);
         var state = (await database.Repository.LoadAsync(plan.Id, unit.Id, default))!;
@@ -45,17 +58,96 @@ public sealed class ConfigDbWorkflowIntegrationTests
                 StorageRelocationTempLayout.Create(transaction, version, path), StorageRelocationPhysicalStore.InspectIdentity(Path.Combine(oldRoot, path.Value), false))]);
         var journal = await database.Repository.BeginRelocationAsync(manifest, configuration, default);
         var physical = new StorageRelocationPhysicalStore(new RelocationTestBarrier());
+        async Task<StorageRelocationRecoveryResult> Startup(bool useAdapter = true)
+        {
+            var startup = new ConfigDatabaseStartupCoordinator(new ConfigDatabaseSessionOpener(), new CurrentArtifactRecoveryProbe(),
+                relocationCleanup: useAdapter ? physical : null);
+            var result = await startup.StartAsync(new(database.Path), default);
+            if (scenario == "startup-publish-conflict")
+                Assert.Contains("relocation", Assert.Single(result.UnitRecoveries).Detail!);
+            return Assert.Single(result.RelocationRecoveries);
+        }
+        if (scenario == "startup-prepared")
+        {
+            Assert.Equal(StorageRelocationRecoveryStatus.ResumeRequired, (await Startup()).Status);
+            Assert.False(File.Exists(Path.Combine(newRoot, path.Value)));
+            Assert.Equal(journal.Revision, (await database.Repository.LoadRelocationAsync(plan.Id, default))!.Revision);
+            return;
+        }
         var staged = await physical.StageAsync(journal, version, default);
         journal = await database.Repository.RecordRelocationStagedAsync(transaction, journal.Revision, staged, default);
+        if (scenario == "startup-staged")
+        {
+            Assert.Equal(StorageRelocationRecoveryStatus.ResumeRequired, (await Startup()).Status);
+            Assert.False(File.Exists(Path.Combine(newRoot, path.Value)));
+            Assert.Equal(journal.Revision, (await database.Repository.LoadRelocationAsync(plan.Id, default))!.Revision);
+            return;
+        }
         var target = await physical.PublishTargetAsync(journal, version, default);
         journal = await database.Repository.RecordRelocationTargetAsync(transaction, journal.Revision, target, default);
         journal = await database.Repository.SealRelocationTargetsAsync(transaction, journal.Revision, default);
+        if (scenario == "startup-sealed")
+        {
+            Assert.Equal(StorageRelocationRecoveryStatus.ResumeRequired, (await Startup()).Status);
+            Assert.Equal(oldRoot, (await database.Repository.LoadAsync(plan.Id, default))!.CurrentRoot!.CanonicalPath);
+            Assert.Equal(journal.Revision, (await database.Repository.LoadRelocationAsync(plan.Id, default))!.Revision);
+            return;
+        }
         var committed = await database.Repository.CommitRelocationAsync(transaction, journal.Revision, physical, default);
         Assert.Equal(StorageTransferStage.MetadataCommitted, committed.Progress.Stage);
         Assert.Equal(newRoot, (await database.Repository.LoadAsync(plan.Id, default))!.CurrentRoot!.CanonicalPath);
         Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(oldRoot, path.Value)));
         Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(newRoot, path.Value)));
         Assert.Equivalent(state.Baseline, (await database.Repository.LoadAsync(plan.Id, unit.Id, default))!.Baseline);
+        if (scenario.StartsWith("startup-", StringComparison.Ordinal))
+        {
+            if (scenario == "startup-publish-conflict")
+            {
+                await using var context = new ConfigDbContextFactory(database.Path).Create();
+                context.PublishIntents.Add(capturedPublish);
+                context.PublishIntentBaselines.Add(capturedBaseline);
+                await context.SaveChangesAsync();
+            }
+            if (scenario == "startup-absent") await physical.RemoveOldCopyAsync(committed, version, default);
+            if (scenario == "startup-inactive")
+            {
+                await using var context = new ConfigDbContextFactory(database.Path).Create();
+                (await context.PlanRegistrations.SingleAsync()).IsActive = 0;
+                await context.SaveChangesAsync();
+            }
+            if (scenario == "startup-drift") await File.WriteAllTextAsync(Path.Combine(oldRoot, path.Value), "changed");
+            if (scenario == "startup-corrupt")
+            {
+                await using var context = new ConfigDbContextFactory(database.Path).Create();
+                context.StorageRelocationRootReservations.Remove(await context.StorageRelocationRootReservations.FirstAsync());
+                await context.SaveChangesAsync();
+                await Assert.ThrowsAsync<LocalStateCorruptionException>(() => Startup());
+                Assert.True(File.Exists(Path.Combine(oldRoot, path.Value)));
+                return;
+            }
+            var result = await Startup(scenario != "startup-no-adapter");
+            if (scenario is "startup-no-adapter" or "startup-drift" or "startup-publish-conflict")
+            {
+                Assert.Equal(StorageRelocationRecoveryStatus.CleanupPending, result.Status);
+                Assert.True(File.Exists(Path.Combine(oldRoot, path.Value)));
+                Assert.DoesNotContain(oldRoot, result.Diagnostic!);
+            }
+            else
+            {
+                Assert.Equal(StorageRelocationRecoveryStatus.CompletedReservationsRetained, result.Status);
+                Assert.False(File.Exists(Path.Combine(oldRoot, path.Value)));
+                // COMPLETED 的重复启动不重新授权删除新出现的文件。
+                await File.WriteAllBytesAsync(Path.Combine(oldRoot, path.Value), bytes);
+                Assert.Equal(StorageRelocationRecoveryStatus.CompletedReservationsRetained, (await Startup()).Status);
+                Assert.True(File.Exists(Path.Combine(oldRoot, path.Value)));
+            }
+            Assert.Equal(newRoot, (await database.Repository.LoadAsync(plan.Id, default))!.CurrentRoot!.CanonicalPath);
+            Assert.Equivalent(state.Baseline, (await database.Repository.LoadAsync(plan.Id, unit.Id, default))!.Baseline);
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(newRoot, path.Value)));
+            await using var check = new ConfigDbContextFactory(database.Path).Create();
+            Assert.Equal(2, await check.StorageRelocationRootReservations.CountAsync());
+            return;
+        }
         using var cancellation = new CancellationTokenSource();
         var cleanupStore = new CleanupObserver(physical, () => { if (scenario == "cancel-after-delete") cancellation.Cancel(); });
         if (scenario == "database-fault")

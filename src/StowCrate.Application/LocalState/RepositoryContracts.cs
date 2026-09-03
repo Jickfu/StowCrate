@@ -100,7 +100,8 @@ public sealed record ConfigDatabaseSession(
     IDevicePlanBindingStore Bindings,
     ISecretBindingMetadataStore Secrets,
     IArchiveUnitDurableStateStore ArchiveUnits,
-    IHistoryRetentionDurableStore HistoryRetention);
+    IHistoryRetentionDurableStore HistoryRetention,
+    StowCrate.Application.StorageMaintenance.IStorageRelocationJournalStore Relocations);
 
 public interface IConfigDatabaseSessionOpener
 {

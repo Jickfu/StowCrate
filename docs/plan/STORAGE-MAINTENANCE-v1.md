@@ -34,7 +34,7 @@ Begin transaction 必须重验 active registration、expected roots/placements/l
 
 Journal 必须保存 transaction UUID、PlanId、DeviceId、kind、协议版本、old/new root canonical path/comparison key/native identity、expected source/layout facts、全部 artifact 的 ArchiveVersionId/UnitId/slot/old path/new path/temp path、SHA-256/length 和旧对象 identity。根与对象 identity 是带平台/编码版本的 opaque Infrastructure evidence，不进入 Core、portable document 或 baseline。
 
-这些字段是不可变 transaction manifest，不是通用 JSON extension bag。config.db v4 已实现 root relocation 的 pre-commit journal/reservation；具体字段、FK、CHECK、canonical codec 与 CAS 约束见 `CONFIG-DB-v1-SCHEMA-DESIGN.md` v4 addendum。v5 已扩展 configuration checkpoint 与 metadata commit；Output Reorganization 清单和 post-commit cleanup persistence 仍待实现，不能把当前实现当作完整迁移落地。
+这些字段是不可变 transaction manifest，不是通用 JSON extension bag。config.db v4 已实现 root relocation 的 pre-commit journal/reservation；具体字段、FK、CHECK、canonical codec 与 CAS 约束见 `CONFIG-DB-v1-SCHEMA-DESIGN.md` v4 addendum。v5 已扩展 configuration checkpoint 与 metadata commit，v6 已实现 post-commit cleanup persistence；Output Reorganization 清单仍待实现，不能把当前实现当作完整迁移落地。
 
 ## 3. 顺序与持久点
 
@@ -67,6 +67,8 @@ Journal 必须保存 transaction UUID、PlanId、DeviceId、kind、协议版本�
 
 ## 5. 模块与验收
 
+启动恢复枚举全部 relocation journal（不按 active Plan 过滤），逐份验证 manifest/progress/reservation；损坏不解释成无待办。Prepared/TargetsDurable 仅报告 ResumeRequired，不在启动时自动复制或提交。MetadataCommitted 在注入物理清理适配器时逐项调用 repository 清理事务，最后完成 absence 重验；缺少适配器、物理失败、并发冲突或提交后取消由清理 workflow 返回 CleanupPending，保留新 authority 和 journal，不误报迁移失败。启动整体仍可响应取消，但不撤销已提交迁移。错误详情不直接转储带物理路径的异常。Completed 仅报告完成但 reservation 仍保留，不把历史完成记录当作当前磁盘健康证明，也不再次删除文件。repository 每次从当前数据库重读，启动枚举快照不独立授权删除。有 relocation reservation 的 Plan 跳过旧 publish/retention recovery 并报告待处理，同时跳过 History inventory。该入口是 Application startup coordinator 的显式可选能力，尚未接入 App/CLI 组合根；pre-commit 显式恢复与独立 compaction 后续实现。
+
 Application 负责不可变 progress kernel、事务编排、recovery classification 与端口；Infrastructure 负责 SQLite manifest/CAS、reservation queries、native filesystem proof、copy/publish/cleanup；Core 不依赖 storage roots 或 OS。App/CLI 后续只调用用例。
 
 验收必须覆盖多 artifact 部分成功不能 commit、重复/串 transaction proof、非法 restore 状态、取消稳定边界、每个 filesystem/SQLite crash window、同/跨 filesystem、source/target/root replacement、目标冲突、case/file-directory collision、retention/publish 互斥、inactive retained placements、cross-Plan reservation、File-backed drift、post-commit cleanup failure，以及三平台真实 fixture。断电承诺限于 OS/filesystem 成功 durability barrier 的保证，不用普通进程故障测试冒充真实断电测试。
@@ -81,7 +83,7 @@ Application 负责不可变 progress kernel、事务编排、recovery classifica
 
 删除后忽略 caller cancellation，完成旧父目录 barrier 与 absence re-proof 后返回关联 transaction/Plan/revision/artifact/old-root/old-object/target identity 的强类型 proof。删除前 barrier 不可用时保留旧文件；删除后 barrier 失败时不返回 proof，保留已提交日志，下一次按 absent 重新执行 barrier。missing ancestor/root drift 不当作可信 absence。新根不回滚。
 
-该物理接口不写 SQLite。repository 清理事务按 revision CAS 加载 durable journal，重验新 binding、完整 placement 集合与 reservation 后调用物理接口，严格匹配返回 proof 的全部字段，再持久化 OldCopyAbsent。物理成功后日志保存忽略 caller cancellation；数据库故障仍可能留下 absent 但日志落后的状态，下次重新证明 absence，不回滚新根。全部条目已有 OldCopyAbsent 后，再逐项重新证明 absence 才写 COMPLETED；重新出现的旧文件不得再次删除。COMPLETED 仍保留 journal 和所有 reservation，直到独立 reconciliation/compaction。启动恢复编排与 compaction 仍待实现。基于 path 的最后 identity 重验检测正常替换，不宣称防御所有主动 hostile race。
+该物理接口不写 SQLite。repository 清理事务按 revision CAS 加载 durable journal，重验新 binding、完整 placement 集合与 reservation 后调用物理接口，严格匹配返回 proof 的全部字段，再持久化 OldCopyAbsent。物理成功后日志保存忽略 caller cancellation；数据库故障仍可能留下 absent 但日志落后的状态，下次重新证明 absence，不回滚新根。全部条目已有 OldCopyAbsent 后，再逐项重新证明 absence 才写 COMPLETED；重新出现的旧文件不得再次删除。COMPLETED 仍保留 journal 和所有 reservation，直到独立 reconciliation/compaction。已提交清理启动恢复见第 5 节；pre-commit 恢复及 compaction 仍待实现。基于 path 的最后 identity 重验检测正常替换，不宣称防御所有主动 hostile race。
 
 ### 6.2 pre-commit 验证细节
 
