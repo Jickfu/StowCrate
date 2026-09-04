@@ -67,6 +67,10 @@ Journal 必须保存 transaction UUID、PlanId、DeviceId、kind、协议版本�
 
 ## 5. 模块与验收
 
+只读 inventory 入口从单个数据库事务读取选定 Current/History 根下的完整 retained placements（不按当前 declared/active unit 过滤），附带 immutable ArchiveVersion integrity/length 与旧/新根路径。入口重读 authoritative configuration checkpoint、验证 maintenance/reservation/全设备 Source/External/output 冲突，不触碰原始输入，不创建 journal，不产生 native identity 或可执行 manifest。它是物理 preview 的输入，不是“迁移就绪”声明；目标文件系统、容量与逐文件物理检查仍须单独完成。
+
+External local binding 与 Source 一样进入迁移 namespace 安全检查，即使原始输入离线也不得释放该占用。Begin、pre-commit/commit/compaction 重验须覆盖 active 或仍有恢复工作的 Plan 的 active External binding；其他 Plan 保存 External binding、激活或进入发布时也不得与迁移 reservation 重叠。这里只比较已持久化 canonical path/key，不扫描或打开 External 输入。
+
 完整显式恢复入口 `ResumeAsync(PlanId, TransactionId, transfer)` 必须指定既有 transaction，不创建新迁移，也不替用户选择日志。按 durable artifact stage 逐项调用事务恢复入口，全部 target durable 后 seal，再调用独立 commit 门槛，最后衔接已提交清理；不自动 compaction。失败不在同一调用内重试；异常后仅重读日志以判定永久成功点是否已经到达，已提交返回 CleanupPending、未提交返回 ResumeRequired；无法重读或 transaction 已改变则返回 OutcomeUnknown，不能猜测失败或成功。取消后的证明落盘由 repository 保证，提交后取消不能反转迁移成功。启动仍不调用此显式 pre-commit 入口。
 
 显式 pre-commit 单条目恢复通过 `ResumeRelocationEntryAsync(transaction, revision, version, physical)` 进入 repository 事务：从 durable journal 重读 Pending/Staged、configuration checkpoint、旧 binding、完整 placement/reservation 和 maintenance 互锁，再执行 Stage 或 PublishTarget 并保存 proof。事务持有数据库写锁覆盖物理操作，竞争调用不能同时复制/发布；不复用调用者提供的内存 journal。新入口拒绝缺少 checkpoint 的 legacy 日志，不事后补签。物理成功 proof 返回后忽略 caller cancellation 保存进度；失败不自动重试、不清除 unknown temp、不切换 root。复制后写库失败可能留下未获 ownership 的 temp，仍属 ambiguous；rename 后写库失败可按已持久化 staged identity 重新验证 target 并补记。配置漂移在操作前拒绝，物理成功后仍须保存 ownership proof，最终切换另行重读配置。该单条目入口不自动 seal、commit 或 cleanup，整条显式恢复由 ResumeAsync 编排。

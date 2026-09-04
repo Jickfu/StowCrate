@@ -151,6 +151,7 @@ public sealed partial class ConfigDbRepository : IConfigDatabaseIdentityStore, I
             if (DurableCodecs.Uuid(metadata.DeviceId) != bindings.DeviceId.Value) throw new LocalStateCorruptionException("Binding aggregate DeviceId differs from config database identity.");
             await EnsureNoRelocationAsync(db, plan, cancellationToken);
             await EnsureReservationsSafeAsync(db, bindings.Sources.Where(x => x.IsActive).Select(x => new ResolvedPhysicalPath(x.CanonicalPath, x.ComparisonKey))
+                .Concat(bindings.ExternalSources.Where(x => x.IsActive).Select(x => new ResolvedPhysicalPath(x.CanonicalPath, x.ComparisonKey)))
                 .Concat(new[] { bindings.CurrentRoot, bindings.HistoryRoot }.OfType<OutputRootLocalBinding>().Where(x => x.IsActive)
                     .Select(x => new ResolvedPhysicalPath(x.CanonicalPath, x.ComparisonKey))), cancellationToken);
             await ValidateOutputRootChangesAsync(db, plan, bindings, cancellationToken);

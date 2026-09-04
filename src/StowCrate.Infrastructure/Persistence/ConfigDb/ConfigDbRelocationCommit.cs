@@ -108,17 +108,25 @@ public sealed partial class ConfigDbRepository
             if (reserved.Manifest.Roots.SelectMany(x => new[] { x.OldRoot, x.NewRoot }).Any(x => proposed.Any(x.Overlaps)))
                 throw new LocalStateConcurrencyException("Relocation root reservation conflict.");
         }
+        await ValidateRelocationOccupiedRootsAsync(db, plan, manifest.Roots.Select(x => x.Kind).ToArray(), proposed, token);
+        return roots;
+    }
+
+    private static async Task ValidateRelocationOccupiedRootsAsync(ConfigDbContext db, byte[] plan,
+        IReadOnlyCollection<StorageRootKind> selectedKinds, ResolvedPhysicalPath[] proposed, CancellationToken token)
+    {
         var active = await db.PlanRegistrations.Where(x => x.IsActive == 1).Select(x => x.PlanId).ToListAsync(token);
         active.AddRange(await db.PublishIntents.Select(x => x.PlanId).ToListAsync(token));
         active.AddRange(await db.RetentionDeletionIntents.Select(x => x.PlanId).ToListAsync(token));
         active.AddRange(await db.MaintenanceStates.Where(x => x.Status != "COMPLETED" && x.Kind != "SCHEDULE_RECONCILIATION").Select(x => x.PlanId).ToListAsync(token));
         var sources = await db.SourceLocalBindings.AsNoTracking().Where(x => x.IsActive == 1).ToListAsync(token);
+        var external = await db.ExternalLocalBindings.AsNoTracking().Where(x => x.IsActive == 1).ToListAsync(token);
         var outputs = await db.OutputRootLocalBindings.AsNoTracking().Where(x => x.IsActive == 1).ToListAsync(token);
         var occupied = sources.Where(x => active.Any(p => p.SequenceEqual(x.PlanId))).Select(x => new ResolvedPhysicalPath(x.CanonicalPath, x.ComparisonKey))
+            .Concat(external.Where(x => active.Any(p => p.SequenceEqual(x.PlanId))).Select(x => new ResolvedPhysicalPath(x.CanonicalPath, x.ComparisonKey)))
             .Concat(outputs.Where(x => active.Any(p => p.SequenceEqual(x.PlanId))
-                && !(x.PlanId.SequenceEqual(plan) && manifest.Roots.Any(r => RootToken(r.Kind) == x.RootKind)))
+                && !(x.PlanId.SequenceEqual(plan) && selectedKinds.Any(kind => RootToken(kind) == x.RootKind)))
                 .Select(x => new ResolvedPhysicalPath(x.CanonicalPath, x.ComparisonKey)));
         if (occupied.Any(x => proposed.Any(x.Overlaps))) throw new LocalStateConcurrencyException("Relocation roots overlap active storage.");
-        return roots;
     }
 }

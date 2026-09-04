@@ -386,6 +386,8 @@ M5.3 Plan-scoped Output Reorganization / Storage Relocation 协议见 [`plan/STO
 
 完整显式恢复由 `StorageRelocationRecoveryWorkflow.ResumeAsync` 编排，要求 PlanId + 既有 TransactionId；依次恢复 Pending/Staged、seal、commit，再进入已提交 cleanup，不自动 compaction。失败后仅重读日志分类永久成功点，不在同一次调用内重放；无法确认状态返回 OutcomeUnknown。原启动入口仍不自动执行 pre-commit。
 
+只读 inventory 在一致数据库事务中提取全部选定根的 retained Current/History 与 immutable integrity/length，不依赖当前 active/declared unit 集合，不读取原始 Source/External，也不创建 journal 或物理 proof。它与 Begin/恢复/commit/compaction 复用 namespace 占用检查，包含 External local binding；External 绑定保存和 Plan 激活/发布也必须尊重现有 relocation reservation。物理 preview 和容量策略仍待接入，inventory 不等于 readiness。
+
 Application 启动协调器枚举并完整校验所有 relocation 日志（含 inactive Plan），未提交状态只报告待显式恢复，已提交状态可通过注入物理清理端口逐项恢复；完成后仍保留 reservation。缺少适配器或可恢复错误报告 CleanupPending，损坏继续向上传播。存在 reservation 的 Plan 跳过旧 publish/retention recovery 与 History inventory，避免恢复入口绕过互锁。尚未装配 App/CLI 用户入口，也不自动释放路径。
 
 独立 `CompactRelocationAsync` 仅接受 Completed + revision CAS，事务内重验新 binding/placement/reservation/互锁及只读物理 completion probe 后，原子移除本事务日志与 reservation。物理核验要求所有根、目标 identity/integrity、旧路径与 temp absence、目录 barrier；任何漂移或失败保留保护。该接口不删除文件、不回滚新 binding，不在启动恢复自动调用。

@@ -227,6 +227,10 @@ public sealed class StorageRelocationJournalTests
         }
         var initial = fixture.Manifest();
         var roots = initial.Roots.Add(new(StorageRootKind.History, new("/history", "/history"), new("/new-history", "/new-history"), Identity("old-history"), Identity("new-history")));
+        var inventory = await fixture.Repository.ReadRelocationInventoryAsync(new(Plan, new("/new", "/new"), new("/new-history", "/new-history")),
+            await fixture.Configuration(), default);
+        Assert.Equal(2, inventory.Entries.Length);
+        Assert.Contains(inventory.Entries, x => x.Artifact.VersionId == historyVersion && x.RootKind == StorageRootKind.History);
         var missing = new StorageRelocationManifest(initial.TransactionId, Plan, Device, initial.ExecutionSemanticDigest, roots, initial.Entries);
         await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => fixture.Repository.BeginRelocationAsync(missing, default));
         var path = new RelativeStoragePath("history-v1/old.7z");
@@ -602,6 +606,82 @@ public sealed class StorageRelocationJournalTests
         Assert.Single(results, x => x);
         Assert.Equal(1, probe.Calls);
         Assert.Equal(journal.Revision + 1, (await fixture.Repository.LoadRelocationAsync(Plan, default))!.Revision);
+    }
+
+    [Theory]
+    [InlineData("/new")]
+    [InlineData("/new/input")]
+    [InlineData("/old/input")]
+    public async Task ExternalBindingsCannotBeOccupiedByRelocation(string path)
+    {
+        await using var fixture = await Fixture.Create();
+        var other = new PlanId(Guid.NewGuid());
+        await fixture.Repository.SaveFileBackedAsync(new(other, PlanAuthority.FileBacked, "/other.backupplan", true), default);
+        await fixture.Repository.SaveValidatedAggregateAsync(new(other, Device, [], new("/other-output", "/other-output", true), null,
+            [new(new(Guid.NewGuid()), path, path, true)]), default);
+        await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => fixture.Repository.BeginRelocationAsync(fixture.Manifest(), default));
+        Assert.Empty(await fixture.Repository.ListRelocationsAsync(default));
+    }
+
+    [Fact]
+    public async Task ExternalBindingSaveAndActivationRespectExistingReservations()
+    {
+        await using var fixture = await Fixture.Create();
+        var other = new PlanId(Guid.NewGuid());
+        await fixture.Repository.SaveFileBackedAsync(new(other, PlanAuthority.FileBacked, "/other.backupplan", false), default);
+        var overlapping = new DevicePlanLocalBindings(other, Device, [], new("/other-output", "/other-output", true), null,
+            [new(new(Guid.NewGuid()), "/new/input", "/new/input", true)]);
+        await fixture.Repository.SaveValidatedAggregateAsync(overlapping, default);
+        await fixture.Repository.BeginRelocationAsync(fixture.Manifest(), default);
+        await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => fixture.Repository.SetActiveAsync(other, true, default));
+        await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => fixture.Repository.SaveValidatedAggregateAsync(overlapping, default));
+        Assert.False((await ((IPlanRegistrationStore)fixture.Repository).LoadAsync(other, default))!.Registration.IsActive);
+    }
+
+    [Fact]
+    public async Task InventoryIsReadOnlyAndIncludesRetainedUndeclaredCurrent()
+    {
+        await using var fixture = await Fixture.Create();
+        var configuration = await fixture.Configuration();
+        var p = configuration.Snapshot.Plan;
+        var withoutUnits = new PortableBackupPlan(p.Id, p.Name, p.Description, p.Semantics, p.Sources, p.GlobalRules, p.PlanRules,
+            p.ArchiveSpecDefault, [], p.SecretSlots, p.LinkPolicy, p.ChangeDetection, p.HistoryDefault, p.Schedule, p.ExternalSources);
+        var documents = new BackupPlanDocumentSource();
+        await File.WriteAllBytesAsync(fixture.Path + ".backupplan", documents.Write(withoutUnits).CanonicalUtf8Payload.ToArray());
+        configuration = await new StorageRelocationConfigurationReader(new(fixture.Repository, documents)).ReadAsync(Plan, default);
+        // 使用真实 retained Current，不依赖源绑定、源扫描或密钥。
+        var inventory = await fixture.Repository.ReadRelocationInventoryAsync(new(Plan, new("/new", "/new"), null), configuration, default);
+        Assert.Equal(fixture.Version, Assert.Single(inventory.Entries).Artifact.VersionId);
+        Assert.Equal(42, inventory.Entries[0].Artifact.Length);
+        Assert.Equal("/old", Assert.Single(inventory.Roots).OldRoot.CanonicalPath);
+        Assert.Equal(Device, inventory.DeviceId);
+        Assert.Empty(await fixture.Repository.ListRelocationsAsync(default));
+        await using var db = new ConfigDbContextFactory(fixture.Path).Create();
+        Assert.Empty(await db.StorageRelocationRootReservations.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData("no-roots")]
+    [InlineData("same-root")]
+    [InlineData("missing-history")]
+    [InlineData("stale")]
+    [InlineData("pending")]
+    public async Task InventoryRejectsInvalidOrStaleRequestWithoutWriting(string failure)
+    {
+        await using var fixture = await Fixture.Create();
+        var configuration = await fixture.Configuration();
+        if (failure == "stale") await fixture.Configuration(output: "changed");
+        if (failure == "pending") await fixture.Repository.BeginRelocationAsync(fixture.Manifest(), configuration, default);
+        var request = failure switch
+        {
+            "no-roots" => new StorageRelocationInventoryRequest(Plan, null, null),
+            "same-root" => new(Plan, new("/old", "/old"), null),
+            "missing-history" => new(Plan, null, new("/new-history", "/new-history")),
+            _ => new(Plan, new("/new", "/new"), null)
+        };
+        await Assert.ThrowsAnyAsync<Exception>(() => fixture.Repository.ReadRelocationInventoryAsync(request, configuration, default));
+        Assert.Equal(failure == "pending" ? 1 : 0, (await fixture.Repository.ListRelocationsAsync(default)).Length);
+        Assert.Equal("/old", (await fixture.Repository.LoadAsync(Plan, default))!.CurrentRoot!.CanonicalPath);
     }
 
     private sealed class ResumeProbe(Action afterProof) : IStorageRelocationPhysicalStore

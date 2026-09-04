@@ -59,20 +59,7 @@ public sealed partial class ConfigDbRepository : IStorageRelocationJournalStore
                 if (old is null || old.IsActive != 1 || old.CanonicalPath != root.OldRoot.CanonicalPath || old.ComparisonKey != root.OldRoot.ComparisonKey)
                     throw new LocalStateConcurrencyException("Relocation old binding changed.");
             }
-            // 同时检查旧/新根与所有 active source/output，包括同 Plan 未迁移的根。
-            var activeIds = await db.PlanRegistrations.Where(x => x.IsActive == 1).Select(x => x.PlanId).ToListAsync(cancellationToken);
-            // inactive Plan 仍可能有未收敛的物理恢复工作；不能让新 reservation 抢占它依赖的根。
-            activeIds.AddRange(await db.PublishIntents.Select(x => x.PlanId).ToListAsync(cancellationToken));
-            activeIds.AddRange(await db.RetentionDeletionIntents.Select(x => x.PlanId).ToListAsync(cancellationToken));
-            activeIds.AddRange(await db.MaintenanceStates.Where(x => x.Status != "COMPLETED" && x.Kind != "SCHEDULE_RECONCILIATION").Select(x => x.PlanId).ToListAsync(cancellationToken));
-            var sourceRows = await db.SourceLocalBindings.AsNoTracking().Where(x => x.IsActive == 1).ToListAsync(cancellationToken);
-            var outputRows = await db.OutputRootLocalBindings.AsNoTracking().Where(x => x.IsActive == 1).ToListAsync(cancellationToken);
-            var occupied = sourceRows.Where(x => activeIds.Any(id => id.SequenceEqual(x.PlanId)))
-                .Select(x => new ResolvedPhysicalPath(x.CanonicalPath, x.ComparisonKey)).ToList();
-            occupied.AddRange(outputRows.Where(x => activeIds.Any(id => id.SequenceEqual(x.PlanId))
-                && !(x.PlanId.SequenceEqual(plan) && manifest.Roots.Any(r => RootToken(r.Kind) == x.RootKind)))
-                .Select(x => new ResolvedPhysicalPath(x.CanonicalPath, x.ComparisonKey)));
-            if (allRoots.Any(x => occupied.Any(x.Overlaps))) throw new LocalStateConcurrencyException("Relocation roots overlap active storage or sources.");
+            await ValidateRelocationOccupiedRootsAsync(db, plan, manifest.Roots.Select(x => x.Kind).ToArray(), allRoots, cancellationToken);
             await ValidateRelocationPlacementsAsync(db, manifest, cancellationToken);
 
             byte[]? configurationPayload = null;
@@ -241,8 +228,10 @@ public sealed partial class ConfigDbRepository : IStorageRelocationJournalStore
     private static async Task EnsureActivationReservationsSafeAsync(ConfigDbContext db, byte[] plan, CancellationToken token)
     {
         var sources = await db.SourceLocalBindings.AsNoTracking().Where(x => x.PlanId == plan && x.IsActive == 1).ToListAsync(token);
+        var external = await db.ExternalLocalBindings.AsNoTracking().Where(x => x.PlanId == plan && x.IsActive == 1).ToListAsync(token);
         var outputs = await db.OutputRootLocalBindings.AsNoTracking().Where(x => x.PlanId == plan && x.IsActive == 1).ToListAsync(token);
         await EnsureReservationsSafeAsync(db, sources.Select(x => new ResolvedPhysicalPath(x.CanonicalPath, x.ComparisonKey))
+            .Concat(external.Select(x => new ResolvedPhysicalPath(x.CanonicalPath, x.ComparisonKey)))
             .Concat(outputs.Select(x => new ResolvedPhysicalPath(x.CanonicalPath, x.ComparisonKey))), token);
     }
 }

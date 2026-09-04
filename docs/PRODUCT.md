@@ -263,6 +263,8 @@ Scheduler installation 是 `PlanId + DeviceId` 下的本机状态，与 Plan 配
 
 ## 8. 尚未决策或需验证
 
+- Storage Relocation 容量预检无法可靠查询目标可用空间时，是否必须阻止启动，或允许用户明确确认后继续；尚未确定，不得静默把“未知”视为“足够”。
+
 - `*.backupplan` 的 v1 JSON Schema；
 - 隐私保护恢复信息在 7z、ZIP、TAR.ZST 中的可靠承载方式；
 - 7-Zip 密码能否在不出现在命令行或进程列表的前提下可靠地自动传入；
