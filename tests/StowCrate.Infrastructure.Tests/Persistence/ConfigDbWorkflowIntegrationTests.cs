@@ -36,6 +36,15 @@ public sealed class ConfigDbWorkflowIntegrationTests
 
     [Theory]
     [InlineData("normal")]
+    [InlineData("begin-missing-root")]
+    [InlineData("begin-missing-durability")]
+    [InlineData("begin-unavailable")]
+    [InlineData("begin-cancel")]
+    [InlineData("begin-occupied")]
+    [InlineData("begin-database-fault")]
+    [InlineData("begin-lost-response")]
+    [InlineData("begin-cancel-after-commit")]
+    [InlineData("begin-inactive")]
     [InlineData("compaction-old-reappeared")]
     [InlineData("compaction-temp-reappeared")]
     [InlineData("compaction-missing-adapter")]
@@ -95,8 +104,59 @@ public sealed class ConfigDbWorkflowIntegrationTests
                 StorageRelocationPhysicalStore.InspectIdentity(oldRoot, true), StorageRelocationPhysicalStore.InspectIdentity(newRoot, true))],
             [new(unit.Id, StorageRootKind.Current, new(version, Sha256Digest.Hash(bytes), bytes.Length), path,
                 StorageRelocationTempLayout.Create(transaction, version, path), StorageRelocationPhysicalStore.InspectIdentity(Path.Combine(oldRoot, path.Value), false))]);
-        var journal = await database.Repository.BeginRelocationAsync(manifest, configuration, default);
         var physical = RelocationTestPhysicalStore.Create(new RelocationTestBarrier());
+        StorageRelocationJournal journal;
+        if (scenario == "normal" || scenario.StartsWith("begin-", StringComparison.Ordinal))
+        {
+            using var beginCancellation = new CancellationTokenSource();
+            if (scenario == "begin-missing-root") Directory.Delete(newRoot);
+            var beginPhysical = RelocationTestPhysicalStore.Create(new BeginBarrier(async () =>
+            {
+                if (scenario == "begin-cancel") beginCancellation.Cancel();
+                if (scenario == "begin-occupied") File.WriteAllBytes(Path.Combine(newRoot, path.Value), bytes);
+                if (scenario == "begin-inactive")
+                    await new AuthoritativePlanWorkflow(database.Repository, new BackupPlanDocumentSource()).SetActiveAsync(plan.Id, false, default);
+            }, scenario != "begin-unavailable"));
+            var beginRepository = scenario == "begin-database-fault"
+                ? new ConfigDbRepository(new ConfigDbContextFactory(database.Path), new BeginFault()) : database.Repository;
+            var inspection = new StorageRelocationInspectionWorkflow(new(new(beginRepository, new BackupPlanDocumentSource())),
+                beginRepository, beginPhysical, beginPhysical,
+                new StorageRelocationTargetComparisonProbe(directory => StorageRelocationPhysicalStore.InspectIdentity(directory, true)),
+                scenario == "begin-missing-durability" ? null : beginPhysical);
+            var responseStore = new BeginResponseStore(beginRepository, scenario, beginCancellation);
+            var begin = new StorageRelocationBeginWorkflow(inspection, responseStore);
+            if (scenario is "normal" or "begin-cancel-after-commit")
+            {
+                journal = await begin.BeginAsync(new(plan.Id, new(newRoot, Key(newRoot)), null), transaction, beginCancellation.Token);
+                Assert.Equal(2, journal.Manifest.EncodingVersion);
+                Assert.Equal(transaction, journal.Manifest.TransactionId);
+                Assert.Equal(1, journal.Revision);
+                Assert.Empty(Directory.GetFileSystemEntries(newRoot));
+                Assert.Equal(1, responseStore.Calls);
+            }
+            else
+            {
+                var error = await Record.ExceptionAsync(() => begin.BeginAsync(new(plan.Id, new(newRoot, Key(newRoot)), null), transaction, beginCancellation.Token));
+                if (scenario == "begin-missing-root") Assert.IsType<StorageRelocationTargetRootMissingException>(error);
+                else if (scenario is "begin-missing-durability" or "begin-unavailable") Assert.IsType<StorageRelocationDurabilityUnavailableException>(error);
+                else if (scenario == "begin-cancel") Assert.IsAssignableFrom<OperationCanceledException>(error);
+                else if (scenario == "begin-inactive") Assert.IsType<LocalStateConcurrencyException>(error);
+                else if (scenario is "begin-database-fault" or "begin-lost-response")
+                    Assert.Equal(transaction, Assert.IsType<StorageRelocationBeginOutcomeUnknownException>(error).TransactionId);
+                else Assert.IsAssignableFrom<IOException>(error);
+                if (scenario == "begin-lost-response")
+                    Assert.Equal(transaction, (await database.Repository.LoadRelocationAsync(plan.Id, default))!.Manifest.TransactionId);
+                else Assert.Null(await database.Repository.LoadRelocationAsync(plan.Id, default));
+                Assert.Equal(scenario is "begin-database-fault" or "begin-lost-response" ? 1 : 0, responseStore.Calls);
+                Assert.Equal(oldRoot, (await database.Repository.LoadAsync(plan.Id, default))!.CurrentRoot!.CanonicalPath);
+                Assert.Equivalent(state.Baseline, (await database.Repository.LoadAsync(plan.Id, unit.Id, default))!.Baseline);
+                Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(oldRoot, path.Value)));
+                if (scenario == "begin-missing-root") Assert.False(Directory.Exists(newRoot));
+                else if (scenario != "begin-occupied") Assert.Empty(Directory.GetFileSystemEntries(newRoot));
+                return;
+            }
+        }
+        else journal = await database.Repository.BeginRelocationAsync(manifest, configuration, default);
         if (scenario.StartsWith("comparison-", StringComparison.Ordinal))
         {
             if (scenario != "comparison-prepared")
@@ -365,6 +425,48 @@ public sealed class ConfigDbWorkflowIntegrationTests
         {
             await inner.VerifyCompletedAsync(journal, token);
             afterCheck();
+        }
+    }
+
+    private sealed class BeginFault : IMetadataCommitFaultInjector
+    {
+        public void ThrowIfRequested(MetadataCommitFaultPoint point)
+        {
+            if (point == MetadataCommitFaultPoint.AfterRelocationIntent) throw new IOException("injected Begin failure");
+        }
+    }
+
+    // 真实 SQLite 提交后注入响应丢失/取消；其余方法故意拒绝，证明 Begin 不自动恢复或重试。
+    private sealed class BeginResponseStore(IStorageRelocationJournalStore inner, string scenario, CancellationTokenSource cancellation) : IStorageRelocationJournalStore
+    {
+        public int Calls { get; private set; }
+        public async Task<StorageRelocationJournal> BeginRelocationAsync(StorageRelocationManifest manifest, StorageRelocationConfigurationObservation configuration, CancellationToken token)
+        {
+            Calls++;
+            var result = await inner.BeginRelocationAsync(manifest, configuration, token);
+            if (scenario == "begin-lost-response") throw new IOException("response lost after commit");
+            if (scenario == "begin-cancel-after-commit") cancellation.Cancel();
+            return result;
+        }
+        public Task<StorageRelocationJournal?> LoadRelocationAsync(PlanId planId, CancellationToken token) => throw new NotSupportedException();
+        public Task<StorageRelocationJournal> CommitRelocationAsync(Guid transactionId, long expectedRevision, IStorageRelocationPhysicalStore physical, CancellationToken token) => throw new NotSupportedException();
+        public Task CompactRelocationAsync(Guid transactionId, long expectedRevision, IStorageRelocationCompletionProbe physical, CancellationToken token) => throw new NotSupportedException();
+        public Task<ImmutableArray<StorageRelocationJournal>> ListRelocationsAsync(CancellationToken token) => throw new NotSupportedException();
+        public Task<StorageRelocationJournal> BeginRelocationAsync(StorageRelocationManifest manifest, CancellationToken token) => throw new NotSupportedException();
+        public Task<StorageRelocationJournal> ResumeRelocationEntryAsync(Guid transactionId, long expectedRevision, ArchiveVersionId versionId, IStorageRelocationPhysicalStore physical, CancellationToken token) => throw new NotSupportedException();
+        public Task<StorageRelocationJournal> CleanupRelocationEntryAsync(Guid transactionId, long expectedRevision, ArchiveVersionId versionId, IStorageRelocationOldCopyStore physical, CancellationToken token) => throw new NotSupportedException();
+        public Task<StorageRelocationJournal> CompleteRelocationAsync(Guid transactionId, long expectedRevision, IStorageRelocationOldCopyStore physical, CancellationToken token) => throw new NotSupportedException();
+        public Task<StorageRelocationJournal> RecordRelocationStagedAsync(Guid transactionId, long expectedRevision, StorageTransferProof proof, CancellationToken token) => throw new NotSupportedException();
+        public Task<StorageRelocationJournal> RecordRelocationTargetAsync(Guid transactionId, long expectedRevision, StorageTransferProof proof, CancellationToken token) => throw new NotSupportedException();
+        public Task<StorageRelocationJournal> SealRelocationTargetsAsync(Guid transactionId, long expectedRevision, CancellationToken token) => throw new NotSupportedException();
+    }
+
+    private sealed class BeginBarrier(Func<Task> callback, bool completed) : StowCrate.Application.Publishing.IArchivePublishMetadataDurabilityBarrier
+    {
+        public async Task<StowCrate.Application.Publishing.PublishMetadataDurabilityProof> FlushDirectoryMetadataAsync(string destinationDirectory, CancellationToken cancellationToken)
+        {
+            await callback();
+            return new(completed, "test-begin");
         }
     }
 

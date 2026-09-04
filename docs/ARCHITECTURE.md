@@ -425,3 +425,5 @@ M5.2 orphan reconciliation 是只读诊断面：对全部 active Plan 的 tracke
 Manifest 编码 v2 契约：StorageRelocationIntent.ProtocolVersion 仍为 transfer 状态协议 1，manifest payload 的 Version 独立取 1 或 2（与已独立版本化的 progress/configuration 编码一致），不改变 config.db schema v6。v1 保留原始 ExecutionDigest 字段和 canonical bytes；只能作为历史事实保存，不能重新解释为配置指纹。v2 使用独立 closed-world DTO，完全不包含 ExecutionDigest，禁止 null/占位字段；新建 v2 必须在同一 Begin 事务冻结 configuration checkpoint，缺少 checkpoint 的 v2 即为损坏状态，不能补签。reader 先验证 payload hash 和版本，再分派严格 reader 并检查 canonical 重编码；拒绝未知/重复/错版字段和未来版本，不自动升级或改写 v1。旧程序不能识别 v2 时须保持其既有 fail-closed 行为；不得向旧程序承诺 v2 日志可恢复。
 
 Application 新增目标目录持久化预检端口，Infrastructure 的 StorageRelocationPhysicalStore 实现现存目标根/父链 barrier 与前后 identity、namespace 重验，不创建文件或目录。屏障不可用明确拒绝；预检不是未来写入成功或 durable publication 的证明，不替代执行阶段的屏障。完整 Begin 编排仍待装配。
+
+Application 已提供 StorageRelocationBeginWorkflow：内部完成启动预检及最终配置/metadata 重验，以 manifest v2 + checkpoint 调用一次原子 Begin，只返回 PREPARED。预检结果不公开为可缓存的启动凭证。调用后失败报告携带 transaction ID 的 OutcomeUnknown，不自动重试或复制；成功返回后的取消不覆盖成功。App/CLI 组合根仍待装配。
