@@ -50,7 +50,7 @@ public sealed partial class StorageRelocationPhysicalTests
             if (failure == "cancel") cancellation.Cancel();
             return failure != "unsupported";
         });
-        var physical = new StorageRelocationPhysicalStore(barrier);
+        var physical = RelocationTestPhysicalStore.Create(barrier);
         await Assert.ThrowsAnyAsync<Exception>(() => physical.StageAsync(journal, fixture.Version, cancellation.Token));
         Assert.Equal(1, barrier.Calls);
         if (failure == "temp") Assert.Equal("unowned", await File.ReadAllTextAsync(temp));

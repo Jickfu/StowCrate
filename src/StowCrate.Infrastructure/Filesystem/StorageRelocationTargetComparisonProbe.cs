@@ -27,20 +27,38 @@ public sealed class StorageRelocationTargetComparisonProbe : IStorageRelocationT
         cancellationToken.ThrowIfCancellationRequested();
     }
 
+    public Task VerifyLayoutAsync(StorageRelocationManifest manifest, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        cancellationToken.ThrowIfCancellationRequested();
+        // manifest 已校验 final/temp 字面冲突和事务路径。这里只投影布局，不冒充新 inventory/hash 观察。
+        var roots = manifest.Roots;
+        var entries = manifest.Entries.Select(x => new StorageRelocationPlacement(x.UnitId, x.RootKind, x.Artifact, x.RelativePath)).ToArray();
+        var before = Capture(roots, entries, manifest.TransactionId, cancellationToken);
+        var after = Capture(roots, entries, manifest.TransactionId, cancellationToken);
+        if (!before.SequenceEqual(after)) throw new IOException("Relocation target comparison namespace changed.");
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
+    }
+
     private List<DirectoryObservation> Capture(StorageRelocationPhysicalInventory observation, Guid transactionId, CancellationToken token)
+        => Capture(observation.Roots, observation.Entries.Select(x => x.Placement).ToArray(), transactionId, token);
+
+    private List<DirectoryObservation> Capture(IReadOnlyList<StorageRelocationRoot> roots,
+        IReadOnlyList<StorageRelocationPlacement> entries, Guid transactionId, CancellationToken token)
     {
         var result = new List<DirectoryObservation>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var identities = new HashSet<StorageObjectIdentity>();
-        foreach (var root in observation.Roots)
+        foreach (var root in roots)
         {
             try { _ = StrictUtf8.GetByteCount(root.NewRoot.CanonicalPath); }
             catch (EncoderFallbackException) { throw new StorageRelocationComparisonUnavailableException(); }
             AddDirectory(root.NewRoot.CanonicalPath, root.NewIdentity);
-            foreach (var entry in observation.Entries.Where(x => x.Placement.RootKind == root.Kind))
+            foreach (var entry in entries.Where(x => x.RootKind == root.Kind))
             {
-                var target = entry.Placement.RelativePath;
-                var temp = StorageRelocationTempLayout.Create(transactionId, entry.Placement.Artifact.VersionId, target);
+                var target = entry.RelativePath;
+                var temp = StorageRelocationTempLayout.Create(transactionId, entry.Artifact.VersionId, target);
                 // UTF-8 替换回退可能使不同字符串变成同一文件名，必须严格验证 final 和较长的 temp。
                 foreach (var relative in new[] { target, temp })
                     foreach (var segment in relative.Value.Split('/'))

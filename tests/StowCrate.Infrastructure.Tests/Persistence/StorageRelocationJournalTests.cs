@@ -774,6 +774,7 @@ public sealed class StorageRelocationJournalTests
     // 仅验证用例门槛及其后的并发重验，不模拟已实现的平台比较能力。
     private sealed class ComparisonProbe(Func<Task> action) : IStorageRelocationTargetComparisonProbe
     {
+        public Task VerifyLayoutAsync(StorageRelocationManifest manifest, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task VerifyTargetsAsync(StorageRelocationPhysicalInventory observation, Guid transactionId, CancellationToken cancellationToken)
         {
             Assert.Equal(Plan, observation.Inventory.PlanId);

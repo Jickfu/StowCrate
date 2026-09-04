@@ -6,6 +6,9 @@ public interface IStorageRelocationTargetComparisonProbe
     // 必须覆盖现存父目录及待创建子目录的继承规则，不能按操作系统猜测或复用路径规范化 key。
     // 无法可靠识别时抛出 StorageRelocationComparisonUnavailableException；冲突同样拒绝成功。
     Task VerifyTargetsAsync(StorageRelocationPhysicalInventory observation, Guid transactionId, CancellationToken cancellationToken);
+
+    /// <summary>检查完整冻结布局的比较语义；允许本事务已 staged/published 的路径存在，不授予对象 ownership。</summary>
+    Task VerifyLayoutAsync(StorageRelocationManifest manifest, CancellationToken cancellationToken);
 }
 
 public sealed class StorageRelocationComparisonUnavailableException()

@@ -15,7 +15,7 @@ public sealed partial class StorageRelocationPhysicalTests
         using var fixture = new Fixture();
         var parent = Directory.CreateDirectory(Path.GetDirectoryName(fixture.Target)!).FullName;
         var probe = new DestinationProbe(path => (path == parent ? "nested-volume" : "root-volume", path == parent ? 0 : 10000));
-        var physical = new StorageRelocationPhysicalStore(new Barrier(), probe);
+        var physical = RelocationTestPhysicalStore.Create(new Barrier(), probe);
         var error = await Assert.ThrowsAsync<StorageRelocationCapacityException>(() => inspect
             ? physical.ObserveInventoryAsync(Inventory(fixture), default)
             : physical.StageAsync(fixture.Journal, fixture.Version, default));
@@ -45,7 +45,7 @@ public sealed partial class StorageRelocationPhysicalTests
         Directory.CreateDirectory(Path.GetDirectoryName(fixture.Target)!);
         Directory.CreateDirectory(Path.Combine(fixture.NewRoot, "other"));
         var probe = new DestinationProbe(path => (sameVolume ? "shared" : path, fixture.Bytes.Length * 2 - 1));
-        var physical = new StorageRelocationPhysicalStore(new Barrier(), probe);
+        var physical = RelocationTestPhysicalStore.Create(new Barrier(), probe);
         if (sameVolume)
             Assert.Equal(StorageRelocationCapacityFailure.Insufficient,
                 (await Assert.ThrowsAsync<StorageRelocationCapacityException>(() => physical.ObserveInventoryAsync(inventory, default))).Reason);
@@ -72,7 +72,7 @@ public sealed partial class StorageRelocationPhysicalTests
             if (replace) Directory.Move(parent, parent + ".held");
             Directory.CreateDirectory(parent);
         });
-        await Assert.ThrowsAsync<StorageRelocationCapacityException>(() => new StorageRelocationPhysicalStore(new Barrier(), probe)
+        await Assert.ThrowsAsync<StorageRelocationCapacityException>(() => RelocationTestPhysicalStore.Create(new Barrier(), probe)
             .StageAsync(fixture.Journal, fixture.Version, default));
         Assert.False(File.Exists(fixture.Temp));
         Assert.False(File.Exists(fixture.Target));

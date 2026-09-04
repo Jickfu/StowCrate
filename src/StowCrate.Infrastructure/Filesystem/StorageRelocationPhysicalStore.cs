@@ -9,10 +9,12 @@ namespace StowCrate.Infrastructure.Filesystem;
 
 /// <summary>物理复制/发布及提交后的 exact old-copy cleanup；不切换 binding，也不清除未知临时文件或目录。</summary>
 public sealed partial class StorageRelocationPhysicalStore(IArchivePublishMetadataDurabilityBarrier? durabilityBarrier = null,
-    IStorageRelocationCapacityProbe? capacityProbe = null) : IStorageRelocationPhysicalStore, IStorageRelocationOldCopyStore, IStorageRelocationCompletionProbe
+    IStorageRelocationCapacityProbe? capacityProbe = null,
+    IStorageRelocationTargetComparisonProbe? comparisonProbe = null) : IStorageRelocationPhysicalStore, IStorageRelocationOldCopyStore, IStorageRelocationCompletionProbe
 {
     private readonly IArchivePublishMetadataDurabilityBarrier durability = durabilityBarrier ?? new PlatformArchivePublishMetadataDurabilityBarrier();
     private readonly StorageRelocationCapacityGuard capacity = new(capacityProbe ?? new StorageRelocationCapacityProbe());
+    private readonly IStorageRelocationTargetComparisonProbe comparison = comparisonProbe ?? new StorageRelocationTargetComparisonProbe();
 
     public static StorageObjectIdentity InspectIdentity(string path, bool directory)
     {
@@ -30,6 +32,7 @@ public sealed partial class StorageRelocationPhysicalStore(IArchivePublishMetada
     {
         var (entry, root, progress) = ValidateJournal(journal, versionId);
         if (progress.Stage is not StorageTransferArtifactStage.Pending) throw new InvalidOperationException("Artifact is not pending staging.");
+        await comparison.VerifyLayoutAsync(journal.Manifest, cancellationToken).ConfigureAwait(false);
         // 先检查全部尚未复制条目的 target/temp，避免已知的后续冲突留下本条目的无用副本。
         var pending = journal.Progress.Artifacts.Where(x => x.Stage == StorageTransferArtifactStage.Pending)
             .Select(x => x.Artifact.VersionId).ToHashSet();
@@ -51,6 +54,8 @@ public sealed partial class StorageRelocationPhysicalStore(IArchivePublishMetada
         // 先排除目标父目录已知不支持持久化的情况，避免复制完成后才留下无 ownership 的 temp。
         // 该探测不替代复制/rename 后的真实 barrier，也不声明目录写入权限已经被预留。
         await BarrierAsync(Path.GetDirectoryName(temp)!, cancellationToken).ConfigureAwait(false);
+        // 新建父目录及 barrier I/O 后重新读取实际比较规则；不复用 Preview 或创建前推导。
+        await comparison.VerifyLayoutAsync(journal.Manifest, cancellationToken).ConfigureAwait(false);
         Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
         RequireIdentity(source, false, entry.OldIdentity);
         Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath);
@@ -95,6 +100,7 @@ public sealed partial class StorageRelocationPhysicalStore(IArchivePublishMetada
         var (entry, root, progress) = ValidateJournal(journal, versionId);
         if (progress.Stage is not StorageTransferArtifactStage.Staged || progress.StagedIdentity is null)
             throw new InvalidOperationException("Durably recorded staged identity is required before publish.");
+        await comparison.VerifyLayoutAsync(journal.Manifest, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         var source = Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
         await VerifyAsync(source, entry.OldIdentity, entry.Artifact, cancellationToken).ConfigureAwait(false);
@@ -110,6 +116,7 @@ public sealed partial class StorageRelocationPhysicalStore(IArchivePublishMetada
         else
         {
             await VerifyAsync(temp, progress.StagedIdentity, entry.Artifact, cancellationToken).ConfigureAwait(false);
+            await comparison.VerifyLayoutAsync(journal.Manifest, cancellationToken).ConfigureAwait(false);
             Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.TempRelativePath);
             RequireIdentity(temp, false, progress.StagedIdentity);
             Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
@@ -119,6 +126,7 @@ public sealed partial class StorageRelocationPhysicalStore(IArchivePublishMetada
         }
         // namespace mutation 后必须收敛为可恢复的 durable proof，不再接受本次 caller cancellation。
         await BarrierAsync(Path.GetDirectoryName(target)!, CancellationToken.None).ConfigureAwait(false);
+        await comparison.VerifyLayoutAsync(journal.Manifest, CancellationToken.None).ConfigureAwait(false);
         Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath);
         await VerifyAsync(target, progress.StagedIdentity, entry.Artifact, CancellationToken.None).ConfigureAwait(false);
         Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath);
@@ -132,6 +140,7 @@ public sealed partial class StorageRelocationPhysicalStore(IArchivePublishMetada
         ValidateJournalSet(journal, StorageTransferStage.TargetsDurable);
         cancellationToken.ThrowIfCancellationRequested();
         VerifyRoots(journal);
+        await comparison.VerifyLayoutAsync(journal.Manifest, cancellationToken).ConfigureAwait(false);
         foreach (var root in journal.Manifest.Roots)
             await BarrierAsync(root.NewRoot.CanonicalPath, cancellationToken).ConfigureAwait(false);
         foreach (var entry in journal.Manifest.Entries)
@@ -154,6 +163,7 @@ public sealed partial class StorageRelocationPhysicalStore(IArchivePublishMetada
             await VerifyAsync(target, identity, entry.Artifact, cancellationToken).ConfigureAwait(false);
         }
         // 后续条目的 I/O 期间，先前条目也可能发生正常替换；返回前再检查整个 namespace 和 native identity。
+        await comparison.VerifyLayoutAsync(journal.Manifest, cancellationToken).ConfigureAwait(false);
         VerifyRoots(journal);
         foreach (var entry in journal.Manifest.Entries)
         {

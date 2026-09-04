@@ -15,6 +15,19 @@ namespace StowCrate.Infrastructure.Tests.Persistence;
 
 public sealed class ConfigDbWorkflowIntegrationTests
 {
+    private sealed class UnavailableRelocationComparison(int failureCall) : IStorageRelocationTargetComparisonProbe
+    {
+        private int calls;
+        public Task VerifyTargetsAsync(StorageRelocationPhysicalInventory observation, Guid transactionId, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+        public Task VerifyLayoutAsync(StorageRelocationManifest manifest, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (++calls == failureCall) throw new StorageRelocationComparisonUnavailableException();
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class RelocationCapacityProbe(long? available) : IStorageRelocationCapacityProbe
     {
         public Task<StorageCapacityObservation> ObserveAsync(ResolvedPhysicalPath root, CancellationToken cancellationToken)
@@ -25,6 +38,10 @@ public sealed class ConfigDbWorkflowIntegrationTests
     [InlineData("normal")]
     [InlineData("capacity-unavailable")]
     [InlineData("capacity-insufficient")]
+    [InlineData("comparison-prepared")]
+    [InlineData("comparison-staged")]
+    [InlineData("comparison-sealed")]
+    [InlineData("comparison-after-rename")]
     [InlineData("explicit-prepared")]
     [InlineData("explicit-staged")]
     [InlineData("explicit-sealed")]
@@ -73,10 +90,42 @@ public sealed class ConfigDbWorkflowIntegrationTests
             [new(unit.Id, StorageRootKind.Current, new(version, Sha256Digest.Hash(bytes), bytes.Length), path,
                 StorageRelocationTempLayout.Create(transaction, version, path), StorageRelocationPhysicalStore.InspectIdentity(Path.Combine(oldRoot, path.Value), false))]);
         var journal = await database.Repository.BeginRelocationAsync(manifest, configuration, default);
-        var physical = new StorageRelocationPhysicalStore(new RelocationTestBarrier());
+        var physical = RelocationTestPhysicalStore.Create(new RelocationTestBarrier());
+        if (scenario.StartsWith("comparison-", StringComparison.Ordinal))
+        {
+            if (scenario != "comparison-prepared")
+                journal = await database.Repository.ResumeRelocationEntryAsync(transaction, journal.Revision, version, physical, default);
+            if (scenario == "comparison-sealed")
+            {
+                journal = await database.Repository.ResumeRelocationEntryAsync(transaction, journal.Revision, version, physical, default);
+                journal = await database.Repository.SealRelocationTargetsAsync(transaction, journal.Revision, default);
+            }
+            var blocked = new StorageRelocationPhysicalStore(new RelocationTestBarrier(),
+                comparisonProbe: new UnavailableRelocationComparison(scenario == "comparison-after-rename" ? 3 : 1));
+            var result = await new StorageRelocationRecoveryWorkflow(database.Repository, blocked).ResumeAsync(plan.Id, transaction, blocked, default);
+            Assert.Equal(StorageRelocationRecoveryStatus.ResumeRequired, result.Status);
+            Assert.Equal("RELOCATION_TARGET_COMPARISON_UNAVAILABLE", result.Diagnostic);
+            Assert.Equal(journal.Revision, (await database.Repository.LoadRelocationAsync(plan.Id, default))!.Revision);
+            Assert.Equal(oldRoot, (await database.Repository.LoadAsync(plan.Id, default))!.CurrentRoot!.CanonicalPath);
+            Assert.Equivalent(state.Baseline, (await database.Repository.LoadAsync(plan.Id, unit.Id, default))!.Baseline);
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(oldRoot, path.Value)));
+            if (scenario == "comparison-prepared") Assert.Empty(Directory.EnumerateFileSystemEntries(newRoot));
+            if (scenario == "comparison-after-rename")
+            {
+                Assert.True(File.Exists(Path.Combine(newRoot, path.Value)));
+                Assert.False(File.Exists(Path.Combine(newRoot, manifest.Entries[0].TempRelativePath.Value)));
+            }
+            // 能力恢复后仅使用原 durable journal 补记/继续，不生成新事务或接纳外来文件。
+            var resumed = await new StorageRelocationRecoveryWorkflow(database.Repository, physical).ResumeAsync(plan.Id, transaction, physical, default);
+            Assert.Equal(StorageRelocationRecoveryStatus.CompletedReservationsRetained, resumed.Status);
+            Assert.Equal(newRoot, (await database.Repository.LoadAsync(plan.Id, default))!.CurrentRoot!.CanonicalPath);
+            Assert.Equivalent(state.Baseline, (await database.Repository.LoadAsync(plan.Id, unit.Id, default))!.Baseline);
+            Assert.False(File.Exists(Path.Combine(oldRoot, path.Value)));
+            return;
+        }
         if (scenario is "capacity-unavailable" or "capacity-insufficient")
         {
-            var blocked = new StorageRelocationPhysicalStore(new RelocationTestBarrier(), new RelocationCapacityProbe(scenario == "capacity-unavailable" ? null : 0));
+            var blocked = RelocationTestPhysicalStore.Create(new RelocationTestBarrier(), new RelocationCapacityProbe(scenario == "capacity-unavailable" ? null : 0));
             var result = await new StorageRelocationRecoveryWorkflow(database.Repository, blocked).ResumeAsync(plan.Id, transaction, blocked, default);
             Assert.Equal(StorageRelocationRecoveryStatus.ResumeRequired, result.Status);
             Assert.Equal(scenario == "capacity-unavailable" ? "RELOCATION_CAPACITY_UNAVAILABLE" : "RELOCATION_CAPACITY_INSUFFICIENT", result.Diagnostic);

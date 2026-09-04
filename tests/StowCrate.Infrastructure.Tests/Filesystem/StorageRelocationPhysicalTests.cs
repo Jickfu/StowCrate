@@ -17,7 +17,7 @@ public sealed partial class StorageRelocationPhysicalTests
     public async Task ObservedTargetCheckUsesExactTransactionTemporaryPath(string scenario)
     {
         using var fixture = new Fixture();
-        var physical = new StorageRelocationPhysicalStore();
+        var physical = RelocationTestPhysicalStore.Create();
         var observed = await physical.ObserveInventoryAsync(Inventory(fixture), default);
         var transaction = fixture.Journal.Manifest.TransactionId;
         if (scenario == "occupied-temp")
@@ -66,7 +66,7 @@ public sealed partial class StorageRelocationPhysicalTests
             StorageTransferProgress.Prepare(manifest.TransactionId, manifest.PlanId, manifest.Entries.Select(x => x.Artifact)), 1);
         var occupied = Path.Combine(fixture.NewRoot, temporary ? temp.Value : relative.Value);
         await File.WriteAllBytesAsync(occupied, fixture.Bytes);
-        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier()).StageAsync(journal, fixture.Version, default));
+        await Assert.ThrowsAsync<IOException>(() => RelocationTestPhysicalStore.Create(new Barrier()).StageAsync(journal, fixture.Version, default));
         Assert.Equal(new[] { occupied }, Directory.GetFileSystemEntries(fixture.NewRoot));
         Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(occupied));
         Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
@@ -97,7 +97,7 @@ public sealed partial class StorageRelocationPhysicalTests
         var before = Directory.GetFileSystemEntries(fixture.NewRoot, "*", SearchOption.AllDirectories);
         using var cancellation = new CancellationTokenSource();
         if (scenario == "cancel") cancellation.Cancel();
-        var probe = new StorageRelocationPhysicalStore(new Barrier(false));
+        var probe = RelocationTestPhysicalStore.Create(new Barrier(false));
         if (scenario == "none") await probe.VerifyUnoccupiedTargetsAsync(fixture.Journal.Manifest, default);
         else await Assert.ThrowsAnyAsync<Exception>(() => probe.VerifyUnoccupiedTargetsAsync(fixture.Journal.Manifest, cancellation.Token));
         Assert.Equal(before, Directory.GetFileSystemEntries(fixture.NewRoot, "*", SearchOption.AllDirectories));
@@ -108,7 +108,7 @@ public sealed partial class StorageRelocationPhysicalTests
     public async Task PendingNamespaceCheckDoesNotRejectAlreadyStagedOwnedTemporaryFile()
     {
         using var fixture = new Fixture();
-        var physical = new StorageRelocationPhysicalStore(new Barrier());
+        var physical = RelocationTestPhysicalStore.Create(new Barrier());
         var staged = await physical.StageAsync(fixture.Journal, fixture.Version, default);
         var original = fixture.Journal.Manifest;
         var version = new ArchiveVersionId(Guid.NewGuid());
@@ -146,7 +146,7 @@ public sealed partial class StorageRelocationPhysicalTests
             Entries = [inventory.Entries[0] with { RootKind = kind }]
         };
         var error = await Assert.ThrowsAsync<StorageRelocationTargetRootMissingException>(() =>
-            new StorageRelocationPhysicalStore().ObserveInventoryAsync(inventory, default));
+            RelocationTestPhysicalStore.Create().ObserveInventoryAsync(inventory, default));
         Assert.Equal(kind, error.RootKind);
         Assert.Equal("RELOCATION_TARGET_ROOT_MISSING", error.DiagnosticCode);
         Assert.Contains("请先创建目录", error.Message);
@@ -169,7 +169,7 @@ public sealed partial class StorageRelocationPhysicalTests
             var path = Path.Combine(fixture.NewRoot, "child");
             inventory = inventory with { Roots = [inventory.Roots[0] with { NewRoot = new(path, path.Replace('\\', '/')) }] };
         }
-        var error = await Assert.ThrowsAnyAsync<IOException>(() => new StorageRelocationPhysicalStore().ObserveInventoryAsync(inventory, default));
+        var error = await Assert.ThrowsAnyAsync<IOException>(() => RelocationTestPhysicalStore.Create().ObserveInventoryAsync(inventory, default));
         Assert.IsNotType<StorageRelocationTargetRootMissingException>(error);
         Assert.Equal("keep", await File.ReadAllTextAsync(fixture.NewRoot));
     }
@@ -188,7 +188,7 @@ public sealed partial class StorageRelocationPhysicalTests
         using var fixture = new Fixture();
         var unknown = Path.Combine(fixture.NewRoot, "unknown.txt");
         await File.WriteAllTextAsync(unknown, "keep");
-        var observed = await new StorageRelocationPhysicalStore(new Barrier(false), new CapacityProbe(1000))
+        var observed = await RelocationTestPhysicalStore.Create(new Barrier(false), new CapacityProbe(1000))
             .ObserveInventoryAsync(Inventory(fixture), default);
         Assert.Equal(fixture.Journal.Manifest.Entries[0].OldIdentity, Assert.Single(observed.Entries).Identity);
         Assert.Equal(fixture.Bytes.Length, Assert.Single(observed.Capacity).RequiredBytes);
@@ -219,7 +219,7 @@ public sealed partial class StorageRelocationPhysicalTests
         var before = Directory.GetFileSystemEntries(fixture.NewRoot, "*", SearchOption.AllDirectories);
         using var cancellation = new CancellationTokenSource();
         if (failure == "cancel") cancellation.Cancel();
-        var physical = new StorageRelocationPhysicalStore(new Barrier(), new CapacityProbe(failure switch
+        var physical = RelocationTestPhysicalStore.Create(new Barrier(), new CapacityProbe(failure switch
         {
             "capacity-unknown" => null,
             "capacity-insufficient" => 0,
@@ -240,7 +240,7 @@ public sealed partial class StorageRelocationPhysicalTests
     {
         using var fixture = new Fixture();
         var inventory = Inventory(fixture);
-        var physical = new StorageRelocationPhysicalStore(new Barrier(), new MutatingCapacityProbe(() =>
+        var physical = RelocationTestPhysicalStore.Create(new Barrier(), new MutatingCapacityProbe(() =>
         {
             if (drift == "source")
             {
@@ -270,7 +270,7 @@ public sealed partial class StorageRelocationPhysicalTests
     {
         using var fixture = new Fixture();
         var inventory = Inventory(fixture) with { Entries = [] };
-        var physical = new StorageRelocationPhysicalStore(new Barrier(), new CapacityProbe(1000));
+        var physical = RelocationTestPhysicalStore.Create(new Barrier(), new CapacityProbe(1000));
         Assert.Empty((await physical.ObserveInventoryAsync(inventory, default)).Entries);
         Directory.Move(inventory.Roots[0].OldRoot.CanonicalPath, inventory.Roots[0].OldRoot.CanonicalPath + ".held");
         await Assert.ThrowsAnyAsync<IOException>(() => physical.ObserveInventoryAsync(inventory, default));
@@ -298,7 +298,7 @@ public sealed partial class StorageRelocationPhysicalTests
         try { Directory.CreateSymbolicLink(Path.GetDirectoryName(fixture.Target)!, outside); }
         catch (UnauthorizedAccessException) when (OperatingSystem.IsWindows()) { return; }
         catch (IOException exception) when (OperatingSystem.IsWindows() && (exception.HResult & 0xffff) == 1314) { return; }
-        var physical = new StorageRelocationPhysicalStore(new Barrier(), new CapacityProbe(1000));
+        var physical = RelocationTestPhysicalStore.Create(new Barrier(), new CapacityProbe(1000));
         await Assert.ThrowsAsync<IOException>(() => physical.ObserveInventoryAsync(Inventory(fixture), default));
         Assert.False(File.Exists(fixture.Target));
         Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
@@ -311,7 +311,7 @@ public sealed partial class StorageRelocationPhysicalTests
     public async Task CapacityFailureCreatesNoDirectoriesOrTemporaryFiles(long? available)
     {
         using var fixture = new Fixture();
-        var physical = new StorageRelocationPhysicalStore(new Barrier(), new CapacityProbe(available));
+        var physical = RelocationTestPhysicalStore.Create(new Barrier(), new CapacityProbe(available));
         await Assert.ThrowsAsync<StorageRelocationCapacityException>(() => physical.StageAsync(fixture.Journal, fixture.Version, default));
         Assert.Empty(Directory.EnumerateFileSystemEntries(fixture.NewRoot));
         Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
@@ -321,9 +321,9 @@ public sealed partial class StorageRelocationPhysicalTests
     public async Task AlreadyStagedRenameDoesNotRequireMoreCapacity()
     {
         using var fixture = new Fixture();
-        var proof = await new StorageRelocationPhysicalStore(new Barrier()).StageAsync(fixture.Journal, fixture.Version, default);
+        var proof = await RelocationTestPhysicalStore.Create(new Barrier()).StageAsync(fixture.Journal, fixture.Version, default);
         Assert.Empty(await new StorageRelocationCapacityGuard(new CapacityProbe(null)).CheckPendingAsync(fixture.Staged(proof), default));
-        await new StorageRelocationPhysicalStore(new Barrier(), new CapacityProbe(null))
+        await RelocationTestPhysicalStore.Create(new Barrier(), new CapacityProbe(null))
             .PublishTargetAsync(fixture.Staged(proof), fixture.Version, default);
         Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Target));
     }
@@ -355,7 +355,7 @@ public sealed partial class StorageRelocationPhysicalTests
         // 模拟原始输入盘不可访问；旧归档仍在线。仅操作 fixture 私有目录，不动真实用户输入。
         Directory.Move(original, original + ".disconnected");
         var journal = await PublishAllAsync(fixture.Journal);
-        await new StorageRelocationPhysicalStore(new Barrier()).VerifyForCommitAsync(journal, default);
+        await RelocationTestPhysicalStore.Create(new Barrier()).VerifyForCommitAsync(journal, default);
         Assert.False(Directory.Exists(original));
         // fixture 为不透明字节而非可解码归档：迁移不能偷偷要求格式解析或密码。
         Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
@@ -367,7 +367,7 @@ public sealed partial class StorageRelocationPhysicalTests
     public async Task CopiesAndPublishesNestedUnicodeTargetWithoutMovingOldArchive()
     {
         using var fixture = new Fixture();
-        var store = new StorageRelocationPhysicalStore(new Barrier());
+        var store = RelocationTestPhysicalStore.Create(new Barrier());
         var staged = await store.StageAsync(fixture.Journal, fixture.Version, default);
         Assert.True(File.Exists(fixture.Temp));
         Assert.False(File.Exists(fixture.Target));
@@ -387,7 +387,7 @@ public sealed partial class StorageRelocationPhysicalTests
         using var fixture = new Fixture();
         Directory.CreateDirectory(Path.GetDirectoryName(fixture.Target)!);
         await File.WriteAllBytesAsync(fixture.Target, fixture.Bytes);
-        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier()).StageAsync(fixture.Journal, fixture.Version, default));
+        await Assert.ThrowsAsync<IOException>(() => RelocationTestPhysicalStore.Create(new Barrier()).StageAsync(fixture.Journal, fixture.Version, default));
         Assert.False(File.Exists(fixture.Temp));
         Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
     }
@@ -396,14 +396,14 @@ public sealed partial class StorageRelocationPhysicalTests
     public async Task RenameThenBarrierFailureCanRecoverOnlyWithRecordedObjectIdentity()
     {
         using var fixture = new Fixture();
-        var store = new StorageRelocationPhysicalStore(new Barrier());
+        var store = RelocationTestPhysicalStore.Create(new Barrier());
         var staged = await store.StageAsync(fixture.Journal, fixture.Version, default);
         var journal = fixture.Staged(staged);
-        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier(false)).PublishTargetAsync(journal, fixture.Version, default));
+        await Assert.ThrowsAsync<IOException>(() => RelocationTestPhysicalStore.Create(new Barrier(false)).PublishTargetAsync(journal, fixture.Version, default));
         Assert.True(File.Exists(fixture.Target));
         Assert.False(File.Exists(fixture.Temp));
         var restored = journal with { Progress = StorageTransferProgress.Restore(journal.Progress.TransactionId, journal.Progress.PlanId, journal.Progress.Stage, journal.Progress.Artifacts) };
-        var proof = await new StorageRelocationPhysicalStore(new Barrier()).PublishTargetAsync(restored, fixture.Version, default);
+        var proof = await RelocationTestPhysicalStore.Create(new Barrier()).PublishTargetAsync(restored, fixture.Version, default);
         Assert.Equal(staged.ObjectIdentity, proof.ObjectIdentity);
         Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
     }
@@ -412,7 +412,7 @@ public sealed partial class StorageRelocationPhysicalTests
     public async Task MatchingBytesWithDifferentNativeIdentityFailRecovery()
     {
         using var fixture = new Fixture();
-        var store = new StorageRelocationPhysicalStore(new Barrier());
+        var store = RelocationTestPhysicalStore.Create(new Barrier());
         var staged = await store.StageAsync(fixture.Journal, fixture.Version, default);
         // 保留原对象，避免文件系统立即复用 inode/file ID 影响 replacement fixture。
         File.Move(fixture.Temp, fixture.Temp + ".held");
@@ -425,7 +425,7 @@ public sealed partial class StorageRelocationPhysicalTests
     public async Task RootReplacementFailsClosedBeforePublish()
     {
         using var fixture = new Fixture();
-        var store = new StorageRelocationPhysicalStore(new Barrier());
+        var store = RelocationTestPhysicalStore.Create(new Barrier());
         var staged = await store.StageAsync(fixture.Journal, fixture.Version, default);
         Directory.Move(fixture.NewRoot, fixture.NewRoot + ".held");
         Directory.CreateDirectory(fixture.NewRoot);
@@ -438,9 +438,9 @@ public sealed partial class StorageRelocationPhysicalTests
     {
         using var fixture = new Fixture();
         Directory.CreateDirectory(Path.GetDirectoryName(fixture.Target)!);
-        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new FailNthBarrier(3)).StageAsync(fixture.Journal, fixture.Version, default));
+        await Assert.ThrowsAsync<IOException>(() => RelocationTestPhysicalStore.Create(new FailNthBarrier(3)).StageAsync(fixture.Journal, fixture.Version, default));
         Assert.True(File.Exists(fixture.Temp));
-        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier()).StageAsync(fixture.Journal, fixture.Version, default));
+        await Assert.ThrowsAsync<IOException>(() => RelocationTestPhysicalStore.Create(new Barrier()).StageAsync(fixture.Journal, fixture.Version, default));
         Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
     }
 
@@ -448,7 +448,7 @@ public sealed partial class StorageRelocationPhysicalTests
     public async Task CorruptSourceAndPreCancelledOperationNeverPublish()
     {
         using var fixture = new Fixture();
-        var store = new StorageRelocationPhysicalStore(new Barrier());
+        var store = RelocationTestPhysicalStore.Create(new Barrier());
         using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => store.StageAsync(fixture.Journal, fixture.Version, cancellation.Token));
         Assert.False(File.Exists(fixture.Temp));
@@ -463,7 +463,7 @@ public sealed partial class StorageRelocationPhysicalTests
         using var fixture = new Fixture();
         Directory.CreateDirectory(Path.GetDirectoryName(fixture.Target)!);
         var capability = await new PlatformArchivePublishMetadataDurabilityBarrier().FlushDirectoryMetadataAsync(fixture.NewRoot, default);
-        var store = new StorageRelocationPhysicalStore();
+        var store = RelocationTestPhysicalStore.Create();
         if (!capability.BarrierCompleted)
         {
             await Assert.ThrowsAsync<IOException>(() => store.StageAsync(fixture.Journal, fixture.Version, default));
@@ -481,19 +481,19 @@ public sealed partial class StorageRelocationPhysicalTests
     public async Task RetryMustFlushExistingParentLeftByFailedAttempt()
     {
         using var fixture = new Fixture();
-        var store = new StorageRelocationPhysicalStore(new Barrier(false));
+        var store = RelocationTestPhysicalStore.Create(new Barrier(false));
         await Assert.ThrowsAsync<IOException>(() => store.StageAsync(fixture.Journal, fixture.Version, default));
         Assert.True(Directory.Exists(Path.GetDirectoryName(fixture.Target)));
         await Assert.ThrowsAsync<IOException>(() => store.StageAsync(fixture.Journal, fixture.Version, default));
         Assert.False(File.Exists(fixture.Temp));
-        Assert.True((await new StorageRelocationPhysicalStore(new Barrier()).StageAsync(fixture.Journal, fixture.Version, default)).NamespaceDurable);
+        Assert.True((await RelocationTestPhysicalStore.Create(new Barrier()).StageAsync(fixture.Journal, fixture.Version, default)).NamespaceDurable);
     }
 
     [Fact]
     public async Task CommitVerificationRequiresSealedCompleteSetAndPreservesProgress()
     {
         using var fixture = new Fixture();
-        var store = new StorageRelocationPhysicalStore(new Barrier());
+        var store = RelocationTestPhysicalStore.Create(new Barrier());
         await Assert.ThrowsAsync<InvalidOperationException>(() => store.VerifyForCommitAsync(fixture.Journal, default));
         var sealedJournal = await PublishAllAsync(fixture.Journal);
         await store.VerifyForCommitAsync(sealedJournal, default);
@@ -524,7 +524,7 @@ public sealed partial class StorageRelocationPhysicalTests
             case "temp": await File.WriteAllBytesAsync(fixture.Temp, fixture.Bytes); break;
             case "missing-parent": Directory.Move(Path.GetDirectoryName(fixture.Target)!, Path.GetDirectoryName(fixture.Target)! + ".held"); break;
         }
-        await Assert.ThrowsAnyAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier()).VerifyForCommitAsync(journal, default));
+        await Assert.ThrowsAnyAsync<IOException>(() => RelocationTestPhysicalStore.Create(new Barrier()).VerifyForCommitAsync(journal, default));
         Assert.True(File.Exists(fixture.Source));
         if (drift == "missing-parent") Assert.False(Directory.Exists(Path.GetDirectoryName(fixture.Target)));
     }
@@ -534,9 +534,9 @@ public sealed partial class StorageRelocationPhysicalTests
     {
         using var fixture = new Fixture();
         var journal = await PublishAllAsync(fixture.Journal);
-        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier(false)).VerifyForCommitAsync(journal, default));
+        await Assert.ThrowsAsync<IOException>(() => RelocationTestPhysicalStore.Create(new Barrier(false)).VerifyForCommitAsync(journal, default));
         using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new StorageRelocationPhysicalStore(new Barrier()).VerifyForCommitAsync(journal, cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => RelocationTestPhysicalStore.Create(new Barrier()).VerifyForCommitAsync(journal, cancellation.Token));
         Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Target));
     }
 
@@ -548,9 +548,9 @@ public sealed partial class StorageRelocationPhysicalTests
         var manifest = new StorageRelocationManifest(original.TransactionId, original.PlanId, original.DeviceId,
             original.ExecutionSemanticDigest, original.Roots, []);
         var journal = new StorageRelocationJournal(manifest, StorageTransferProgress.Prepare(manifest.TransactionId, manifest.PlanId, []).SealTargets(), 2);
-        var store = new StorageRelocationPhysicalStore(new Barrier());
+        var store = RelocationTestPhysicalStore.Create(new Barrier());
         await store.VerifyForCommitAsync(journal, default);
-        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier(false)).VerifyForCommitAsync(journal, default));
+        await Assert.ThrowsAsync<IOException>(() => RelocationTestPhysicalStore.Create(new Barrier(false)).VerifyForCommitAsync(journal, default));
         Directory.Move(fixture.NewRoot, fixture.NewRoot + ".held");
         Directory.CreateDirectory(fixture.NewRoot);
         await Assert.ThrowsAsync<IOException>(() => store.VerifyForCommitAsync(journal, default));
@@ -571,7 +571,7 @@ public sealed partial class StorageRelocationPhysicalTests
         var manifest = new StorageRelocationManifest(original.TransactionId, original.PlanId, original.DeviceId,
             original.ExecutionSemanticDigest, original.Roots, original.Entries.Add(second));
         var journal = await PublishAllAsync(new(manifest, StorageTransferProgress.Prepare(manifest.TransactionId, manifest.PlanId, manifest.Entries.Select(x => x.Artifact)), 1));
-        var store = new StorageRelocationPhysicalStore(new Barrier());
+        var store = RelocationTestPhysicalStore.Create(new Barrier());
         await store.VerifyForCommitAsync(journal, default);
         await File.WriteAllBytesAsync(Path.Combine(fixture.NewRoot, relative.Value), new byte[fixture.Bytes.Length]);
         await Assert.ThrowsAsync<IOException>(() => store.VerifyForCommitAsync(journal, default));
@@ -581,7 +581,7 @@ public sealed partial class StorageRelocationPhysicalTests
     // 该 fixture 仅模拟 durable store 返回的连续状态，不宣称已接入真实 SQLite/物理迁移编排。
     private static async Task<StorageRelocationJournal> PublishAllAsync(StorageRelocationJournal journal)
     {
-        var store = new StorageRelocationPhysicalStore(new Barrier());
+        var store = RelocationTestPhysicalStore.Create(new Barrier());
         foreach (var entry in journal.Manifest.Entries)
         {
             var staged = await store.StageAsync(journal, entry.Artifact.VersionId, default);
@@ -599,7 +599,7 @@ public sealed partial class StorageRelocationPhysicalTests
         var journal = await CommittedPhysicalFixtureAsync(fixture);
         var unknown = Path.Combine(Path.GetDirectoryName(fixture.Source)!, "unknown.txt");
         await File.WriteAllTextAsync(unknown, "unowned");
-        var proof = await new StorageRelocationPhysicalStore(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, default);
+        var proof = await RelocationTestPhysicalStore.Create(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, default);
         Assert.False(File.Exists(fixture.Source));
         Assert.True(Directory.Exists(Path.GetDirectoryName(fixture.Source)));
         Assert.Equal("unowned", await File.ReadAllTextAsync(unknown));
@@ -615,7 +615,7 @@ public sealed partial class StorageRelocationPhysicalTests
     {
         using var fixture = new Fixture();
         var journal = await PublishAllAsync(fixture.Journal);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => new StorageRelocationPhysicalStore(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, default));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => RelocationTestPhysicalStore.Create(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, default));
         Assert.True(File.Exists(fixture.Source));
     }
 
@@ -650,7 +650,7 @@ public sealed partial class StorageRelocationPhysicalTests
                 Directory.Move(fixture.NewRoot, fixture.NewRoot + ".held");
                 Directory.CreateDirectory(fixture.NewRoot); break;
         }
-        await Assert.ThrowsAnyAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, default));
+        await Assert.ThrowsAnyAsync<IOException>(() => RelocationTestPhysicalStore.Create(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, default));
         Assert.True(File.Exists(survivingOld));
     }
 
@@ -659,9 +659,9 @@ public sealed partial class StorageRelocationPhysicalTests
     {
         using var fixture = new Fixture();
         var journal = await CommittedPhysicalFixtureAsync(fixture);
-        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new FailNthBarrier(2)).RemoveOldCopyAsync(journal, fixture.Version, default));
+        await Assert.ThrowsAsync<IOException>(() => RelocationTestPhysicalStore.Create(new FailNthBarrier(2)).RemoveOldCopyAsync(journal, fixture.Version, default));
         Assert.False(File.Exists(fixture.Source));
-        var proof = await new StorageRelocationPhysicalStore(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, default);
+        var proof = await RelocationTestPhysicalStore.Create(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, default);
         Assert.Equal(fixture.Version, proof.Artifact.VersionId);
         Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Target));
     }
@@ -671,9 +671,9 @@ public sealed partial class StorageRelocationPhysicalTests
     {
         using var fixture = new Fixture();
         var journal = await CommittedPhysicalFixtureAsync(fixture);
-        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier(false)).RemoveOldCopyAsync(journal, fixture.Version, default));
+        await Assert.ThrowsAsync<IOException>(() => RelocationTestPhysicalStore.Create(new Barrier(false)).RemoveOldCopyAsync(journal, fixture.Version, default));
         using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new StorageRelocationPhysicalStore(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => RelocationTestPhysicalStore.Create(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, cancellation.Token));
         Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
     }
 
@@ -683,7 +683,7 @@ public sealed partial class StorageRelocationPhysicalTests
         using var fixture = new Fixture();
         var journal = await CommittedPhysicalFixtureAsync(fixture);
         using var cancellation = new CancellationTokenSource();
-        var store = new StorageRelocationPhysicalStore(new CancelAfterDeleteBarrier(fixture.Source, cancellation));
+        var store = RelocationTestPhysicalStore.Create(new CancelAfterDeleteBarrier(fixture.Source, cancellation));
         await store.RemoveOldCopyAsync(journal, fixture.Version, cancellation.Token);
         Assert.True(cancellation.IsCancellationRequested);
         await File.WriteAllBytesAsync(fixture.Source, fixture.Bytes);
@@ -723,7 +723,7 @@ public sealed partial class StorageRelocationPhysicalTests
     public async Task CompletedProbeNeverDeletesReappearedOrUnknownFiles(string drift)
     {
         using var fixture = new Fixture();
-        var physical = new StorageRelocationPhysicalStore(new Barrier());
+        var physical = RelocationTestPhysicalStore.Create(new Barrier());
         var journal = await CommittedPhysicalFixtureAsync(fixture);
         await physical.RemoveOldCopyAsync(journal, fixture.Version, default);
         journal = journal with { Progress = journal.Progress.RecordOldCopyAbsent(fixture.Version).Complete() };

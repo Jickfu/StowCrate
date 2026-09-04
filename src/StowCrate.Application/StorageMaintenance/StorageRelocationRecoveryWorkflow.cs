@@ -55,7 +55,8 @@ public sealed class StorageRelocationRecoveryWorkflow(IStorageRelocationJournalS
                     return new(planId, transactionId, current.Progress.Stage == StorageTransferStage.Completed
                         ? StorageRelocationRecoveryStatus.CompletedReservationsRetained
                         : current.Progress.IsMetadataCommitted ? StorageRelocationRecoveryStatus.CleanupPending : StorageRelocationRecoveryStatus.ResumeRequired,
-                        exception is StorageRelocationCapacityException capacityFailure
+                        exception is StorageRelocationComparisonUnavailableException ? "RELOCATION_TARGET_COMPARISON_UNAVAILABLE"
+                            : exception is StorageRelocationCapacityException capacityFailure
                             ? capacityFailure.Reason == StorageRelocationCapacityFailure.Unavailable ? "RELOCATION_CAPACITY_UNAVAILABLE" : "RELOCATION_CAPACITY_INSUFFICIENT"
                             : "RELOCATION_RESUME_STOPPED");
             }
