@@ -8,7 +8,7 @@ using StowCrate.Core.Filesystem;
 namespace StowCrate.Infrastructure.Filesystem;
 
 /// <summary>物理复制/发布及提交后的 exact old-copy cleanup；不切换 binding，也不清除未知临时文件或目录。</summary>
-public sealed class StorageRelocationPhysicalStore(IArchivePublishMetadataDurabilityBarrier? durabilityBarrier = null) : IStorageRelocationPhysicalStore, IStorageRelocationOldCopyStore
+public sealed class StorageRelocationPhysicalStore(IArchivePublishMetadataDurabilityBarrier? durabilityBarrier = null) : IStorageRelocationPhysicalStore, IStorageRelocationOldCopyStore, IStorageRelocationCompletionProbe
 {
     private readonly IArchivePublishMetadataDurabilityBarrier durability = durabilityBarrier ?? new PlatformArchivePublishMetadataDurabilityBarrier();
 
@@ -195,6 +195,44 @@ public sealed class StorageRelocationPhysicalStore(IArchivePublishMetadataDurabi
         RequireIdentity(target, false, targetIdentity);
         return new(journal.Manifest.TransactionId, journal.Manifest.PlanId, journal.Revision, entry.Artifact,
             root.OldIdentity, entry.OldIdentity, targetIdentity);
+    }
+
+    public async Task VerifyCompletedAsync(StorageRelocationJournal journal, CancellationToken cancellationToken)
+    {
+        ValidateJournalSet(journal, StorageTransferStage.Completed);
+        cancellationToken.ThrowIfCancellationRequested();
+        VerifyRoots(journal);
+        foreach (var root in journal.Manifest.Roots)
+        {
+            await BarrierAsync(root.OldRoot.CanonicalPath, cancellationToken).ConfigureAwait(false);
+            await BarrierAsync(root.NewRoot.CanonicalPath, cancellationToken).ConfigureAwait(false);
+        }
+        foreach (var entry in journal.Manifest.Entries)
+        {
+            var root = journal.Manifest.Roots.Single(x => x.Kind == entry.RootKind);
+            var identity = journal.Progress.Artifacts.Single(x => x.Artifact.VersionId == entry.Artifact.VersionId).StagedIdentity!;
+            var old = Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
+            var target = Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath);
+            if (Exists(old) || Exists(Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.TempRelativePath)))
+                throw new IOException("Completed relocation has a reappeared old or temporary entry.");
+            await VerifyAsync(target, identity, entry.Artifact, cancellationToken).ConfigureAwait(false);
+            await BarrierAsync(Path.GetDirectoryName(old)!, cancellationToken).ConfigureAwait(false);
+            await BarrierAsync(Path.GetDirectoryName(target)!, cancellationToken).ConfigureAwait(false);
+            await VerifyAsync(target, identity, entry.Artifact, cancellationToken).ConfigureAwait(false);
+        }
+        // 只观察，不用旧 journal 重新认领任何重现文件；不重建缺失祖先。
+        VerifyRoots(journal);
+        foreach (var entry in journal.Manifest.Entries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var root = journal.Manifest.Roots.Single(x => x.Kind == entry.RootKind);
+            if (Exists(Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath))
+                || Exists(Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.TempRelativePath)))
+                throw new IOException("Completed relocation absence changed during reconciliation.");
+            RequireIdentity(Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath), false,
+                journal.Progress.Artifacts.Single(x => x.Artifact.VersionId == entry.Artifact.VersionId).StagedIdentity!);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     private static void VerifyRoots(StorageRelocationJournal journal)

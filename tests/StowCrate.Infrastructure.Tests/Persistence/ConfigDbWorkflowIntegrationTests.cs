@@ -179,6 +179,15 @@ public sealed class ConfigDbWorkflowIntegrationTests
         Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(newRoot, path.Value)));
         await using var db = new ConfigDbContextFactory(database.Path).Create();
         Assert.Equal(2, await db.StorageRelocationRootReservations.CountAsync());
+        if (scenario == "normal")
+        {
+            var completed = (await reopened.LoadRelocationAsync(plan.Id, default))!;
+            await reopened.CompactRelocationAsync(transaction, completed.Revision, physical, default);
+            Assert.Null(await reopened.LoadRelocationAsync(plan.Id, default));
+            Assert.Equal(0, await db.StorageRelocationRootReservations.CountAsync());
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(newRoot, path.Value)));
+            Assert.Equivalent(state.Baseline, (await reopened.LoadAsync(plan.Id, unit.Id, default))!.Baseline);
+        }
     }
 
     private sealed class CleanupJournalFault : IMetadataCommitFaultInjector

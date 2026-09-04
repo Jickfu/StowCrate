@@ -8,6 +8,41 @@ namespace StowCrate.Infrastructure.Persistence.ConfigDb;
 
 public sealed partial class ConfigDbRepository
 {
+    public async Task CompactRelocationAsync(Guid transactionId, long expectedRevision,
+        IStorageRelocationCompletionProbe physical, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(physical);
+        await using var db = factory.Create();
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var id = DurableCodecs.Uuid(transactionId);
+            var row = await db.StorageRelocationIntents.SingleOrDefaultAsync(x => x.TransactionId == id, cancellationToken)
+                ?? throw new LocalStateConcurrencyException("Relocation journal does not exist.");
+            if (row.Revision != expectedRevision) throw new LocalStateConcurrencyException("Relocation revision changed.");
+            var journal = await ReadRelocationAsync(db, row, cancellationToken);
+            if (journal.Progress.Stage != StorageTransferStage.Completed)
+                throw new LocalStateConcurrencyException("Relocation compaction requires completed cleanup.");
+            await ValidateRelocationPlacementsAsync(db, journal.Manifest, cancellationToken);
+            await ValidateCommitRootsAsync(db, journal.Manifest, cancellationToken, committed: true);
+            if (await db.PublishIntents.AnyAsync(x => x.PlanId == row.PlanId, cancellationToken)
+                || await db.RetentionDeletionIntents.AnyAsync(x => x.PlanId == row.PlanId, cancellationToken)
+                || await db.MaintenanceStates.AnyAsync(x => x.PlanId == row.PlanId && x.Status != "COMPLETED" && x.Kind != "SCHEDULE_RECONCILIATION", cancellationToken))
+                throw new LocalStateConcurrencyException("Relocation compaction conflicts with pending maintenance.");
+            await physical.VerifyCompletedAsync(journal, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            // reservation 与日志必须同事务移除；FK restrict 要求先删除 dependent rows。
+            db.StorageRelocationRootReservations.RemoveRange(await db.StorageRelocationRootReservations.Where(x => x.TransactionId == id).ToListAsync(cancellationToken));
+            await db.SaveChangesAsync(cancellationToken);
+            faultInjector.ThrowIfRequested(MetadataCommitFaultPoint.AfterRelocationProgress);
+            db.StorageRelocationIntents.Remove(row);
+            await db.SaveChangesAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            await tx.CommitAsync(CancellationToken.None);
+        }
+        catch (Exception exception) { throw TranslateRelocation(exception); }
+    }
+
     public Task<StorageRelocationJournal> CleanupRelocationEntryAsync(Guid transactionId, long expectedRevision,
         ArchiveVersionId versionId, IStorageRelocationOldCopyStore physical, CancellationToken cancellationToken)
         => CleanupRelocationAsync(transactionId, expectedRevision, versionId, physical, cancellationToken);

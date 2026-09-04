@@ -376,6 +376,42 @@ public sealed class StorageRelocationPhysicalTests
         }
     }
 
+    [Theory]
+    [InlineData("none")]
+    [InlineData("old")]
+    [InlineData("temp")]
+    [InlineData("target")]
+    [InlineData("root")]
+    [InlineData("barrier")]
+    [InlineData("cancel")]
+    public async Task CompletedProbeNeverDeletesReappearedOrUnknownFiles(string drift)
+    {
+        using var fixture = new Fixture();
+        var physical = new StorageRelocationPhysicalStore(new Barrier());
+        var journal = await CommittedPhysicalFixtureAsync(fixture);
+        await physical.RemoveOldCopyAsync(journal, fixture.Version, default);
+        journal = journal with { Progress = journal.Progress.RecordOldCopyAbsent(fixture.Version).Complete() };
+        var unknown = Path.Combine(fixture.NewRoot, "unknown.txt");
+        await File.WriteAllTextAsync(unknown, "keep");
+        if (drift == "old") await File.WriteAllBytesAsync(fixture.Source, fixture.Bytes);
+        if (drift == "temp") await File.WriteAllBytesAsync(fixture.Temp, fixture.Bytes);
+        if (drift == "target") await File.WriteAllTextAsync(fixture.Target, "changed");
+        if (drift == "root")
+        {
+            Directory.Move(fixture.NewRoot, fixture.NewRoot + "-moved");
+            Directory.CreateDirectory(fixture.NewRoot);
+            unknown = Path.Combine(fixture.NewRoot + "-moved", "unknown.txt");
+        }
+        using var cancellation = new CancellationTokenSource();
+        if (drift == "cancel") cancellation.Cancel();
+        if (drift == "barrier") physical = new(new Barrier(false));
+        if (drift == "none") await physical.VerifyCompletedAsync(journal, default);
+        else await Assert.ThrowsAnyAsync<Exception>(() => physical.VerifyCompletedAsync(journal, cancellation.Token));
+        Assert.Equal("keep", await File.ReadAllTextAsync(unknown));
+        if (drift == "old") Assert.True(File.Exists(fixture.Source));
+        if (drift == "temp") Assert.True(File.Exists(fixture.Temp));
+    }
+
     private sealed class FailSecondBarrier : IArchivePublishMetadataDurabilityBarrier
     {
         private int calls;

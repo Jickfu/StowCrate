@@ -505,6 +505,57 @@ public sealed class StorageRelocationJournalTests
         Assert.Equal("/new", (await fixture.Repository.LoadAsync(Plan, default))!.CurrentRoot!.CanonicalPath);
     }
 
+    [Theory]
+    [InlineData("none")]
+    [InlineData("stage")]
+    [InlineData("revision")]
+    [InlineData("physical")]
+    [InlineData("database")]
+    [InlineData("cancel")]
+    public async Task CompactionAtomicallyReleasesOnlyVerifiedCompletedJournal(string failure)
+    {
+        await using var fixture = await Fixture.Create();
+        var journal = await Seal(fixture, false);
+        journal = await fixture.Repository.CommitRelocationAsync(journal.Manifest.TransactionId, journal.Revision, new CommitProbe(), default);
+        var absence = new AbsenceProbe();
+        if (failure != "stage")
+        {
+            journal = await fixture.Repository.CleanupRelocationEntryAsync(journal.Manifest.TransactionId, journal.Revision, fixture.Version, absence, default);
+            journal = await fixture.Repository.CompleteRelocationAsync(journal.Manifest.TransactionId, journal.Revision, absence, default);
+        }
+        var before = (await fixture.Repository.LoadAsync(Plan, Unit, default))!;
+        using var cancellation = new CancellationTokenSource();
+        var probe = new CompletionProbe(() =>
+        {
+            if (failure == "physical") throw new IOException("injected");
+            if (failure == "cancel") cancellation.Cancel();
+        });
+        var repository = failure == "database" ? new ConfigDbRepository(new(fixture.Path), new FailAt(MetadataCommitFaultPoint.AfterRelocationProgress)) : fixture.Repository;
+        Task Compact() => repository.CompactRelocationAsync(journal.Manifest.TransactionId,
+            journal.Revision + (failure == "revision" ? 1 : 0), probe, cancellation.Token);
+        if (failure == "none") await Compact();
+        else await Assert.ThrowsAnyAsync<Exception>(Compact);
+        var reopened = await ConfigDbOpenCoordinator.OpenAsync(fixture.Path);
+        await using var db = new ConfigDbContextFactory(fixture.Path).Create();
+        Assert.Equal(failure == "none" ? 0 : 2, await db.StorageRelocationRootReservations.CountAsync());
+        if (failure == "none")
+        {
+            Assert.Null(await reopened.LoadRelocationAsync(Plan, default));
+            await reopened.SetActiveAsync(Plan, false, default);
+        }
+        else Assert.Equal(journal.Revision, (await reopened.LoadRelocationAsync(Plan, default))!.Revision);
+        if (failure is "stage" or "revision") Assert.False(probe.Called);
+        Assert.Equal("/new", (await reopened.LoadAsync(Plan, default))!.CurrentRoot!.CanonicalPath);
+        Assert.Equivalent(before, await reopened.LoadAsync(Plan, Unit, default));
+    }
+
+    private sealed class CompletionProbe(Action action) : IStorageRelocationCompletionProbe
+    {
+        public bool Called { get; private set; }
+        public Task VerifyCompletedAsync(StorageRelocationJournal journal, CancellationToken token)
+        { token.ThrowIfCancellationRequested(); Called = true; action(); return Task.CompletedTask; }
+    }
+
     private sealed class AbsenceProbe(Func<StorageRelocationOldCopyAbsenceProof, StorageRelocationOldCopyAbsenceProof>? transform = null) : IStorageRelocationOldCopyStore
     {
         public int Calls { get; private set; }

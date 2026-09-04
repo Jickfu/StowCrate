@@ -1,5 +1,7 @@
 # Milestone 5 — Physical Current / History Publish & Durable Execution
 
+M5.3 最新增量：独立 completion probe 与原子 compaction 已实现并测试，完成日志不再是无法释放的永久互锁。只有现场重验和 repository CAS 同时成功才移除迁移日志/reservation，不删除文件；仍未接入用户入口或启动自动释放。pre-commit 恢复、全量 preflight、Output Reorganization 及完整用户流程继续待办，M5.3 不标记完成。
+
 ## M5.1 — Physical Publish Contract + PublishIntent Execution（COMPLETE）
 
 本阶段消费 M4 `VerifiedArchiveArtifact`，在不重新扫描、生成 Candidate 或运行 Archiver 的前提下完成 destination-local staging、History capture、atomic Current publish、PublishIntent journal 与 M3 单事务 metadata commit。
@@ -58,7 +60,7 @@ Orphan reconciliation 不凭文件名、deterministic path 或裸 `ArchiveVersio
 
 入口加固：普通 Local Binding 保存必须在事务内拒绝改变已有 placement 或恢复日志依赖的输出根，包含停用/省略；拒绝时不得部分更新 Source/External binding。无 placement/journal 的初始配置仍可编辑；保留原输出根时不阻止独立 Source/External 修改。该加固不表示物理 relocation 已实现。
 
-后续仍需实现 pre-commit 显式恢复编排、reservation reconciliation/compaction、全量 preflight 与 Output Reorganization；不得把 M3 的 metadata-only reorganization port 当作物理迁移用例，也不得标记本阶段 COMPLETE。
+后续仍需实现 pre-commit 显式恢复编排、compaction 用户入口、全量 preflight 与 Output Reorganization；不得把 M3 的 metadata-only reorganization port 当作物理迁移用例，也不得标记本阶段 COMPLETE。
 
 已冻结 Plan-scoped transfer protocol，见 [`STORAGE-MAINTENANCE-v1.md`](../plan/STORAGE-MAINTENANCE-v1.md)：copy → staged identity durable record → no-overwrite target publish → 全部目标 durable → 单事务 metadata switch → exact old-copy cleanup。Application 已有 immutable progress kernel 与恢复状态校验测试；该内核不执行 I/O，不独立授予删除权限。
 
@@ -72,4 +74,4 @@ config.db v4 已增加 root relocation 的 pre-commit manifest/progress journal 
 
 提交后 exact old-copy 物理清理适配器已实现：匹配新副本与旧 identity/bytes 后仅删除 manifest 指定文件，完成目录 barrier/absence re-proof，未知文件与目录保留。schema v6 已接入逐项 cleanup 持久化和完成前重新证明 absence；真实 SQLite 故障后可重开数据库补记，删除后取消不打断成功 proof 的持久化，旧路径重新出现则不删除且拒绝完成。COMPLETED 不释放 reservation。
 
-Application 启动恢复已接入全量 journal 枚举和已提交清理 workflow，未注入适配器时仍显式报告 CleanupPending，不静默忽略日志。Prepared/TargetsDurable 不自动复制/提交；Completed 不重复删除，保留 reservation 并跳过同 Plan 的旧恢复路径。真实文件 + SQLite 验证 inactive journal、缺少适配器、删后日志落后、旧对象漂移、日志损坏和 publish 恢复冲突。App/CLI 装配、pre-commit 恢复及 compaction 继续待办。
+Application 启动恢复已接入全量 journal 枚举和已提交清理 workflow，未注入适配器时仍显式报告 CleanupPending，不静默忽略日志。Prepared/TargetsDurable 不自动复制/提交；Completed 不重复删除，保留 reservation 并跳过同 Plan 的旧恢复路径。真实文件 + SQLite 验证 inactive journal、缺少适配器、删后日志落后、旧对象漂移、日志损坏和 publish 恢复冲突。App/CLI 装配及 pre-commit 恢复继续待办，独立 compaction 已提供事务接口。
