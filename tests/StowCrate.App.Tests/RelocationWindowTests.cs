@@ -304,6 +304,10 @@ public sealed class RelocationWindowTests
 
     private sealed class Workspace : IRelocationWorkspace
     {
+        public Task<StowCrate.Application.LocalState.DirectoryBindingSnapshot> LoadBindingsAsync(PlanId id, CancellationToken cancellationToken)
+            => Task.FromException<StowCrate.Application.LocalState.DirectoryBindingSnapshot>(new InvalidOperationException("此测试不提供目录绑定。"));
+        public Task<StowCrate.Application.LocalState.DirectoryBindingSnapshot> SaveBindingsAsync(StowCrate.Application.LocalState.DirectoryBindingEdit edit, CancellationToken cancellationToken)
+            => Task.FromException<StowCrate.Application.LocalState.DirectoryBindingSnapshot>(new InvalidOperationException("此测试不保存目录绑定。"));
         public Task<RelocationPlanChoice> CreatePlanAsync(StowCrate.Application.BackupPlans.Documents.NewManagedPlanRequest request, CancellationToken cancellationToken)
             => Task.FromResult(new RelocationPlanChoice(new(Guid.NewGuid()), request.Name, "未绑定", "未绑定"));
         public async Task<DefaultWorkspaceResult> OpenDefaultAsync(CancellationToken token)

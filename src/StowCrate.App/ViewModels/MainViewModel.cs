@@ -7,15 +7,28 @@ using StowCrate.Application.BackupPlans.Documents;
 
 namespace StowCrate.App.ViewModels;
 
-public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBase
+public partial class MainViewModel : ViewModelBase
 {
+    private readonly IRelocationWorkspace workspace;
+    public DirectoryBindingsViewModel Bindings { get; }
+    public MainViewModel(IRelocationWorkspace workspace)
+    {
+        this.workspace = workspace;
+        Bindings = new(workspace);
+        Bindings.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(DirectoryBindingsViewModel.IsBusy)) OnIsBusyChanged(IsBusy);
+            if (args.PropertyName == nameof(DirectoryBindingsViewModel.Loaded))
+            { OnPropertyChanged(nameof(CurrentRootDisplay)); OnPropertyChanged(nameof(HistoryRootDisplay)); }
+        };
+    }
     private CancellationTokenSource? operation;
     public ObservableCollection<RelocationPlanChoice> Plans { get; } = [];
     [ObservableProperty] public partial bool WorkspaceReady { get; set; }
     [ObservableProperty] public partial string PlanName { get; set; } = "";
     [ObservableProperty] public partial string SourceName { get; set; } = "";
     [ObservableProperty] public partial string SourceOutputPath { get; set; } = "";
-    public bool CanCreatePlan => WorkspaceReady && !IsBusy && !string.IsNullOrWhiteSpace(PlanName) && !string.IsNullOrWhiteSpace(SourceName);
+    public bool CanCreatePlan => WorkspaceReady && CanEdit && !string.IsNullOrWhiteSpace(PlanName) && !string.IsNullOrWhiteSpace(SourceName);
     partial void OnWorkspaceReadyChanged(bool value) => CreatePlanCommand.NotifyCanExecuteChanged();
     partial void OnPlanNameChanged(string value) => CreatePlanCommand.NotifyCanExecuteChanged();
     partial void OnSourceNameChanged(string value) => CreatePlanCommand.NotifyCanExecuteChanged();
@@ -30,15 +43,16 @@ public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBa
     [ObservableProperty] public partial bool RootsMayBeStale { get; set; }
     [ObservableProperty] public partial string Status { get; set; } = "点击“开始使用”打开个人配置，无需准备数据库。";
     [ObservableProperty] public partial string Details { get; set; } = "打开配置后可新建方案；已有备份的迁移工具位于下方。";
-    public bool CanEdit => !IsBusy;
-    public bool CanPreview => !IsBusy && SelectedPlan is not null;
-    public bool CanResume => !IsBusy && ConfirmResume && Journal is { Progress.Stage: not StorageTransferStage.Completed }
+    public bool CanEdit => !IsBusy && !Bindings.IsBusy;
+    public bool CanPreview => CanEdit && SelectedPlan is not null;
+    public bool CanResume => CanEdit && ConfirmResume && Journal is { Progress.Stage: not StorageTransferStage.Completed }
         && SelectedPlan?.Id == Journal.Manifest.PlanId;
-    public string CurrentRootDisplay => RootsMayBeStale ? "绑定可能已更新，请重新打开配置库刷新。" : SelectedPlan?.CurrentRoot ?? "尚未选择方案";
-    public string HistoryRootDisplay => RootsMayBeStale ? "绑定可能已更新，请重新打开配置库刷新。" : SelectedPlan?.HistoryRoot ?? "尚未选择方案";
+    public string CurrentRootDisplay => RootsMayBeStale ? "绑定可能已更新，请重新打开配置库刷新。" : Bindings.Loaded?.Bindings?.CurrentRoot?.CanonicalPath ?? SelectedPlan?.CurrentRoot ?? "尚未选择方案";
+    public string HistoryRootDisplay => RootsMayBeStale ? "绑定可能已更新，请重新打开配置库刷新。" : Bindings.Loaded?.Bindings?.HistoryRoot?.CanonicalPath ?? SelectedPlan?.HistoryRoot ?? "尚未选择方案";
     partial void OnRootsMayBeStaleChanged(bool value) { OnPropertyChanged(nameof(CurrentRootDisplay)); OnPropertyChanged(nameof(HistoryRootDisplay)); }
     partial void OnIsBusyChanged(bool value)
     {
+        Bindings.HostBusy = value;
         OnPropertyChanged(nameof(CanEdit)); OnPropertyChanged(nameof(CanPreview));
         OpenCommand.NotifyCanExecuteChanged(); PreviewCommand.NotifyCanExecuteChanged(); CancelCommand.NotifyCanExecuteChanged();
         StartCommand.NotifyCanExecuteChanged();
@@ -47,6 +61,7 @@ public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBa
     }
     partial void OnSelectedPlanChanged(RelocationPlanChoice? value)
     {
+        Bindings.SelectPlan(value?.Id);
         NewCurrentRoot = ""; NewHistoryRoot = ""; InvalidatePreview();
         RootsMayBeStale = false;
         Journal = null; JournalDetails = "尚未读取迁移事务。";
@@ -77,6 +92,7 @@ public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBa
             WorkspaceReady = true;
             foreach (var plan in result.Plans) Plans.Add(plan);
             SelectedPlan = Plans.FirstOrDefault();
+            await Bindings.PendingLoad;
             Status = Plans.Count == 0 ? "个人配置已就绪，尚无备份方案" : $"已打开个人配置 · {Plans.Count} 个方案";
             Details = "现在可以填写方案名称和备份源名称。保存方案后还需绑定目录并配置归档箱。";
         });
@@ -94,6 +110,7 @@ public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBa
             WorkspaceReady = true;
             foreach (var plan in plans) Plans.Add(plan);
             SelectedPlan = Plans.FirstOrDefault();
+            await Bindings.PendingLoad;
             Status = plans.Length == 0 ? "配置库中没有启用的方案" : $"已加载 {plans.Length} 个方案";
             Details = "填写迁移目标后检查。此页面不会自动复制、恢复或清理归档。";
         });
@@ -108,6 +125,7 @@ public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBa
             var plan = await Task.Run(() => workspace.CreatePlanAsync(request, token), token);
             // 保存成功后即使收到迟到的取消，也必须展示已持久化的方案。
             Plans.Add(plan); SelectedPlan = plan;
+            await Bindings.PendingLoad;
             PlanName = ""; SourceName = ""; SourceOutputPath = "";
             Status = "方案已保存 · 尚未完成备份配置";
             Details = "方案保存在当前配置库中。尚未绑定源和输出目录、尚无归档箱；目录树配置入口正在接入。未执行备份。";

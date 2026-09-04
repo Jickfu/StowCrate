@@ -40,7 +40,7 @@
             </Border>
             <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" CornerRadius="12" Padding="22">
                 <StackPanel Spacing="12" IsEnabled="{Binding CanEdit}">
-                    <TextBlock Text="2  选择方案与目标" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="选择备份方案" FontSize="18" FontWeight="SemiBold" />
                     <ComboBox ItemsSource="{Binding Plans}" SelectedItem="{Binding SelectedPlan}" HorizontalAlignment="Stretch" PlaceholderText="打开配置库后选择方案" AutomationProperties.Name="备份方案">
                         <ComboBox.ItemTemplate>
                             <DataTemplate x:DataType="services:RelocationPlanChoice">
@@ -48,6 +48,46 @@
                             </DataTemplate>
                         </ComboBox.ItemTemplate>
                     </ComboBox>
+                </StackPanel>
+            </Border>
+            <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" CornerRadius="12" Padding="22">
+                <StackPanel Spacing="12" DataContext="{Binding Bindings}" x:DataType="vm:DirectoryBindingsViewModel">
+                    <TextBlock Text="本机目录绑定" FontSize="18" FontWeight="SemiBold" />
+                    <ItemsControl ItemsSource="{Binding Sources}" IsEnabled="{Binding CanEdit}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:SourceDirectoryRow">
+                                <StackPanel Spacing="6" Margin="0,0,0,12">
+                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                                        <TextBox Text="{Binding Path}" PlaceholderText="备份源完整目录路径" />
+                                        <Button Grid.Column="1" Content="选择源目录…" Click="ChooseBindingDirectory" Tag="source" />
+                                    </Grid>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="Current 输出根（必填）" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10" IsEnabled="{Binding CanEdit}">
+                        <TextBox Text="{Binding CurrentRoot}" PlaceholderText="已存在的输出目录" />
+                        <Button Grid.Column="1" Content="选择 Current…" Click="ChooseBindingDirectory" Tag="current" />
+                    </Grid>
+                    <TextBlock Text="History 根：启用历史的归档箱需要此目录；当前不需要时保留已有绑定。" TextWrapping="Wrap" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10" IsEnabled="{Binding CanEdit}">
+                        <TextBox Text="{Binding HistoryRoot}" IsEnabled="{Binding HistoryRequired}" PlaceholderText="当前未要求历史目录" />
+                        <Button Grid.Column="1" Content="选择 History…" Click="ChooseBindingDirectory" Tag="history" IsEnabled="{Binding HistoryRequired}" />
+                    </Grid>
+                    <TextBlock Text="要求目标根已存在，缺失时提示用户创建" FontSize="12" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button Content="保存目录绑定" Command="{Binding SaveCommand}" />
+                        <Button Content="重新读取目录" Command="{Binding ReloadCommand}" />
+                        <Button Content="取消目录操作" Command="{Binding CancelCommand}" IsVisible="{Binding IsBusy}" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding Status}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+            <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" CornerRadius="12" Padding="22">
+                <StackPanel Spacing="12" IsEnabled="{Binding CanEdit}">
+                    <TextBlock Text="存储迁移维护" FontSize="18" FontWeight="SemiBold" />
                     <TextBlock Text="当前 Current 根" FontWeight="SemiBold" />
                     <SelectableTextBlock Text="{Binding CurrentRootDisplay}" TextWrapping="Wrap" />
                     <TextBox Text="{Binding NewCurrentRoot}" PlaceholderText="新的 Current 根；留空表示不迁移" AutomationProperties.Name="新的 Current 根" />

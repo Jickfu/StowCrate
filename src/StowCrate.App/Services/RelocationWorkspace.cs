@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using StowCrate.Application.BackupPlans.Documents;
 using StowCrate.Application.StorageMaintenance;
+using StowCrate.Application.LocalState;
 using StowCrate.Core.BackupPlans;
 using StowCrate.Infrastructure.Configuration.BackupPlans;
 using StowCrate.Infrastructure.Filesystem;
@@ -12,6 +13,8 @@ public sealed record RelocationPlanChoice(PlanId Id, string Name, string Current
 public sealed record DefaultWorkspaceResult(string DatabasePath, ImmutableArray<RelocationPlanChoice> Plans);
 public interface IRelocationWorkspace
 {
+    Task<DirectoryBindingSnapshot> LoadBindingsAsync(PlanId id, CancellationToken cancellationToken);
+    Task<DirectoryBindingSnapshot> SaveBindingsAsync(DirectoryBindingEdit edit, CancellationToken cancellationToken);
     Task<RelocationPlanChoice> CreatePlanAsync(NewManagedPlanRequest request, CancellationToken cancellationToken);
     Task<DefaultWorkspaceResult> OpenDefaultAsync(CancellationToken cancellationToken);
     Task<ImmutableArray<RelocationPlanChoice>> OpenAsync(string databasePath, CancellationToken cancellationToken);
@@ -27,6 +30,11 @@ public sealed class RelocationWorkspace(string? applicationDataDirectory = null)
     private IStorageRelocationJournalStore? journals;
     private readonly LocalPhysicalPathResolver paths = new();
     private AuthoritativePlanWorkflow? authority;
+    private DirectoryBindingEditorWorkflow? bindingEditor;
+    public Task<DirectoryBindingSnapshot> LoadBindingsAsync(PlanId id, CancellationToken cancellationToken)
+        => (bindingEditor ?? throw new InvalidOperationException("请先打开配置库。")).LoadAsync(id, cancellationToken);
+    public Task<DirectoryBindingSnapshot> SaveBindingsAsync(DirectoryBindingEdit edit, CancellationToken cancellationToken)
+        => (bindingEditor ?? throw new InvalidOperationException("请先打开配置库。")).SaveAsync(edit, cancellationToken);
     public async Task<RelocationPlanChoice> CreatePlanAsync(NewManagedPlanRequest request, CancellationToken cancellationToken)
     {
         var workflow = authority ?? throw new InvalidOperationException("请先打开配置库。");
@@ -35,7 +43,7 @@ public sealed class RelocationWorkspace(string? applicationDataDirectory = null)
     }
     public async Task<DefaultWorkspaceResult> OpenDefaultAsync(CancellationToken cancellationToken)
     {
-        inspection = null; journals = null; authority = null;
+        inspection = null; journals = null; authority = null; bindingEditor = null;
         cancellationToken.ThrowIfCancellationRequested();
         var root = applicationDataDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         // 无法取得用户数据目录时不能退回工作目录或安装目录，避免建立错误的配置事实源。
@@ -54,6 +62,7 @@ public sealed class RelocationWorkspace(string? applicationDataDirectory = null)
         inspection = null;
         journals = null;
         authority = null;
+        bindingEditor = null;
         // 本入口只打开已有配置库，拼错路径不能意外创建一个空库。
         if (!File.Exists(databasePath)) throw new FileNotFoundException("配置库不存在，请选择已有的 config.db。");
         var repository = await ConfigDbOpenCoordinator.OpenAsync(databasePath, null, null, cancellationToken).ConfigureAwait(false);
@@ -83,6 +92,9 @@ public sealed class RelocationWorkspace(string? applicationDataDirectory = null)
         inspection = new(configuration, repository, physical, physical, new StorageRelocationTargetComparisonProbe(), physical);
         journals = repository;
         authority = planWorkflow;
+        var identity = await repository.LoadAsync(cancellationToken).ConfigureAwait(false)
+            ?? throw new LocalStateCorruptionException("配置库身份缺失。");
+        bindingEditor = new(planWorkflow, repository, new(identity, repository, paths), new ExistingBindingDirectoryProbe());
         return choices.ToImmutable();
     }
     public Task<StorageRelocationJournal?> LoadJournalAsync(PlanId planId, CancellationToken cancellationToken)
