@@ -20,7 +20,7 @@ public readonly record struct DeviceId
 
 public sealed record ResolvedPhysicalPath
 {
-    public ResolvedPhysicalPath(string canonicalPath, string comparisonKey)
+    public ResolvedPhysicalPath(string canonicalPath, string comparisonKey, string? lexicalComparisonKey = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(canonicalPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(comparisonKey);
@@ -33,17 +33,26 @@ public sealed record ResolvedPhysicalPath
 
         CanonicalPath = canonicalPath;
         ComparisonKey = comparisonKey;
+        if (lexicalComparisonKey is not null && (string.IsNullOrWhiteSpace(lexicalComparisonKey)
+            || lexicalComparisonKey.Contains('\\') || (lexicalComparisonKey.Length > 1 && lexicalComparisonKey.EndsWith('/'))))
+            throw new ArgumentException("Lexical comparison key must use normalized '/' separators.", nameof(lexicalComparisonKey));
+        LexicalComparisonKey = lexicalComparisonKey ?? comparisonKey;
     }
 
     public string CanonicalPath { get; }
     public string ComparisonKey { get; }
+    public string LexicalComparisonKey { get; }
 
     public bool Overlaps(ResolvedPhysicalPath other)
     {
         ArgumentNullException.ThrowIfNull(other);
-        return IsSameOrDescendant(ComparisonKey, other.ComparisonKey)
-            || IsSameOrDescendant(other.ComparisonKey, ComparisonKey);
+        return Overlap(ComparisonKey, other.ComparisonKey)
+            || Overlap(LexicalComparisonKey, other.LexicalComparisonKey)
+            || Overlap(ComparisonKey, other.LexicalComparisonKey)
+            || Overlap(LexicalComparisonKey, other.ComparisonKey);
     }
+
+    private static bool Overlap(string left, string right) => IsSameOrDescendant(left, right) || IsSameOrDescendant(right, left);
 
     private static bool IsSameOrDescendant(string value, string ancestor) =>
         value.Equals(ancestor, StringComparison.Ordinal)

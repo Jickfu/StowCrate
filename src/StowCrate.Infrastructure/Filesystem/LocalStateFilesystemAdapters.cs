@@ -11,10 +11,46 @@ public sealed class LocalPhysicalPathResolver : ILocalPhysicalPathResolver
     {
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        var canonical = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        // 绑定对象本身不能通过解析消除链接身份，否则 Source/External 的 no-follow 检查会被绕过。
+        try
+        {
+            if ((File.GetAttributes(fullPath) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("绑定对象本身是链接或重解析点，请选择真实目录或文件。");
+        }
+        catch (FileNotFoundException) { }
+        catch (DirectoryNotFoundException) { }
+        var canonical = ResolvePhysicalPath(fullPath, 0, cancellationToken);
         var key = canonical.Replace('\\', '/').Normalize();
+        var lexicalKey = fullPath.Replace('\\', '/').Normalize();
         if (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()) key = key.ToUpperInvariant();
-        return Task.FromResult(new ResolvedPhysicalPath(canonical, key));
+        if (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()) lexicalKey = lexicalKey.ToUpperInvariant();
+        return Task.FromResult(new ResolvedPhysicalPath(canonical, key, lexicalKey));
+    }
+
+    private static string ResolvePhysicalPath(string fullPath, int depth, CancellationToken cancellationToken)
+    {
+        // 按分量解析，避免父目录别名使源与输出看似分离；未创建的尾部仍保留给 readiness 判断。
+        if (depth > 40) throw new IOException("目录链接层级过深或存在循环，无法安全解析本机路径。");
+        var root = Path.GetPathRoot(fullPath)!;
+        var current = root;
+        foreach (var part in fullPath[root.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            current = Path.Combine(current, part);
+            FileAttributes attributes;
+            try { attributes = File.GetAttributes(current); }
+            catch (FileNotFoundException) { continue; }
+            catch (DirectoryNotFoundException) { continue; }
+            if ((attributes & FileAttributes.ReparsePoint) == 0) continue;
+            FileSystemInfo entry = (attributes & FileAttributes.Directory) != 0 ? new DirectoryInfo(current) : new FileInfo(current);
+            var target = entry.ResolveLinkTarget(false)
+                ?? throw new IOException("无法解析本机路径中的链接或重解析点。");
+            current = ResolvePhysicalPath(Path.GetFullPath(target.FullName), depth + 1, cancellationToken);
+            if (!File.Exists(current) && !Directory.Exists(current))
+                throw new IOException("本机路径中的链接目标不存在，无法安全绑定。");
+        }
+        return Path.TrimEndingDirectorySeparator(current);
     }
 }
 
