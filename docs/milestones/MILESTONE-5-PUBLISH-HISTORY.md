@@ -89,3 +89,5 @@ Application 启动恢复已接入全量 journal 枚举和已提交清理 workflo
 独立 compaction 已增加 Application 显式用例，按 Plan/transaction/revision 选择，只调用已有 COMPLETED 仓储事务；响应丢失不重放，记录缺失不误报本次成功。真实 SQLite 回滚、旧/temp 重现、缺少适配器、取消与过期 revision 的保留行为已纳入测试；App/CLI 装配及完整 Begin 仍待完成。
 
 Manifest v2 已移除旧 execution 摘要字段，新建日志强制原子冻结独立 configuration checkpoint；v1 仍按原 canonical bytes 读取和编码，不做升级或摘要重解释。transfer ProtocolVersion 仍为 1、config.db schema 仍为 6，manifest 编码版本独立分派。真实复制/恢复/commit/cleanup/compaction 组合测试已改用 v2；完整 Begin 用户入口及物理 preflight 装配仍待完成。
+
+目标目录持久化预检端口及物理适配器已完成：覆盖空根、现存父链、屏障不可用、目录新增/替换、占位与取消，不创建探测文件或父目录。该增量不声称完整 Begin 或未来写权限检查已完成；启动编排仍待接入，M5.3 保持 IMPLEMENTING。
