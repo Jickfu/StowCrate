@@ -90,7 +90,7 @@ public sealed class ConfigDbWorkflowIntegrationTests
         var state = (await database.Repository.LoadAsync(plan.Id, unit.Id, default))!;
         var version = state.Current!.ArchiveVersionId; var transaction = Guid.NewGuid(); var path = new RelativeStoragePath("unit.7z");
         var configuration = await new StorageRelocationConfigurationReader(new(database.Repository, new BackupPlanDocumentSource())).ReadAsync(plan.Id, default);
-        var manifest = new StorageRelocationManifest(transaction, plan.Id, device, configuration.ConfigurationFingerprint.Digest,
+        var manifest = new StorageRelocationManifest(transaction, plan.Id, device,
             [new(StorageRootKind.Current, new(oldRoot, Key(oldRoot)), new(newRoot, Key(newRoot)),
                 StorageRelocationPhysicalStore.InspectIdentity(oldRoot, true), StorageRelocationPhysicalStore.InspectIdentity(newRoot, true))],
             [new(unit.Id, StorageRootKind.Current, new(version, Sha256Digest.Hash(bytes), bytes.Length), path,

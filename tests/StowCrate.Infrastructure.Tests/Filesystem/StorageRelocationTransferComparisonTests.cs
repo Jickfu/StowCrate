@@ -16,7 +16,7 @@ public sealed partial class StorageRelocationPhysicalTests
         var second = first with { Artifact = first.Artifact with { VersionId = version }, RelativePath = relative,
             TempRelativePath = StorageRelocationTempLayout.Create(manifest.TransactionId, version, relative) };
         var whole = new StorageRelocationManifest(manifest.TransactionId, manifest.PlanId, manifest.DeviceId,
-            manifest.ExecutionSemanticDigest, manifest.Roots, [first, second]);
+            manifest.LegacyExecutionSemanticDigest!.Value, manifest.Roots, [first, second]);
         var journal = new StorageRelocationJournal(whole, StorageTransferProgress.Prepare(whole.TransactionId, whole.PlanId, whole.Entries.Select(x => x.Artifact)), 1);
         var other = Directory.CreateDirectory(Path.Combine(fixture.NewRoot, "other")).FullName;
         var comparison = new StorageRelocationTargetComparisonProbe(path => path == other

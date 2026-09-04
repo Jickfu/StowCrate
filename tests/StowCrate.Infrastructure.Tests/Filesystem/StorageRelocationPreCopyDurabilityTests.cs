@@ -28,7 +28,7 @@ public sealed partial class StorageRelocationPhysicalTests
             OldIdentity = StorageRelocationPhysicalStore.InspectIdentity(source, false)
         };
         var manifest = new StorageRelocationManifest(original.TransactionId, original.PlanId, original.DeviceId,
-            original.ExecutionSemanticDigest, original.Roots, [entry]);
+            original.LegacyExecutionSemanticDigest!.Value, original.Roots, [entry]);
         var journal = new StorageRelocationJournal(manifest, StorageTransferProgress.Prepare(manifest.TransactionId, manifest.PlanId, [entry.Artifact]), 1);
         var temp = Path.Combine(fixture.NewRoot, entry.TempRelativePath.Value);
         var target = Path.Combine(fixture.NewRoot, relative.Value);

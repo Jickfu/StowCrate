@@ -61,7 +61,7 @@ public sealed partial class StorageRelocationPhysicalTests
             new(version, Sha256Digest.Hash(fixture.Bytes), fixture.Bytes.Length), relative, temp,
             StorageRelocationPhysicalStore.InspectIdentity(source, false));
         var manifest = new StorageRelocationManifest(original.TransactionId, original.PlanId, original.DeviceId,
-            original.ExecutionSemanticDigest, original.Roots, [original.Entries[0], second]);
+            original.LegacyExecutionSemanticDigest!.Value, original.Roots, [original.Entries[0], second]);
         var journal = new StorageRelocationJournal(manifest,
             StorageTransferProgress.Prepare(manifest.TransactionId, manifest.PlanId, manifest.Entries.Select(x => x.Artifact)), 1);
         var occupied = Path.Combine(fixture.NewRoot, temporary ? temp.Value : relative.Value);
@@ -119,7 +119,7 @@ public sealed partial class StorageRelocationPhysicalTests
             new(version, Sha256Digest.Hash(fixture.Bytes), fixture.Bytes.Length), relative,
             StorageRelocationTempLayout.Create(original.TransactionId, version, relative), StorageRelocationPhysicalStore.InspectIdentity(source, false));
         var manifest = new StorageRelocationManifest(original.TransactionId, original.PlanId, original.DeviceId,
-            original.ExecutionSemanticDigest, original.Roots, [original.Entries[0], second]);
+            original.LegacyExecutionSemanticDigest!.Value, original.Roots, [original.Entries[0], second]);
         var progress = StorageTransferProgress.Prepare(manifest.TransactionId, manifest.PlanId, manifest.Entries.Select(x => x.Artifact)).RecordStaged(staged);
         var next = await physical.StageAsync(new(manifest, progress, 2), version, default);
         Assert.Equal(version, next.VersionId);
@@ -546,7 +546,7 @@ public sealed partial class StorageRelocationPhysicalTests
         using var fixture = new Fixture();
         var original = fixture.Journal.Manifest;
         var manifest = new StorageRelocationManifest(original.TransactionId, original.PlanId, original.DeviceId,
-            original.ExecutionSemanticDigest, original.Roots, []);
+            original.LegacyExecutionSemanticDigest!.Value, original.Roots, []);
         var journal = new StorageRelocationJournal(manifest, StorageTransferProgress.Prepare(manifest.TransactionId, manifest.PlanId, []).SealTargets(), 2);
         var store = RelocationTestPhysicalStore.Create(new Barrier());
         await store.VerifyForCommitAsync(journal, default);
@@ -569,7 +569,7 @@ public sealed partial class StorageRelocationPhysicalTests
             new(version, Sha256Digest.Hash(fixture.Bytes), fixture.Bytes.Length), relative,
             StorageRelocationTempLayout.Create(original.TransactionId, version, relative), StorageRelocationPhysicalStore.InspectIdentity(source, false));
         var manifest = new StorageRelocationManifest(original.TransactionId, original.PlanId, original.DeviceId,
-            original.ExecutionSemanticDigest, original.Roots, original.Entries.Add(second));
+            original.LegacyExecutionSemanticDigest!.Value, original.Roots, original.Entries.Add(second));
         var journal = await PublishAllAsync(new(manifest, StorageTransferProgress.Prepare(manifest.TransactionId, manifest.PlanId, manifest.Entries.Select(x => x.Artifact)), 1));
         var store = RelocationTestPhysicalStore.Create(new Barrier());
         await store.VerifyForCommitAsync(journal, default);

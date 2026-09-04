@@ -17,7 +17,8 @@ internal static class StorageRelocationCodec
         StorageObjectIdentity OldIdentity, StorageObjectIdentity NewIdentity);
     private sealed record EntryDto(Guid UnitId, int RootKind, Guid VersionId, string Sha256, long Length,
         string RelativePath, string TempRelativePath, StorageObjectIdentity OldIdentity);
-    private sealed record ManifestDto(int Version, Guid TransactionId, Guid PlanId, Guid DeviceId, string ExecutionDigest, RootDto[] Roots, EntryDto[] Entries);
+    private sealed record ManifestV1Dto(int Version, Guid TransactionId, Guid PlanId, Guid DeviceId, string ExecutionDigest, RootDto[] Roots, EntryDto[] Entries);
+    private sealed record ManifestV2Dto(int Version, Guid TransactionId, Guid PlanId, Guid DeviceId, RootDto[] Roots, EntryDto[] Entries);
     private sealed record ProgressEntryDto(Guid VersionId, int Stage, StorageObjectIdentity? Identity);
     private sealed record ProgressDto(int Version, int Stage, ProgressEntryDto[] Entries);
     internal sealed record ConfigurationDto(int Version, int FingerprintVersion, string Authority, string? Path, string Digest);
@@ -35,12 +36,16 @@ internal static class StorageRelocationCodec
         return value;
     }
 
-    public static byte[] Encode(StorageRelocationManifest value) => JsonSerializer.SerializeToUtf8Bytes(new ManifestDto(1,
-        value.TransactionId, value.PlanId.Value, value.DeviceId.Value, value.ExecutionSemanticDigest.Value,
-        [.. value.Roots.Select(x => new RootDto((int)x.Kind, x.OldRoot.CanonicalPath, x.OldRoot.ComparisonKey, x.NewRoot.CanonicalPath,
-            x.NewRoot.ComparisonKey, x.OldIdentity, x.NewIdentity))],
-        [.. value.Entries.Select(x => new EntryDto(x.UnitId.Value, (int)x.RootKind, x.Artifact.VersionId.Value, x.Artifact.Integrity.Value,
-            x.Artifact.Length, x.RelativePath.Value, x.TempRelativePath.Value, x.OldIdentity))]), Options);
+    public static byte[] Encode(StorageRelocationManifest value)
+    {
+        var roots = value.Roots.Select(x => new RootDto((int)x.Kind, x.OldRoot.CanonicalPath, x.OldRoot.ComparisonKey, x.NewRoot.CanonicalPath,
+            x.NewRoot.ComparisonKey, x.OldIdentity, x.NewIdentity)).ToArray();
+        var entries = value.Entries.Select(x => new EntryDto(x.UnitId.Value, (int)x.RootKind, x.Artifact.VersionId.Value, x.Artifact.Integrity.Value,
+            x.Artifact.Length, x.RelativePath.Value, x.TempRelativePath.Value, x.OldIdentity)).ToArray();
+        return value.LegacyExecutionSemanticDigest is { } legacy
+            ? JsonSerializer.SerializeToUtf8Bytes(new ManifestV1Dto(1, value.TransactionId, value.PlanId.Value, value.DeviceId.Value, legacy.Value, roots, entries), Options)
+            : JsonSerializer.SerializeToUtf8Bytes(new ManifestV2Dto(2, value.TransactionId, value.PlanId.Value, value.DeviceId.Value, roots, entries), Options);
+    }
 
     public static byte[] Encode(StorageTransferProgress value) => JsonSerializer.SerializeToUtf8Bytes(new ProgressDto(
         value.Stage == StorageTransferStage.Completed || value.Artifacts.Any(x => x.Stage == StorageTransferArtifactStage.OldCopyAbsent) ? 3
@@ -49,15 +54,33 @@ internal static class StorageRelocationCodec
 
     public static StorageRelocationManifest ReadManifest(byte[] bytes, byte[] digest)
     {
-        var dto = Read<ManifestDto>(bytes, digest);
-        if (dto.Version != 1) throw new LocalStateCorruptionException("Unknown relocation manifest protocol.");
-        var value = new StorageRelocationManifest(dto.TransactionId, new(dto.PlanId), new(dto.DeviceId), new(dto.ExecutionDigest),
-            dto.Roots.Select(x => new StorageRelocationRoot((StorageRootKind)x.Kind, new(x.OldPath, x.OldKey), new(x.NewPath, x.NewKey), x.OldIdentity, x.NewIdentity)),
-            dto.Entries.Select(x => new StorageRelocationEntry(new(x.UnitId), (StorageRootKind)x.RootKind, new(new(x.VersionId), new(x.Sha256), x.Length),
-                new(x.RelativePath), new(x.TempRelativePath), x.OldIdentity)));
+        // 先验证完整 bytes 和显式编码版本；不同版本使用不同 closed-world DTO，不能把旧字段当 optional bag。
+        var envelope = Read<JsonElement>(bytes, digest);
+        if (envelope.ValueKind != JsonValueKind.Object || !envelope.TryGetProperty("Version", out var version)
+            || version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var number))
+            throw new LocalStateCorruptionException("Missing relocation manifest encoding version.");
+        StorageRelocationManifest value;
+        if (number == 1)
+        {
+            var dto = Read<ManifestV1Dto>(bytes, digest);
+            value = new(dto.TransactionId, new(dto.PlanId), new(dto.DeviceId), new(dto.ExecutionDigest), Roots(dto.Roots), Entries(dto.Entries));
+        }
+        else if (number == 2)
+        {
+            var dto = Read<ManifestV2Dto>(bytes, digest);
+            value = new(dto.TransactionId, new(dto.PlanId), new(dto.DeviceId), Roots(dto.Roots), Entries(dto.Entries));
+        }
+        else throw new LocalStateCorruptionException("Unknown relocation manifest encoding version.");
         RequireCanonical(bytes, Encode(value));
         return value;
     }
+
+    private static IEnumerable<StorageRelocationRoot> Roots(RootDto[] roots)
+        => roots.Select(x => new StorageRelocationRoot((StorageRootKind)x.Kind, new(x.OldPath, x.OldKey), new(x.NewPath, x.NewKey), x.OldIdentity, x.NewIdentity));
+
+    private static IEnumerable<StorageRelocationEntry> Entries(EntryDto[] entries)
+        => entries.Select(x => new StorageRelocationEntry(new(x.UnitId), (StorageRootKind)x.RootKind, new(new(x.VersionId), new(x.Sha256), x.Length),
+            new(x.RelativePath), new(x.TempRelativePath), x.OldIdentity));
 
     public static StorageTransferProgress ReadProgress(StorageRelocationManifest manifest, byte[] bytes, byte[] digest)
     {

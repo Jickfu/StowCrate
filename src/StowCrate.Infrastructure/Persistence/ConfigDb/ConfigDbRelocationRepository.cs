@@ -35,6 +35,8 @@ public sealed partial class ConfigDbRepository : IStorageRelocationJournalStore
     private async Task<StorageRelocationJournal> BeginRelocationCoreAsync(StorageRelocationManifest manifest, StorageRelocationConfigurationObservation? configuration, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(manifest);
+        if (manifest.EncodingVersion == 2 && configuration is null)
+            throw new ArgumentException("Manifest v2 requires an atomic configuration checkpoint.", nameof(configuration));
         await using var db = factory.Create();
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
@@ -178,7 +180,7 @@ public sealed partial class ConfigDbRepository : IStorageRelocationJournalStore
             var progress = StorageRelocationCodec.ReadProgress(manifest, row.ProgressPayload, row.ProgressSha256);
             if (row.ConfigurationPayload is not null && row.ConfigurationSha256 is not null)
                 _ = StorageRelocationCodec.ReadConfiguration(row.ConfigurationPayload, row.ConfigurationSha256);
-            else if (row.ConfigurationPayload is not null || row.ConfigurationSha256 is not null || progress.IsMetadataCommitted)
+            else if (row.ConfigurationPayload is not null || row.ConfigurationSha256 is not null || progress.IsMetadataCommitted || manifest.EncodingVersion == 2)
                 throw new LocalStateCorruptionException("Relocation configuration checkpoint is missing.");
             var device = await db.DatabaseMetadata.AsNoTracking().SingleAsync(token);
             if (row.ProtocolVersion != 1 || row.Revision < 1 || DurableCodecs.Uuid(row.TransactionId) != manifest.TransactionId

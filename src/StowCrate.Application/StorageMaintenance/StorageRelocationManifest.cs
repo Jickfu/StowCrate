@@ -16,9 +16,19 @@ public sealed class StorageRelocationManifest
 {
     public StorageRelocationManifest(Guid transactionId, PlanId planId, DeviceId deviceId, Sha256Digest executionSemanticDigest,
         IEnumerable<StorageRelocationRoot> roots, IEnumerable<StorageRelocationEntry> entries)
+        : this(transactionId, planId, deviceId, (Sha256Digest?)executionSemanticDigest, roots, entries) { }
+
+    /// <summary>新 manifest v2 不携带旧 execution 摘要；Begin 必须原子冻结独立配置 checkpoint。</summary>
+    public StorageRelocationManifest(Guid transactionId, PlanId planId, DeviceId deviceId,
+        IEnumerable<StorageRelocationRoot> roots, IEnumerable<StorageRelocationEntry> entries)
+        : this(transactionId, planId, deviceId, null, roots, entries) { }
+
+    private StorageRelocationManifest(Guid transactionId, PlanId planId, DeviceId deviceId, Sha256Digest? legacyDigest,
+        IEnumerable<StorageRelocationRoot> roots, IEnumerable<StorageRelocationEntry> entries)
     {
-        if (transactionId == Guid.Empty || planId.Value == Guid.Empty || deviceId.Value == Guid.Empty || executionSemanticDigest == default)
-            throw new ArgumentException("Relocation requires complete transaction, device and execution identities.");
+        if (transactionId == Guid.Empty || planId.Value == Guid.Empty || deviceId.Value == Guid.Empty
+            || legacyDigest is { } digest && digest == default)
+            throw new ArgumentException("Relocation requires complete transaction/device identities and valid legacy digest when present.");
         ArgumentNullException.ThrowIfNull(roots); ArgumentNullException.ThrowIfNull(entries);
         Roots = roots.OrderBy(x => x.Kind).ToImmutableArray();
         Entries = entries.OrderBy(x => x.Artifact.VersionId.Value).ToImmutableArray();
@@ -54,12 +64,13 @@ public sealed class StorageRelocationManifest
                     throw new ArgumentException("Relocation file paths collide.", nameof(entries));
         }
         _ = StorageTransferProgress.Prepare(transactionId, planId, Entries.Select(x => x.Artifact));
-        TransactionId = transactionId; PlanId = planId; DeviceId = deviceId; ExecutionSemanticDigest = executionSemanticDigest;
+        TransactionId = transactionId; PlanId = planId; DeviceId = deviceId; LegacyExecutionSemanticDigest = legacyDigest;
     }
     public Guid TransactionId { get; }
     public PlanId PlanId { get; }
     public DeviceId DeviceId { get; }
-    public Sha256Digest ExecutionSemanticDigest { get; }
+    public int EncodingVersion => LegacyExecutionSemanticDigest.HasValue ? 1 : 2;
+    public Sha256Digest? LegacyExecutionSemanticDigest { get; }
     public ImmutableArray<StorageRelocationRoot> Roots { get; }
     public ImmutableArray<StorageRelocationEntry> Entries { get; }
     private static void ValidateIdentity(StorageObjectIdentity identity)

@@ -16,6 +16,31 @@ namespace StowCrate.Infrastructure.Tests.Persistence;
 
 public sealed class StorageRelocationJournalTests
 {
+    [Fact]
+    public async Task V2RequiresCheckpointAndPreservesItsEncodingAfterReopen()
+    {
+        await using var fixture = await Fixture.Create();
+        var original = fixture.Manifest();
+        var manifest = new StorageRelocationManifest(original.TransactionId, Plan, Device, original.Roots, original.Entries);
+        await Assert.ThrowsAsync<ArgumentException>(() => fixture.Repository.BeginRelocationAsync(manifest, default));
+        Assert.Empty(await fixture.Repository.ListRelocationsAsync(default));
+        var configuration = await fixture.Configuration();
+        await fixture.Repository.BeginRelocationAsync(manifest, configuration, default);
+        var reopened = await ConfigDbOpenCoordinator.OpenAsync(fixture.Path);
+        var loaded = (await reopened.LoadRelocationAsync(Plan, default))!;
+        Assert.Equal(2, loaded.Manifest.EncodingVersion);
+        Assert.Null(loaded.Manifest.LegacyExecutionSemanticDigest);
+        await using var db = new ConfigDbContextFactory(fixture.Path).Create();
+        var row = await db.StorageRelocationIntents.SingleAsync();
+        Assert.NotNull(row.ConfigurationPayload);
+        Assert.DoesNotContain("ExecutionDigest", System.Text.Encoding.UTF8.GetString(row.ManifestPayload), StringComparison.Ordinal);
+        Assert.Equal(1, row.ProtocolVersion);
+        row.ConfigurationPayload = null; row.ConfigurationSha256 = null;
+        await db.SaveChangesAsync();
+        await Assert.ThrowsAsync<LocalStateCorruptionException>(() => reopened.LoadRelocationAsync(Plan, default));
+        Assert.Equal(2, await db.StorageRelocationRootReservations.CountAsync());
+    }
+
     private static readonly PlanId Plan = new(Guid.NewGuid());
     private static readonly ArchiveUnitId Unit = new(Guid.NewGuid());
     private static readonly DeviceId Device = new(Guid.NewGuid());
@@ -66,7 +91,7 @@ public sealed class StorageRelocationJournalTests
         if (scenario == "wrong-integrity") entry = entry with { Artifact = entry.Artifact with { Integrity = Hash("wrong") } };
         if (scenario == "wrong-old-root") roots = [roots[0] with { OldRoot = new("/wrong", "/wrong") }];
         var manifest = new StorageRelocationManifest(initial.TransactionId, Plan, scenario == "device" ? new(Guid.NewGuid()) : Device,
-            initial.ExecutionSemanticDigest, roots, scenario == "missing-entry" ? [] : [entry]);
+            initial.LegacyExecutionSemanticDigest!.Value, roots, scenario == "missing-entry" ? [] : [entry]);
         if (scenario == "publish") await fixture.Repository.BeginPublishAsync(Intent(new(Guid.NewGuid())), default);
         if (scenario == "maintenance") await fixture.Repository.SaveAsync(new MaintenanceState(Plan, null, MaintenanceKind.OldCurrentPathCleanup, MaintenanceStatus.Pending, null, DateTimeOffset.UnixEpoch), default);
         await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => fixture.Repository.BeginRelocationAsync(manifest, default));
@@ -231,12 +256,12 @@ public sealed class StorageRelocationJournalTests
             await fixture.Configuration(), default);
         Assert.Equal(2, inventory.Entries.Length);
         Assert.Contains(inventory.Entries, x => x.Artifact.VersionId == historyVersion && x.RootKind == StorageRootKind.History);
-        var missing = new StorageRelocationManifest(initial.TransactionId, Plan, Device, initial.ExecutionSemanticDigest, roots, initial.Entries);
+        var missing = new StorageRelocationManifest(initial.TransactionId, Plan, Device, initial.LegacyExecutionSemanticDigest!.Value, roots, initial.Entries);
         await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => fixture.Repository.BeginRelocationAsync(missing, default));
         var path = new RelativeStoragePath("history-v1/old.7z");
         var entries = initial.Entries.Add(new(Unit, StorageRootKind.History, new(historyVersion, Hash("archive"), 42), path,
             StorageRelocationTempLayout.Create(initial.TransactionId, historyVersion, path), Identity("old-history-file")));
-        var manifest = new StorageRelocationManifest(initial.TransactionId, Plan, Device, initial.ExecutionSemanticDigest, roots, entries);
+        var manifest = new StorageRelocationManifest(initial.TransactionId, Plan, Device, initial.LegacyExecutionSemanticDigest!.Value, roots, entries);
         await fixture.Repository.BeginRelocationAsync(manifest, await fixture.Configuration(), default);
         var reopened = (await fixture.Repository.LoadRelocationAsync(Plan, default))!;
         Assert.Equal(2, reopened.Manifest.Roots.Length);

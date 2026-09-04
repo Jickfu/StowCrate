@@ -20,7 +20,7 @@ Output Reorganization 与 Storage Relocation 使用同一 Plan-scoped transfer p
 
 维护者已确认：原始 Backup Source/External input 离线时允许迁移已有归档，不要求解密密钥。协议中的 copy source/旧源指旧 Current/History 归档，不是原始输入树；旧归档和目标根不可访问仍必须失败。迁移按 immutable ArchiveVersion 的 SHA-256/length 验证 opaque bytes，不调用扫描、FILE_MANAGED discovery、备份 Candidate/readiness、Archiver 或 Secret material 服务。
 
-authoritative Plan 文档与 registration 必须有效；File-backed 文档即使恰好位于离线输入盘，也不得回退到缓存。仍检查已有 Source/External binding 与全设备 output/reservation 安全事实；不可证明路径安全时阻止，不因输入缺失而把其命名空间视为空闲。提交前的 configuration guard 必须独立于 unit backup ExecutionSemanticSnapshot；现有 manifest 的 `ExecutionSemanticDigest` 尚未接入该 guard，不能直接拿备份指纹或任意摘要充当迁移授权。后续接入时必须显式版本化，不能静默重解释旧 journal。
+authoritative Plan 文档与 registration 必须有效；File-backed 文档即使恰好位于离线输入盘，也不得回退到缓存。仍检查已有 Source/External binding 与全设备 output/reservation 安全事实；不可证明路径安全时阻止，不因输入缺失而把其命名空间视为空闲。提交前的 configuration guard 必须独立于 unit backup ExecutionSemanticSnapshot；v1 manifest 的 `ExecutionDigest`（代码中的 `LegacyExecutionSemanticDigest`）不属于该 guard，不能直接拿备份指纹或任意摘要充当迁移授权。新建 manifest v2 使用本文规定的独立编码，不携带该历史字段，不能静默重解释旧 journal。
 
 ### 2.2 冻结集合
 
@@ -122,3 +122,5 @@ Stage 使用 destination-local CreateNew、流式 SHA-256/length、WriteThrough/
 比较能力已接入物理执行默认路径：Stage 在任何父目录/temp 创建前验证完整 manifest 布局，并在父目录创建及 pre-copy barrier 后再次验证；PublishTarget 在恢复入口、rename 前及 rename/barrier 后重验；VerifyForCommit 在全量 I/O 前后重验。VerifyLayoutAsync 只检查冻结布局及实际目录比较规则，不要求 final/temp 全部为空；ownership、no-overwrite 和 unknown-file 拒绝仍由原物理协议独立负责。rename 后的重验忽略 caller cancellation，失败保留原 staged ownership/journal，允许后续按同对象恢复。显式 Resume 对能力不可用返回 RELOCATION_TARGET_COMPARISON_UNAVAILABLE，并保留旧 binding/baseline/reservation；已提交 cleanup/compaction 不因新一次比较能力查询而获得或丧失删除授权，继续按既有 exact-object 协议执行。构造物理 store 未注入比较端口时默认使用原生适配器，因此不支持的平台不能绕过 Preview 直接复制。
 
 显式 compaction 用例 StorageRelocationCompactionWorkflow.CompactAsync 要求 PlanId、transaction UUID 和调用方选定的正 revision；选择已变化时拒绝，不自动改用新日志/revision。仅 COMPLETED 可调用仓储清理事务，未完成或缺少 completion adapter 仅报告状态，不推进恢复。成功响应后直接返回 Compacted，不因后续 caller cancellation 改报失败；失败只用不可取消读取重新观察，精确原 COMPLETED 日志仍在则返回 Retained，缺失/替换/revision 变化/读取不可用则 OutcomeUnknown，不自动重试，也不从 absence 推断本次提交成功。初次读取无日志返回 NotFound，不等于 Compacted。损坏日志继续显式抛出，不降级为普通待处理状态。该用例不在 startup 或 Resume 后自动调用，不删除归档、不清理未知文件，App/CLI 用户入口仍待装配。
+
+Manifest 编码 v2 契约：StorageRelocationIntent.ProtocolVersion 仍为 transfer 状态协议 1，manifest payload 的 Version 独立取 1 或 2（与已独立版本化的 progress/configuration 编码一致），不改变 config.db schema v6。v1 保留原始 ExecutionDigest 字段和 canonical bytes；只能作为历史事实保存，不能重新解释为配置指纹。v2 使用独立 closed-world DTO，完全不包含 ExecutionDigest，禁止 null/占位字段；新建 v2 必须在同一 Begin 事务冻结 configuration checkpoint，缺少 checkpoint 的 v2 即为损坏状态，不能补签。reader 先验证 payload hash 和版本，再分派严格 reader 并检查 canonical 重编码；拒绝未知/重复/错版字段和未来版本，不自动升级或改写 v1。旧程序不能识别 v2 时须保持其既有 fail-closed 行为；不得向旧程序承诺 v2 日志可恢复。

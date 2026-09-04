@@ -87,3 +87,5 @@ Application 启动恢复已接入全量 journal 枚举和已提交清理 workflo
 复制/发布/提交已默认接入目标布局比较重验，覆盖完整 manifest，恢复允许本事务已拥有的 staged/target 对象存在。能力不足明确暂停且保留 journal，rename 后仍按 durable staged identity 恢复。跨平台协议 fixture 显式替换原生能力查询，真实默认 Stage 由 Linux CI 强制验证；完整 Begin 用户入口与其他平台比较模型仍待实现。
 
 独立 compaction 已增加 Application 显式用例，按 Plan/transaction/revision 选择，只调用已有 COMPLETED 仓储事务；响应丢失不重放，记录缺失不误报本次成功。真实 SQLite 回滚、旧/temp 重现、缺少适配器、取消与过期 revision 的保留行为已纳入测试；App/CLI 装配及完整 Begin 仍待完成。
+
+Manifest v2 已移除旧 execution 摘要字段，新建日志强制原子冻结独立 configuration checkpoint；v1 仍按原 canonical bytes 读取和编码，不做升级或摘要重解释。transfer ProtocolVersion 仍为 1、config.db schema 仍为 6，manifest 编码版本独立分派。真实复制/恢复/commit/cleanup/compaction 组合测试已改用 v2；完整 Begin 用户入口及物理 preflight 装配仍待完成。

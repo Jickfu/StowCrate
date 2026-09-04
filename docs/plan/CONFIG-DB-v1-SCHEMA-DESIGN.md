@@ -273,3 +273,5 @@ Stage 新增 METADATA_COMMITTED。progress codec v1 仍只读取 pre-commit，�
 ## config.db schema v6 — relocation cleanup
 
 v6 保持 manifest/configuration 与 progress v1/v2 不变，增加 progress v3：MetadataCommitted 可含 OldCopyAbsent，Completed 必须全部 OldCopyAbsent。只有 repository 在同一事务加载 journal、重验新 binding/placement/reservation、调用物理清理并匹配完整 absence proof 后才能写入。物理成功后的日志保存与提交不再响应 caller cancellation；失败允许下次以真实 absence 补记。完成前重新证明全部旧路径 absence。COMPLETED 不释放 journal/reservation，普通变更继续受互锁保护。v6 降级 v5 时拒绝任何 v3/Completed 记录，避免丢失清理进度语义。
+
+Manifest 编码 v2 契约：StorageRelocationIntent.ProtocolVersion 仍为 transfer 状态协议 1，manifest payload 的 Version 独立取 1 或 2（与已独立版本化的 progress/configuration 编码一致），不改变 config.db schema v6。v1 保留原始 ExecutionDigest 字段和 canonical bytes；只能作为历史事实保存，不能重新解释为配置指纹。v2 使用独立 closed-world DTO，完全不包含 ExecutionDigest，禁止 null/占位字段；新建 v2 必须在同一 Begin 事务冻结 configuration checkpoint，缺少 checkpoint 的 v2 即为损坏状态，不能补签。reader 先验证 payload hash 和版本，再分派严格 reader 并检查 canonical 重编码；拒绝未知/重复/错版字段和未来版本，不自动升级或改写 v1。旧程序不能识别 v2 时须保持其既有 fail-closed 行为；不得向旧程序承诺 v2 日志可恢复。
