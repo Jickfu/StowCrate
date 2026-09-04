@@ -17,6 +17,12 @@ public sealed class ConfigDbWorkflowIntegrationTests
 {
     [Theory]
     [InlineData("normal")]
+    [InlineData("explicit-prepared")]
+    [InlineData("explicit-staged")]
+    [InlineData("explicit-sealed")]
+    [InlineData("explicit-wrong-transaction")]
+    [InlineData("explicit-no-adapter")]
+    [InlineData("explicit-unknown-temp")]
     [InlineData("resume-stage-fault")]
     [InlineData("resume-publish-fault")]
     [InlineData("database-fault")]
@@ -60,6 +66,38 @@ public sealed class ConfigDbWorkflowIntegrationTests
                 StorageRelocationTempLayout.Create(transaction, version, path), StorageRelocationPhysicalStore.InspectIdentity(Path.Combine(oldRoot, path.Value), false))]);
         var journal = await database.Repository.BeginRelocationAsync(manifest, configuration, default);
         var physical = new StorageRelocationPhysicalStore(new RelocationTestBarrier());
+        async Task ExplicitResume()
+        {
+            var workflow = new StorageRelocationRecoveryWorkflow(database.Repository, scenario == "explicit-no-adapter" ? null : physical);
+            if (scenario == "explicit-wrong-transaction")
+            {
+                await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => workflow.ResumeAsync(plan.Id, Guid.NewGuid(), physical, default));
+                Assert.Equal(journal.Revision, (await database.Repository.LoadRelocationAsync(plan.Id, default))!.Revision);
+                return;
+            }
+            if (scenario == "explicit-unknown-temp")
+                await File.WriteAllBytesAsync(Path.Combine(newRoot, manifest.Entries[0].TempRelativePath.Value), bytes);
+            var result = await workflow.ResumeAsync(plan.Id, transaction, physical, default);
+            if (scenario == "explicit-unknown-temp")
+            {
+                Assert.Equal(StorageRelocationRecoveryStatus.ResumeRequired, result.Status);
+                Assert.Equal(oldRoot, (await database.Repository.LoadAsync(plan.Id, default))!.CurrentRoot!.CanonicalPath);
+                Assert.True(File.Exists(Path.Combine(newRoot, manifest.Entries[0].TempRelativePath.Value)));
+            }
+            else
+            {
+                Assert.Equal(scenario == "explicit-no-adapter" ? StorageRelocationRecoveryStatus.CleanupPending
+                    : StorageRelocationRecoveryStatus.CompletedReservationsRetained, result.Status);
+                Assert.Equal(newRoot, (await database.Repository.LoadAsync(plan.Id, default))!.CurrentRoot!.CanonicalPath);
+                Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(newRoot, path.Value)));
+                Assert.Equal(scenario == "explicit-no-adapter", File.Exists(Path.Combine(oldRoot, path.Value)));
+            }
+            Assert.Equivalent(state.Baseline, (await database.Repository.LoadAsync(plan.Id, unit.Id, default))!.Baseline);
+            await using var check = new ConfigDbContextFactory(database.Path).Create();
+            Assert.Equal(2, await check.StorageRelocationRootReservations.CountAsync());
+        }
+        if (scenario is "explicit-prepared" or "explicit-wrong-transaction" or "explicit-no-adapter" or "explicit-unknown-temp")
+        { await ExplicitResume(); return; }
         async Task<StorageRelocationRecoveryResult> Startup(bool useAdapter = true)
         {
             var startup = new ConfigDatabaseStartupCoordinator(new ConfigDatabaseSessionOpener(), new CurrentArtifactRecoveryProbe(),
@@ -90,6 +128,7 @@ public sealed class ConfigDbWorkflowIntegrationTests
             return;
         }
         journal = await database.Repository.ResumeRelocationEntryAsync(transaction, journal.Revision, version, physical, default);
+        if (scenario == "explicit-staged") { await ExplicitResume(); return; }
         if (scenario == "startup-staged")
         {
             Assert.Equal(StorageRelocationRecoveryStatus.ResumeRequired, (await Startup()).Status);
@@ -106,6 +145,7 @@ public sealed class ConfigDbWorkflowIntegrationTests
         }
         journal = await database.Repository.ResumeRelocationEntryAsync(transaction, journal.Revision, version, physical, default);
         journal = await database.Repository.SealRelocationTargetsAsync(transaction, journal.Revision, default);
+        if (scenario == "explicit-sealed") { await ExplicitResume(); return; }
         if (scenario == "startup-sealed")
         {
             Assert.Equal(StorageRelocationRecoveryStatus.ResumeRequired, (await Startup()).Status);

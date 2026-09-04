@@ -384,11 +384,13 @@ M5.3 配置 stale check 使用独立的 `StorageRelocationConfigurationFingerpri
 
 M5.3 Plan-scoped Output Reorganization / Storage Relocation 协议见 [`plan/STORAGE-MAINTENANCE-v1.md`](plan/STORAGE-MAINTENANCE-v1.md)。全量目标 durable 后才可原子切换 metadata，旧副本清理在 commit 后；当前按协议分层实现，不能把 progress kernel 或 metadata-only port 当作已交付物理迁移。
 
+完整显式恢复由 `StorageRelocationRecoveryWorkflow.ResumeAsync` 编排，要求 PlanId + 既有 TransactionId；依次恢复 Pending/Staged、seal、commit，再进入已提交 cleanup，不自动 compaction。失败后仅重读日志分类永久成功点，不在同一次调用内重放；无法确认状态返回 OutcomeUnknown。原启动入口仍不自动执行 pre-commit。
+
 Application 启动协调器枚举并完整校验所有 relocation 日志（含 inactive Plan），未提交状态只报告待显式恢复，已提交状态可通过注入物理清理端口逐项恢复；完成后仍保留 reservation。缺少适配器或可恢复错误报告 CleanupPending，损坏继续向上传播。存在 reservation 的 Plan 跳过旧 publish/retention recovery 与 History inventory，避免恢复入口绕过互锁。尚未装配 App/CLI 用户入口，也不自动释放路径。
 
 独立 `CompactRelocationAsync` 仅接受 Completed + revision CAS，事务内重验新 binding/placement/reservation/互锁及只读物理 completion probe 后，原子移除本事务日志与 reservation。物理核验要求所有根、目标 identity/integrity、旧路径与 temp absence、目录 barrier；任何漂移或失败保留保护。该接口不删除文件、不回滚新 binding，不在启动恢复自动调用。
 
-`ResumeRelocationEntryAsync` 为 pre-commit 单条目恢复提供事务形状入口：数据库写锁覆盖当前日志/配置/根/placement/reservation 校验、Stage 或 PublishTarget 与 proof 持久化。复制/发布前 CAS 拒绝竞争调用；成功 proof 后不可取消地落日志。复制后写库失败仍留下无 ownership 的 ambiguous temp，rename 后失败可根据已持久化 staged identity 补记 target。该安全边界会在单个大归档 I/O 期间占用 SQLite 写锁，是当前保守实现的吞吐限制；整条 Application 显式恢复编排和用户入口尚未接入。
+`ResumeRelocationEntryAsync` 为 pre-commit 单条目恢复提供事务形状入口：数据库写锁覆盖当前日志/配置/根/placement/reservation 校验、Stage 或 PublishTarget 与 proof 持久化。复制/发布前 CAS 拒绝竞争调用；成功 proof 后不可取消地落日志。复制后写库失败仍留下无 ownership 的 ambiguous temp，rename 后失败可根据已持久化 staged identity 补记 target。该安全边界会在单个大归档 I/O 期间占用 SQLite 写锁，是当前保守实现的吞吐限制；整条 Application 显式恢复编排已接入 ResumeAsync，用户入口尚未接入。
 
 Root relocation 的前置检查必须与 backup execution readiness 分离：通过 authoritative document/registration 与 durable storage facts 验证迁移，不以 `ExecutionReadyArchive`、源扫描、FILE_MANAGED discovery、Secret Store 或归档解密能力为前提。原始 Source/External 离线不阻止已有归档搬迁；持久 local root safety facts 仍需重验，未知/冲突安全事实不得放行。旧/新 archive roots 与字节完整性必须现场验证。该许可不放宽正常备份的 source/secret readiness，也不允许 File-backed 文档缺失时回退缓存。
 
