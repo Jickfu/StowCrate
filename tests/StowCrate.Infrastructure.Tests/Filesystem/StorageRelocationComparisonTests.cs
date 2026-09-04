@@ -84,7 +84,11 @@ public sealed partial class StorageRelocationPhysicalTests
         await probe.VerifyTargetsAsync(observation with { Inventory = observation.Inventory with { Entries = [] }, Entries = [] }, fixture.Journal.Manifest.TransactionId, default);
         Assert.Equal(2, calls);
         // final 在 255-byte 以内，但事务 temp 附加 UUID 后超长；必须在复制前拒绝。
-        await Assert.ThrowsAsync<IOException>(() => probe.VerifyTargetsAsync(ComparisonObservation(fixture, new string('a', 200) + ".7z"), fixture.Journal.Manifest.TransactionId, default));
+        var longName = new string('a', 200) + ".7z";
+        // Unix 的 namespace 查询可先抛出 PathTooLongException（IOException 子类）。
+        await Assert.ThrowsAnyAsync<IOException>(() => probe.VerifyTargetsAsync(ComparisonObservation(fixture, longName), fixture.Journal.Manifest.TransactionId, default));
+        // 缺失父目录使 namespace 查询提前结束，独立验证适配器自身的字节长度门槛。
+        await Assert.ThrowsAsync<IOException>(() => probe.VerifyTargetsAsync(ComparisonObservation(fixture, "missing/" + longName), fixture.Journal.Manifest.TransactionId, default));
         Assert.Empty(Directory.EnumerateFileSystemEntries(fixture.NewRoot));
     }
 
