@@ -36,6 +36,12 @@ public sealed class ConfigDbWorkflowIntegrationTests
 
     [Theory]
     [InlineData("normal")]
+    [InlineData("compaction-old-reappeared")]
+    [InlineData("compaction-temp-reappeared")]
+    [InlineData("compaction-missing-adapter")]
+    [InlineData("compaction-database-fault")]
+    [InlineData("compaction-stale-revision")]
+    [InlineData("compaction-cancel")]
     [InlineData("capacity-unavailable")]
     [InlineData("capacity-insufficient")]
     [InlineData("comparison-prepared")]
@@ -309,14 +315,56 @@ public sealed class ConfigDbWorkflowIntegrationTests
         Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(newRoot, path.Value)));
         await using var db = new ConfigDbContextFactory(database.Path).Create();
         Assert.Equal(2, await db.StorageRelocationRootReservations.CountAsync());
-        if (scenario == "normal")
+        if (scenario == "normal" || scenario.StartsWith("compaction-", StringComparison.Ordinal))
         {
             var completed = (await reopened.LoadRelocationAsync(plan.Id, default))!;
-            await reopened.CompactRelocationAsync(transaction, completed.Revision, physical, default);
+            var oldPath = Path.Combine(oldRoot, path.Value);
+            var tempPath = Path.Combine(newRoot, manifest.Entries[0].TempRelativePath.Value);
+            var unknownPath = Path.Combine(oldRoot, "untracked.7z");
+            await File.WriteAllTextAsync(unknownPath, "keep unknown");
+            if (scenario == "compaction-old-reappeared") await File.WriteAllBytesAsync(oldPath, bytes);
+            if (scenario == "compaction-temp-reappeared") await File.WriteAllBytesAsync(tempPath, bytes);
+            using var compactCancellation = new CancellationTokenSource();
+            IStorageRelocationCompletionProbe? completion = scenario == "compaction-missing-adapter" ? null
+                : new CompletionObserver(physical, () => { if (scenario == "compaction-cancel") compactCancellation.Cancel(); });
+            var repository = scenario == "compaction-database-fault" ? new ConfigDbRepository(new(database.Path), new CleanupJournalFault()) : reopened;
+            var workflow = new StorageRelocationCompactionWorkflow(repository, completion);
+            if (scenario == "compaction-stale-revision")
+                await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => workflow.CompactAsync(plan.Id, transaction, completed.Revision - 1, default));
+            else
+            {
+                var result = await workflow.CompactAsync(plan.Id, transaction, completed.Revision, compactCancellation.Token);
+                Assert.Equal(scenario == "normal" ? StorageRelocationCompactionStatus.Compacted
+                    : scenario == "compaction-missing-adapter" ? StorageRelocationCompactionStatus.AdapterUnavailable : StorageRelocationCompactionStatus.Retained, result.Status);
+                if (scenario == "compaction-cancel") Assert.Equal("RELOCATION_COMPACTION_CANCELLED", result.Diagnostic);
+            }
+            Assert.Equal("keep unknown", await File.ReadAllTextAsync(unknownPath));
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(newRoot, path.Value)));
+            Assert.Equal(newRoot, (await reopened.LoadAsync(plan.Id, default))!.CurrentRoot!.CanonicalPath);
+            Assert.Equivalent(state.Baseline, (await reopened.LoadAsync(plan.Id, unit.Id, default))!.Baseline);
+            if (scenario != "normal")
+            {
+                Assert.Equal(completed.Revision, (await reopened.LoadRelocationAsync(plan.Id, default))!.Revision);
+                Assert.Equal(2, await db.StorageRelocationRootReservations.CountAsync());
+                Assert.Equal(scenario == "compaction-old-reappeared", File.Exists(oldPath));
+                Assert.Equal(scenario == "compaction-temp-reappeared", File.Exists(tempPath));
+                return;
+            }
             Assert.Null(await reopened.LoadRelocationAsync(plan.Id, default));
             Assert.Equal(0, await db.StorageRelocationRootReservations.CountAsync());
             Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(newRoot, path.Value)));
             Assert.Equivalent(state.Baseline, (await reopened.LoadAsync(plan.Id, unit.Id, default))!.Baseline);
+            Assert.Equal(StorageRelocationCompactionStatus.NotFound,
+                (await workflow.CompactAsync(plan.Id, transaction, completed.Revision, default)).Status);
+        }
+    }
+
+    private sealed class CompletionObserver(IStorageRelocationCompletionProbe inner, Action afterCheck) : IStorageRelocationCompletionProbe
+    {
+        public async Task VerifyCompletedAsync(StorageRelocationJournal journal, CancellationToken token)
+        {
+            await inner.VerifyCompletedAsync(journal, token);
+            afterCheck();
         }
     }
 

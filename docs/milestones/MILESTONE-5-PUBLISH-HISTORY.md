@@ -85,3 +85,5 @@ Application 启动恢复已接入全量 journal 枚举和已提交清理 workflo
 目标比较规则未知时的阻断策略已确认。InspectTargetsAsync 现要求独立的只读比较能力端口，缺失适配器或能力未知均拒绝；检查后的配置/metadata 重验仍有效。已提供 Linux x64/arm64 ext 非 casefold、非 fscrypt 目录的真实只读比较适配器；需显式装配，其他平台/文件系统继续阻断，普通 InspectAsync 仍只返回部分观察。Linux CI 必须运行原生成功分支；不得将局部比较能力或测试替身视为完整迁移能力。M5.3 仍为 IMPLEMENTING。
 
 复制/发布/提交已默认接入目标布局比较重验，覆盖完整 manifest，恢复允许本事务已拥有的 staged/target 对象存在。能力不足明确暂停且保留 journal，rename 后仍按 durable staged identity 恢复。跨平台协议 fixture 显式替换原生能力查询，真实默认 Stage 由 Linux CI 强制验证；完整 Begin 用户入口与其他平台比较模型仍待实现。
+
+独立 compaction 已增加 Application 显式用例，按 Plan/transaction/revision 选择，只调用已有 COMPLETED 仓储事务；响应丢失不重放，记录缺失不误报本次成功。真实 SQLite 回滚、旧/temp 重现、缺少适配器、取消与过期 revision 的保留行为已纳入测试；App/CLI 装配及完整 Begin 仍待完成。
