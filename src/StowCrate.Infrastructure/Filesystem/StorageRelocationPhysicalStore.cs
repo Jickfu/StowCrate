@@ -8,7 +8,7 @@ using StowCrate.Core.Filesystem;
 namespace StowCrate.Infrastructure.Filesystem;
 
 /// <summary>物理复制/发布及提交后的 exact old-copy cleanup；不切换 binding，也不清除未知临时文件或目录。</summary>
-public sealed class StorageRelocationPhysicalStore(IArchivePublishMetadataDurabilityBarrier? durabilityBarrier = null,
+public sealed partial class StorageRelocationPhysicalStore(IArchivePublishMetadataDurabilityBarrier? durabilityBarrier = null,
     IStorageRelocationCapacityProbe? capacityProbe = null) : IStorageRelocationPhysicalStore, IStorageRelocationOldCopyStore, IStorageRelocationCompletionProbe
 {
     private readonly IArchivePublishMetadataDurabilityBarrier durability = durabilityBarrier ?? new PlatformArchivePublishMetadataDurabilityBarrier();

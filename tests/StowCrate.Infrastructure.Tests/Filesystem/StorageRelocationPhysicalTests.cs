@@ -9,6 +9,135 @@ namespace StowCrate.Infrastructure.Tests.Filesystem;
 
 public sealed class StorageRelocationPhysicalTests
 {
+    private static StorageRelocationInventory Inventory(Fixture fixture)
+    {
+        var manifest = fixture.Journal.Manifest;
+        return new(manifest.PlanId, manifest.DeviceId,
+            [.. manifest.Roots.Select(x => new StorageRelocationRootPaths(x.Kind, x.OldRoot, x.NewRoot))],
+            [.. manifest.Entries.Select(x => new StorageRelocationPlacement(x.UnitId, x.RootKind, x.Artifact, x.RelativePath))]);
+    }
+
+    [Fact]
+    public async Task PhysicalInventoryChecksOpaqueBytesAndCapacityWithoutCreatingParents()
+    {
+        using var fixture = new Fixture();
+        var unknown = Path.Combine(fixture.NewRoot, "unknown.txt");
+        await File.WriteAllTextAsync(unknown, "keep");
+        var observed = await new StorageRelocationPhysicalStore(new Barrier(false), new CapacityProbe(1000))
+            .ObserveInventoryAsync(Inventory(fixture), default);
+        Assert.Equal(fixture.Journal.Manifest.Entries[0].OldIdentity, Assert.Single(observed.Entries).Identity);
+        Assert.Equal(fixture.Bytes.Length, Assert.Single(observed.Capacity).RequiredBytes);
+        Assert.Equal(new[] { unknown }, Directory.GetFileSystemEntries(fixture.NewRoot));
+        Assert.Equal("keep", await File.ReadAllTextAsync(unknown));
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
+    }
+
+    [Theory]
+    [InlineData("corrupt")]
+    [InlineData("missing")]
+    [InlineData("target")]
+    [InlineData("parent-file")]
+    [InlineData("capacity-unknown")]
+    [InlineData("capacity-insufficient")]
+    [InlineData("cancel")]
+    public async Task PhysicalInventoryRejectsUnsafeStateWithoutWrites(string failure)
+    {
+        using var fixture = new Fixture();
+        if (failure == "corrupt") await File.WriteAllTextAsync(fixture.Source, "corrupt");
+        if (failure == "missing") File.Move(fixture.Source, fixture.Source + ".held");
+        if (failure == "target")
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(fixture.Target)!);
+            await File.WriteAllBytesAsync(fixture.Target, fixture.Bytes);
+        }
+        if (failure == "parent-file") await File.WriteAllTextAsync(Path.GetDirectoryName(fixture.Target)!, "keep");
+        var before = Directory.GetFileSystemEntries(fixture.NewRoot, "*", SearchOption.AllDirectories);
+        using var cancellation = new CancellationTokenSource();
+        if (failure == "cancel") cancellation.Cancel();
+        var physical = new StorageRelocationPhysicalStore(new Barrier(), new CapacityProbe(failure switch
+        {
+            "capacity-unknown" => null,
+            "capacity-insufficient" => 0,
+            _ => 1000
+        }));
+        await Assert.ThrowsAnyAsync<Exception>(() => physical.ObserveInventoryAsync(Inventory(fixture), cancellation.Token));
+        Assert.Equal(before, Directory.GetFileSystemEntries(fixture.NewRoot, "*", SearchOption.AllDirectories));
+        Assert.False(File.Exists(fixture.Temp));
+        if (failure == "target") Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Target));
+    }
+
+    [Theory]
+    [InlineData("old-root")]
+    [InlineData("new-root")]
+    [InlineData("source")]
+    [InlineData("target")]
+    public async Task PhysicalInventoryRechecksWholeSetAfterCapacityIo(string drift)
+    {
+        using var fixture = new Fixture();
+        var inventory = Inventory(fixture);
+        var physical = new StorageRelocationPhysicalStore(new Barrier(), new MutatingCapacityProbe(() =>
+        {
+            if (drift == "source")
+            {
+                File.Move(fixture.Source, fixture.Source + ".held");
+                File.WriteAllBytes(fixture.Source, fixture.Bytes);
+            }
+            else if (drift == "target")
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(fixture.Target)!);
+                File.WriteAllBytes(fixture.Target, fixture.Bytes);
+            }
+            else
+            {
+                var path = drift == "old-root" ? inventory.Roots[0].OldRoot.CanonicalPath : fixture.NewRoot;
+                Directory.Move(path, path + ".held");
+                Directory.CreateDirectory(path);
+            }
+        }));
+        await Assert.ThrowsAsync<IOException>(() => physical.ObserveInventoryAsync(inventory, default));
+        Assert.False(File.Exists(fixture.Temp));
+    }
+
+    [Fact]
+    public async Task EmptyPhysicalInventoryStillChecksOldRootAndCapacity()
+    {
+        using var fixture = new Fixture();
+        var inventory = Inventory(fixture) with { Entries = [] };
+        var physical = new StorageRelocationPhysicalStore(new Barrier(), new CapacityProbe(1000));
+        Assert.Empty((await physical.ObserveInventoryAsync(inventory, default)).Entries);
+        Directory.Move(inventory.Roots[0].OldRoot.CanonicalPath, inventory.Roots[0].OldRoot.CanonicalPath + ".held");
+        await Assert.ThrowsAnyAsync<IOException>(() => physical.ObserveInventoryAsync(inventory, default));
+        Assert.Empty(Directory.GetFileSystemEntries(fixture.NewRoot));
+    }
+
+    private sealed class MutatingCapacityProbe(Action mutate) : IStorageRelocationCapacityProbe
+    {
+        public Task<StorageCapacityObservation> ObserveAsync(ResolvedPhysicalPath root, CancellationToken cancellationToken)
+        {
+            var observed = new StorageCapacityObservation(StorageRelocationPhysicalStore.InspectIdentity(root.CanonicalPath, true), new("test", 1, "volume"), 1000);
+            mutate();
+            return Task.FromResult(observed);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PhysicalInventoryDoesNotFollowExistingOrDanglingTargetAncestor(bool dangling)
+    {
+        using var fixture = new Fixture();
+        var outside = Path.Combine(Path.GetDirectoryName(fixture.NewRoot)!, "outside");
+        if (!dangling) Directory.CreateDirectory(outside);
+        try { Directory.CreateSymbolicLink(Path.GetDirectoryName(fixture.Target)!, outside); }
+        catch (UnauthorizedAccessException) when (OperatingSystem.IsWindows()) { return; }
+        catch (IOException exception) when (OperatingSystem.IsWindows() && (exception.HResult & 0xffff) == 1314) { return; }
+        var physical = new StorageRelocationPhysicalStore(new Barrier(), new CapacityProbe(1000));
+        await Assert.ThrowsAsync<IOException>(() => physical.ObserveInventoryAsync(Inventory(fixture), default));
+        Assert.False(File.Exists(fixture.Target));
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
+        if (!dangling) Assert.Empty(Directory.GetFileSystemEntries(outside));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData(0L)]

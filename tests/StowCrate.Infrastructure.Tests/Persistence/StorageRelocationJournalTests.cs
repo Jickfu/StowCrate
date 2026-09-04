@@ -684,6 +684,55 @@ public sealed class StorageRelocationJournalTests
         Assert.Equal("/old", (await fixture.Repository.LoadAsync(Plan, default))!.CurrentRoot!.CanonicalPath);
     }
 
+    [Theory]
+    [InlineData("none")]
+    [InlineData("name")]
+    [InlineData("layout")]
+    [InlineData("placement")]
+    [InlineData("pending")]
+    [InlineData("missing-config")]
+    public async Task InspectionRevalidatesConfigurationAndMetadataAfterPhysicalIo(string drift)
+    {
+        await using var fixture = await Fixture.Create();
+        await fixture.Configuration();
+        var before = (await fixture.Repository.LoadAsync(Plan, Unit, default))!;
+        var probe = new InventoryProbe(async () =>
+        {
+            if (drift == "name") await fixture.Configuration(name: "renamed");
+            if (drift == "layout") await fixture.Configuration(output: "changed");
+            if (drift == "placement")
+                await fixture.Repository.CommitOutputReorganizationAsync(OutputReorganization.Commit(before.Current!, before.OutputLayout!,
+                    new("moved.7z"), new(Hash("layout2"))), default);
+            if (drift == "pending") await fixture.Repository.BeginPublishAsync(Intent(new(Guid.NewGuid())), default);
+            if (drift == "missing-config") File.Delete(fixture.Path + ".backupplan");
+        });
+        var workflow = new StorageRelocationInspectionWorkflow(new(new(fixture.Repository, new BackupPlanDocumentSource())), fixture.Repository, probe);
+        if (drift is "none" or "name")
+        {
+            var observed = await workflow.InspectAsync(new(Plan, new("/new", "/new"), null), default);
+            Assert.Equal(fixture.Version, Assert.Single(observed.Inventory.Entries).Artifact.VersionId);
+        }
+        else await Assert.ThrowsAnyAsync<Exception>(() => workflow.InspectAsync(new(Plan, new("/new", "/new"), null), default));
+        Assert.Equal(1, probe.Calls);
+        Assert.Empty(await fixture.Repository.ListRelocationsAsync(default));
+        Assert.Equal("/old", (await fixture.Repository.LoadAsync(Plan, default))!.CurrentRoot!.CanonicalPath);
+        Assert.Equal(before.Baseline!.ArchiveVersionId, (await fixture.Repository.LoadAsync(Plan, Unit, default))!.Baseline!.ArchiveVersionId);
+        await using var db = new ConfigDbContextFactory(fixture.Path).Create();
+        Assert.Empty(await db.StorageRelocationRootReservations.ToListAsync());
+    }
+
+    // 仅注入物理 I/O 期间的并发变更；真实 no-follow/hash/容量观察由 filesystem fixtures 验证。
+    private sealed class InventoryProbe(Func<Task> duringObservation) : IStorageRelocationInventoryProbe
+    {
+        public int Calls { get; private set; }
+        public async Task<StorageRelocationPhysicalInventory> ObserveInventoryAsync(StorageRelocationInventory inventory, CancellationToken cancellationToken)
+        {
+            Calls++;
+            await duringObservation();
+            return new(inventory, [], [], []);
+        }
+    }
+
     private sealed class ResumeProbe(Action afterProof) : IStorageRelocationPhysicalStore
     {
         public int Calls { get; private set; }

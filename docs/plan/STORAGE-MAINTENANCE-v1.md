@@ -38,6 +38,8 @@ Journal 必须保存 transaction UUID、PlanId、DeviceId、kind、协议版本�
 
 ## 3. 顺序与持久点
 
+只读检查增量：`StorageRelocationInspectionWorkflow.InspectAsync` 先读取 authoritative configuration 与一致 metadata inventory，调用 `IStorageRelocationInventoryProbe` 验证旧归档 opaque bytes、旧/新根 identity、根内 ancestors、目标占用与容量，最后重新读取配置和 metadata 集合。配置相关漂移、placement/root 集合变化或新增维护互锁均拒绝返回成功；无关名称变化仍允许。物理检查末尾重验整个集合的 namespace/identity，包含零条目的根。预检不创建目录、不签发 durable proof、不构造 journal；结果不代表完整 Preview 可执行。仍需补齐目标真实 case/encoding collision、transaction-specific temp namespace 和写入/barrier capability 门槛后才可接入 Begin。容量为根所在卷的瞬时下界观察，不能替代完整目标布局的 filesystem 检查；也不承诺跨文件原子快照或防御主动 hostile race。
+
 1. Preview 无写入：inventory、容量、no-follow root/ancestor、collision 与 overlap 校验；未知内容只诊断，不加入 manifest。
 2. SQLite 原子 Begin：保存完整 manifest、root reservation 和 `PREPARED`。此时旧 metadata 与旧文件保持不变。
 3. 每个目标用 destination-local `CreateNew` temp 复制；no-follow 验证源 root/ancestor/leaf identity，流式 SHA-256/length、flush file data，并重验源 identity。
