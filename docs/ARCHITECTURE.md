@@ -415,3 +415,5 @@ History retention 是独立于 publish commit 的 destructive maintenance。每�
 M5.2 orphan reconciliation 是只读诊断面：对全部 active Plan 的 tracked placements 与 `history-v1` managed namespace 做 no-follow inventory，报告 missing、corrupt/replaced、known-unplaced 与 unknown/ambiguous，不从 inventory 产生 mutation。Retention destructive path 必须验证全部 ancestor，并在可用平台读取 native object identity、在最终 namespace deletion 前重验；race-resistance 保证限于检测正常替换漂移。
 
 迁移目标比较能力：无法可靠识别目标文件系统的大小写或 Unicode 比较规则时，必须阻止迁移并返回 RELOCATION_TARGET_COMPARISON_UNAVAILABLE；不提供强制继续，不创建探测文件。检查必须覆盖全部 final/temp 及父目录的实际规则和待创建目录的继承语义，不以操作系统默认值或规范化 comparison key 代替。Preview 保持只读。
+
+目标比较适配器增量：StorageRelocationTargetComparisonProbe 在 Linux x64/arm64 上，仅接受目录句柄 fstatfs 返回 ext2/3/4 magic 且 FS_IOC_GETFLAGS 未启用 casefold/fscrypt 的目录。通过同句柄 statx identity 与路径 no-follow identity 交叉验证；按真实目录逐级查询，含空根和嵌套挂载，不以根卷规则代替子目录。缺失子目录只按已验证的 ext 继承语义推导，不创建；两次完整观察发现目录新增/替换或能力变化即拒绝。全部 final/temp 使用严格 UTF-8 和 255-byte component 限制，复用完整 namespace 冲突校验，跨路径目录 identity alias 保守拒绝。其他平台、文件系统、casefold/fscrypt 或原生接口不可用仍返回 RELOCATION_TARGET_COMPARISON_UNAVAILABLE。此结果仅是本次只读比较检查，不是 durable proof；完整 Begin/Stage 接入仍须在写入前重验，不承诺跨文件瞬时快照。

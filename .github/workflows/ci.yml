@@ -56,3 +56,4 @@ jobs:
         run: dotnet test StowCrate.slnx --configuration Release --no-build
         env:
           STOWCRATE_7ZIP_ROOT: ${{ github.workspace }}/artifacts/bundled/7zip
+          STOWCRATE_REQUIRE_EXT_COMPARISON: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}

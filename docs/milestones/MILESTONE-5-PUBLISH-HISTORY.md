@@ -82,4 +82,4 @@ config.db v4 已增加 root relocation 的 pre-commit manifest/progress journal 
 
 Application 启动恢复已接入全量 journal 枚举和已提交清理 workflow，未注入适配器时仍显式报告 CleanupPending，不静默忽略日志。Prepared/TargetsDurable 不自动复制/提交；Completed 不重复删除，保留 reservation 并跳过同 Plan 的旧恢复路径。真实文件 + SQLite 验证 inactive journal、缺少适配器、删后日志落后、旧对象漂移、日志损坏和 publish 恢复冲突。App/CLI 装配继续待办，独立 compaction 已提供事务接口。
 
-目标比较规则未知时的阻断策略已确认。InspectTargetsAsync 现要求独立的只读比较能力端口，缺失适配器或能力未知均拒绝；检查后的配置/metadata 重验仍有效。目前尚未提供真实平台比较适配器，事务目标检查默认阻断，普通 InspectAsync 仍只返回部分观察；不得将端口或测试替身视为完整迁移能力。M5.3 仍为 IMPLEMENTING。
+目标比较规则未知时的阻断策略已确认。InspectTargetsAsync 现要求独立的只读比较能力端口，缺失适配器或能力未知均拒绝；检查后的配置/metadata 重验仍有效。已提供 Linux x64/arm64 ext 非 casefold、非 fscrypt 目录的真实只读比较适配器；需显式装配，其他平台/文件系统继续阻断，普通 InspectAsync 仍只返回部分观察。Linux CI 必须运行原生成功分支；不得将局部比较能力或测试替身视为完整迁移能力。M5.3 仍为 IMPLEMENTING。
