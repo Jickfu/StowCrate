@@ -67,6 +67,8 @@ Journal 必须保存 transaction UUID、PlanId、DeviceId、kind、协议版本�
 
 ## 5. 模块与验收
 
+容量策略已由维护者确认：查询失败、未知或不可信即阻止，不提供 override。容量 guard 以当前调用用户可用 bytes 为准，按 native volume/device identity 合并同卷目标需求，并取同卷各观察值的最小值；不把旧副本空间提前抵扣。需求是待复制归档 Length 之和的下界，checked 溢出或非法事实不放行；不宣称预留空间或覆盖 filesystem allocation/metadata 开销。inventory 容量检查为只读；实际 Stage 在任何目标目录/temp 创建之前重新检查全部 Pending 条目的剩余需求，已 staged/target durable 不重复计费。容量不足/无法查询不会创建本次条目的输出；已提交阶段的 rename/cleanup 不以新一次容量查询为前提。平台 probe 重验目标目录 no-follow identity，路径替换不沿用旧查询结果。
+
 只读 inventory 入口从单个数据库事务读取选定 Current/History 根下的完整 retained placements（不按当前 declared/active unit 过滤），附带 immutable ArchiveVersion integrity/length 与旧/新根路径。入口重读 authoritative configuration checkpoint、验证 maintenance/reservation/全设备 Source/External/output 冲突，不触碰原始输入，不创建 journal，不产生 native identity 或可执行 manifest。它是物理 preview 的输入，不是“迁移就绪”声明；目标文件系统、容量与逐文件物理检查仍须单独完成。
 
 External local binding 与 Source 一样进入迁移 namespace 安全检查，即使原始输入离线也不得释放该占用。Begin、pre-commit/commit/compaction 重验须覆盖 active 或仍有恢复工作的 Plan 的 active External binding；其他 Plan 保存 External binding、激活或进入发布时也不得与迁移 reservation 重叠。这里只比较已持久化 canonical path/key，不扫描或打开 External 输入。

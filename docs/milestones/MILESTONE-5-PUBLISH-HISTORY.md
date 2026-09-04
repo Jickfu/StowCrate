@@ -64,7 +64,7 @@ Orphan reconciliation 不凭文件名、deterministic path 或裸 `ArchiveVersio
 
 入口加固：普通 Local Binding 保存必须在事务内拒绝改变已有 placement 或恢复日志依赖的输出根，包含停用/省略；拒绝时不得部分更新 Source/External binding。无 placement/journal 的初始配置仍可编辑；保留原输出根时不阻止独立 Source/External 修改。该加固不表示物理 relocation 已实现。
 
-后续仍需实现 compaction 用户入口、全量 preflight 与 Output Reorganization；不得把 M3 的 metadata-only reorganization port 当作物理迁移用例，也不得标记本阶段 COMPLETE。
+后续仍需实现 compaction 用户入口、全量 preflight 与 Output Reorganization；不得把 M3 的 metadata-only reorganization port 当作物理迁移用例，也不得标记本阶段 COMPLETE。容量规则已确认并实现独立只读 guard 与 Stage 前重验：当前用户可用空间未知/失败/不足一律阻止，没有强制继续；同卷合并 Pending 需求，不提前抵扣旧副本。这不等于完整物理 Preview 或用户入口完成。
 
 已冻结 Plan-scoped transfer protocol，见 [`STORAGE-MAINTENANCE-v1.md`](../plan/STORAGE-MAINTENANCE-v1.md)：copy → staged identity durable record → no-overwrite target publish → 全部目标 durable → 单事务 metadata switch → exact old-copy cleanup。Application 已有 immutable progress kernel 与恢复状态校验测试；该内核不执行 I/O，不独立授予删除权限。
 

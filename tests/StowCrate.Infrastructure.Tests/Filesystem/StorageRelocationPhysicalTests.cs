@@ -9,6 +9,46 @@ namespace StowCrate.Infrastructure.Tests.Filesystem;
 
 public sealed class StorageRelocationPhysicalTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0L)]
+    public async Task CapacityFailureCreatesNoDirectoriesOrTemporaryFiles(long? available)
+    {
+        using var fixture = new Fixture();
+        var physical = new StorageRelocationPhysicalStore(new Barrier(), new CapacityProbe(available));
+        await Assert.ThrowsAsync<StorageRelocationCapacityException>(() => physical.StageAsync(fixture.Journal, fixture.Version, default));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(fixture.NewRoot));
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
+    }
+
+    [Fact]
+    public async Task AlreadyStagedRenameDoesNotRequireMoreCapacity()
+    {
+        using var fixture = new Fixture();
+        var proof = await new StorageRelocationPhysicalStore(new Barrier()).StageAsync(fixture.Journal, fixture.Version, default);
+        Assert.Empty(await new StorageRelocationCapacityGuard(new CapacityProbe(null)).CheckPendingAsync(fixture.Staged(proof), default));
+        await new StorageRelocationPhysicalStore(new Barrier(), new CapacityProbe(null))
+            .PublishTargetAsync(fixture.Staged(proof), fixture.Version, default);
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Target));
+    }
+
+    [Fact]
+    public async Task NativeCapacityProbeReturnsRootIdentityWithoutWrites()
+    {
+        using var fixture = new Fixture();
+        var root = fixture.Journal.Manifest.Roots[0];
+        var observation = await new StorageRelocationCapacityProbe().ObserveAsync(root.NewRoot, default);
+        Assert.Equal(root.NewIdentity, observation.RootIdentity);
+        Assert.True(observation.AvailableBytes >= 0);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(fixture.NewRoot));
+    }
+
+    private sealed class CapacityProbe(long? available) : IStorageRelocationCapacityProbe
+    {
+        public Task<StorageCapacityObservation> ObserveAsync(ResolvedPhysicalPath root, CancellationToken cancellationToken)
+            => Task.FromResult(new StorageCapacityObservation(StorageRelocationPhysicalStore.InspectIdentity(root.CanonicalPath, true), new("test", 1, "volume"), available));
+    }
+
     [Fact]
     public async Task TransfersOpaqueArchiveBytesWithoutOriginalInputsOrDecryption()
     {

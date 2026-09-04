@@ -386,7 +386,9 @@ M5.3 Plan-scoped Output Reorganization / Storage Relocation 协议见 [`plan/STO
 
 完整显式恢复由 `StorageRelocationRecoveryWorkflow.ResumeAsync` 编排，要求 PlanId + 既有 TransactionId；依次恢复 Pending/Staged、seal、commit，再进入已提交 cleanup，不自动 compaction。失败后仅重读日志分类永久成功点，不在同一次调用内重放；无法确认状态返回 OutcomeUnknown。原启动入口仍不自动执行 pre-commit。
 
-只读 inventory 在一致数据库事务中提取全部选定根的 retained Current/History 与 immutable integrity/length，不依赖当前 active/declared unit 集合，不读取原始 Source/External，也不创建 journal 或物理 proof。它与 Begin/恢复/commit/compaction 复用 namespace 占用检查，包含 External local binding；External 绑定保存和 Plan 激活/发布也必须尊重现有 relocation reservation。物理 preview 和容量策略仍待接入，inventory 不等于 readiness。
+只读 inventory 在一致数据库事务中提取全部选定根的 retained Current/History 与 immutable integrity/length，不依赖当前 active/declared unit 集合，不读取原始 Source/External，也不创建 journal 或物理 proof。它与 Begin/恢复/commit/compaction 复用 namespace 占用检查，包含 External local binding；External 绑定保存和 Plan 激活/发布也必须尊重现有 relocation reservation。inventory 不等于 readiness，完整物理 preview 仍待接入。
+
+Application 的 StorageRelocationCapacityGuard 通过独立 probe 观察目标根所在卷的当前调用用户可用 bytes，同卷需求合并、观察值取最小值，未知/失败/不足一律阻止且没有 override。Infrastructure 使用 native volume/device identity 与实际目录容量查询，前后重验根 identity；Stage 在创建任何目标目录/temp 前检查全部 Pending 复制需求。已 staged 的 rename 和旧副本 cleanup 不重复要求剩余容量。只读 inventory 可单独调用同一 guard；容量是瞬时下界检查，不是空间预留或完整 Preview。
 
 Application 启动协调器枚举并完整校验所有 relocation 日志（含 inactive Plan），未提交状态只报告待显式恢复，已提交状态可通过注入物理清理端口逐项恢复；完成后仍保留 reservation。缺少适配器或可恢复错误报告 CleanupPending，损坏继续向上传播。存在 reservation 的 Plan 跳过旧 publish/retention recovery 与 History inventory，避免恢复入口绕过互锁。尚未装配 App/CLI 用户入口，也不自动释放路径。
 

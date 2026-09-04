@@ -15,8 +15,16 @@ namespace StowCrate.Infrastructure.Tests.Persistence;
 
 public sealed class ConfigDbWorkflowIntegrationTests
 {
+    private sealed class RelocationCapacityProbe(long? available) : IStorageRelocationCapacityProbe
+    {
+        public Task<StorageCapacityObservation> ObserveAsync(ResolvedPhysicalPath root, CancellationToken cancellationToken)
+            => Task.FromResult(new StorageCapacityObservation(StorageRelocationPhysicalStore.InspectIdentity(root.CanonicalPath, true), new("test", 1, "volume"), available));
+    }
+
     [Theory]
     [InlineData("normal")]
+    [InlineData("capacity-unavailable")]
+    [InlineData("capacity-insufficient")]
     [InlineData("explicit-prepared")]
     [InlineData("explicit-staged")]
     [InlineData("explicit-sealed")]
@@ -66,6 +74,19 @@ public sealed class ConfigDbWorkflowIntegrationTests
                 StorageRelocationTempLayout.Create(transaction, version, path), StorageRelocationPhysicalStore.InspectIdentity(Path.Combine(oldRoot, path.Value), false))]);
         var journal = await database.Repository.BeginRelocationAsync(manifest, configuration, default);
         var physical = new StorageRelocationPhysicalStore(new RelocationTestBarrier());
+        if (scenario is "capacity-unavailable" or "capacity-insufficient")
+        {
+            var blocked = new StorageRelocationPhysicalStore(new RelocationTestBarrier(), new RelocationCapacityProbe(scenario == "capacity-unavailable" ? null : 0));
+            var result = await new StorageRelocationRecoveryWorkflow(database.Repository, blocked).ResumeAsync(plan.Id, transaction, blocked, default);
+            Assert.Equal(StorageRelocationRecoveryStatus.ResumeRequired, result.Status);
+            Assert.Equal(scenario == "capacity-unavailable" ? "RELOCATION_CAPACITY_UNAVAILABLE" : "RELOCATION_CAPACITY_INSUFFICIENT", result.Diagnostic);
+            Assert.Equal(journal.Revision, (await database.Repository.LoadRelocationAsync(plan.Id, default))!.Revision);
+            Assert.Equal(oldRoot, (await database.Repository.LoadAsync(plan.Id, default))!.CurrentRoot!.CanonicalPath);
+            Assert.Equivalent(state.Baseline, (await database.Repository.LoadAsync(plan.Id, unit.Id, default))!.Baseline);
+            Assert.Empty(Directory.EnumerateFileSystemEntries(newRoot));
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(oldRoot, path.Value)));
+            return;
+        }
         async Task ExplicitResume()
         {
             var workflow = new StorageRelocationRecoveryWorkflow(database.Repository, scenario == "explicit-no-adapter" ? null : physical);

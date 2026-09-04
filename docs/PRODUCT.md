@@ -249,6 +249,8 @@ Scheduler installation 是 `PlanId + DeviceId` 下的本机状态，与 Plan 配
 - 配置导出、清单和日志不包含明文密码、云令牌或恢复密钥。
 - 对 Secure Plan，`*.backupplan`、Current、History 和 `config.db` 快照都不保证具备解密能力；用户还必须独立保有 Secret 或未来显式导出的 Recovery Package，产品必须避免暗示“导出 Plan 等于备份密码”。
 
+- Storage Relocation 容量规则已确认：无法可靠查询目标可用空间时必须阻止启动，不提供强制继续；不得把“未知”视为“足够”。同卷多个目标的复制需求合并检查，不扣除迁移完成前不能释放的旧副本。容量检查不是空间预留保证，实际 I/O 失败仍遵循保留旧 authority 的协议。
+
 ## 7. 首版范围
 
 首版聚焦端到端可靠的本地结构化备份：方案与路径映射、目录树配置、`.backupignore`、三层规则、嵌套 Archive Unit 规划、项目识别建议、变更检测、标准归档、Current/History、手动与定时执行、配置导出/恢复和错误报告。
@@ -262,8 +264,6 @@ Scheduler installation 是 `PlanId + DeviceId` 下的本机状态，与 Plan 配
 - 依赖 StowCrate 才能恢复的格式。
 
 ## 8. 尚未决策或需验证
-
-- Storage Relocation 容量预检无法可靠查询目标可用空间时，是否必须阻止启动，或允许用户明确确认后继续；尚未确定，不得静默把“未知”视为“足够”。
 
 - `*.backupplan` 的 v1 JSON Schema；
 - 隐私保护恢复信息在 7z、ZIP、TAR.ZST 中的可靠承载方式；
