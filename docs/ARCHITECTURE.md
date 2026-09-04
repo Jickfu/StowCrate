@@ -413,3 +413,5 @@ History retention 是独立于 publish commit 的 destructive maintenance。每�
 未知 HistoryRoot 内容以及只有 identity/hash、没有活动 workflow journal 的 artifact 不具备删除或 metadata 修复授权。未来 History relocation 与同单元 active PREPARED retention intent 必须互斥。
 
 M5.2 orphan reconciliation 是只读诊断面：对全部 active Plan 的 tracked placements 与 `history-v1` managed namespace 做 no-follow inventory，报告 missing、corrupt/replaced、known-unplaced 与 unknown/ambiguous，不从 inventory 产生 mutation。Retention destructive path 必须验证全部 ancestor，并在可用平台读取 native object identity、在最终 namespace deletion 前重验；race-resistance 保证限于检测正常替换漂移。
+
+迁移目标比较能力：无法可靠识别目标文件系统的大小写或 Unicode 比较规则时，必须阻止迁移并返回 RELOCATION_TARGET_COMPARISON_UNAVAILABLE；不提供强制继续，不创建探测文件。检查必须覆盖全部 final/temp 及父目录的实际规则和待创建目录的继承语义，不以操作系统默认值或规范化 comparison key 代替。Preview 保持只读。

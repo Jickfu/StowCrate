@@ -81,3 +81,5 @@ config.db v4 已增加 root relocation 的 pre-commit manifest/progress journal 
 提交后 exact old-copy 物理清理适配器已实现：匹配新副本与旧 identity/bytes 后仅删除 manifest 指定文件，完成目录 barrier/absence re-proof，未知文件与目录保留。schema v6 已接入逐项 cleanup 持久化和完成前重新证明 absence；真实 SQLite 故障后可重开数据库补记，删除后取消不打断成功 proof 的持久化，旧路径重新出现则不删除且拒绝完成。COMPLETED 不释放 reservation。
 
 Application 启动恢复已接入全量 journal 枚举和已提交清理 workflow，未注入适配器时仍显式报告 CleanupPending，不静默忽略日志。Prepared/TargetsDurable 不自动复制/提交；Completed 不重复删除，保留 reservation 并跳过同 Plan 的旧恢复路径。真实文件 + SQLite 验证 inactive journal、缺少适配器、删后日志落后、旧对象漂移、日志损坏和 publish 恢复冲突。App/CLI 装配继续待办，独立 compaction 已提供事务接口。
+
+目标比较规则未知时的阻断策略已确认。InspectTargetsAsync 现要求独立的只读比较能力端口，缺失适配器或能力未知均拒绝；检查后的配置/metadata 重验仍有效。目前尚未提供真实平台比较适配器，事务目标检查默认阻断，普通 InspectAsync 仍只返回部分观察；不得将端口或测试替身视为完整迁移能力。M5.3 仍为 IMPLEMENTING。

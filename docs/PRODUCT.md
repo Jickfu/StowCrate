@@ -276,3 +276,5 @@ Scheduler installation 是 `PlanId + DeviceId` 下的本机状态，与 Plan 配
 - Standard 模式采用的快速文件内容 hash 算法及版本迁移策略。
 
 本项目采用 Apache License 2.0，详见仓库根目录 `LICENSE`。
+
+迁移目标比较能力：无法可靠识别目标文件系统的大小写或 Unicode 比较规则时，必须阻止迁移并返回 RELOCATION_TARGET_COMPARISON_UNAVAILABLE；不提供强制继续，不创建探测文件。检查必须覆盖全部 final/temp 及父目录的实际规则和待创建目录的继承语义，不以操作系统默认值或规范化 comparison key 代替。Preview 保持只读。

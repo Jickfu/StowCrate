@@ -5,7 +5,8 @@ namespace StowCrate.Application.StorageMaintenance;
 /// <summary>只读迁移检查；返回观察结果，不启动 journal，也不授予复制或删除权限。</summary>
 public sealed class StorageRelocationInspectionWorkflow(StorageRelocationConfigurationReader configuration,
     IStorageRelocationInventoryStore inventory, IStorageRelocationInventoryProbe physical,
-    IStorageRelocationTargetNamespaceProbe? targets = null)
+    IStorageRelocationTargetNamespaceProbe? targets = null,
+    IStorageRelocationTargetComparisonProbe? comparison = null)
 {
     public Task<StorageRelocationPhysicalInventory> InspectAsync(StorageRelocationInventoryRequest request, CancellationToken cancellationToken)
         => InspectCoreAsync(request, null, cancellationToken);
@@ -14,6 +15,8 @@ public sealed class StorageRelocationInspectionWorkflow(StorageRelocationConfigu
         Guid transactionId, CancellationToken cancellationToken)
     {
         if (transactionId == Guid.Empty) throw new ArgumentException("Transaction identity is required.", nameof(transactionId));
+        cancellationToken.ThrowIfCancellationRequested();
+        if (comparison is null) throw new StorageRelocationComparisonUnavailableException();
         if (targets is null) throw new InvalidOperationException("Relocation target namespace probe is required.");
         return new(transactionId, await InspectCoreAsync(request, transactionId, cancellationToken).ConfigureAwait(false));
     }
@@ -26,7 +29,10 @@ public sealed class StorageRelocationInspectionWorkflow(StorageRelocationConfigu
         var before = await inventory.ReadRelocationInventoryAsync(request, captured, cancellationToken).ConfigureAwait(false);
         var observed = await physical.ObserveInventoryAsync(before, cancellationToken).ConfigureAwait(false);
         if (transactionId is { } id)
+        {
+            await comparison!.VerifyTargetsAsync(observed, id, cancellationToken).ConfigureAwait(false);
             await targets!.VerifyUnoccupiedTargetsAsync(observed, id, cancellationToken).ConfigureAwait(false);
+        }
         var current = await configuration.RevalidateAsync(captured, cancellationToken).ConfigureAwait(false);
         var after = await inventory.ReadRelocationInventoryAsync(request, current, cancellationToken).ConfigureAwait(false);
         // 哈希期间可能发生新的发布或 binding 变更，不能将两个时间点的集合拼成成功结果。

@@ -731,12 +731,56 @@ public sealed class StorageRelocationJournalTests
         var transaction = Guid.NewGuid();
         var targets = new TargetProbe(transaction, async () => { if (drift) await fixture.Configuration(output: "changed"); });
         var workflow = new StorageRelocationInspectionWorkflow(new(new(fixture.Repository, new BackupPlanDocumentSource())),
-            fixture.Repository, new InventoryProbe(() => Task.CompletedTask), targets);
+            fixture.Repository, new InventoryProbe(() => Task.CompletedTask), targets, new ComparisonProbe(() => Task.CompletedTask));
         if (drift) await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => workflow.InspectTargetsAsync(new(Plan, new("/new", "/new"), null), transaction, default));
         else Assert.Equal(transaction, (await workflow.InspectTargetsAsync(new(Plan, new("/new", "/new"), null), transaction, default)).TransactionId);
         Assert.Equal(1, targets.Calls);
         Assert.Empty(await fixture.Repository.ListRelocationsAsync(default));
         Assert.Equal("/old", (await fixture.Repository.LoadAsync(Plan, default))!.CurrentRoot!.CanonicalPath);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("unknown")]
+    [InlineData("drift")]
+    [InlineData("cancel")]
+    public async Task TargetComparisonFailureNeverStartsRelocation(string scenario)
+    {
+        await using var fixture = await Fixture.Create();
+        await fixture.Configuration();
+        var transaction = Guid.NewGuid();
+        using var cancellation = new CancellationTokenSource();
+        var targets = new TargetProbe(transaction, () => Task.CompletedTask);
+        var comparison = new ComparisonProbe(async () =>
+        {
+            if (scenario == "unknown") throw new StorageRelocationComparisonUnavailableException();
+            if (scenario == "drift") await fixture.Configuration(output: "changed");
+            if (scenario == "cancel") { cancellation.Cancel(); cancellation.Token.ThrowIfCancellationRequested(); }
+        });
+        var workflow = new StorageRelocationInspectionWorkflow(new(new(fixture.Repository, new BackupPlanDocumentSource())),
+            fixture.Repository, new InventoryProbe(() => Task.CompletedTask), targets, scenario == "missing" ? null : comparison);
+        var error = await Record.ExceptionAsync(() => workflow.InspectTargetsAsync(new(Plan, new("/new", "/new"), null), transaction, cancellation.Token));
+        if (scenario is "missing" or "unknown")
+            Assert.Equal("RELOCATION_TARGET_COMPARISON_UNAVAILABLE", Assert.IsType<StorageRelocationComparisonUnavailableException>(error).DiagnosticCode);
+        else if (scenario == "drift") Assert.IsType<LocalStateConcurrencyException>(error);
+        else Assert.IsAssignableFrom<OperationCanceledException>(error);
+        Assert.Equal(scenario == "drift" ? 1 : 0, targets.Calls);
+        Assert.Empty(await fixture.Repository.ListRelocationsAsync(default));
+        Assert.Equal("/old", (await fixture.Repository.LoadAsync(Plan, default))!.CurrentRoot!.CanonicalPath);
+        await using var db = new ConfigDbContextFactory(fixture.Path).Create();
+        Assert.Empty(await db.StorageRelocationRootReservations.ToListAsync());
+    }
+
+    // 仅验证用例门槛及其后的并发重验，不模拟已实现的平台比较能力。
+    private sealed class ComparisonProbe(Func<Task> action) : IStorageRelocationTargetComparisonProbe
+    {
+        public Task VerifyTargetsAsync(StorageRelocationPhysicalInventory observation, Guid transactionId, CancellationToken cancellationToken)
+        {
+            Assert.Equal(Plan, observation.Inventory.PlanId);
+            Assert.NotEqual(Guid.Empty, transactionId);
+            cancellationToken.ThrowIfCancellationRequested();
+            return action();
+        }
     }
 
     private sealed class TargetProbe(Guid expectedTransaction, Func<Task> action) : IStorageRelocationTargetNamespaceProbe
