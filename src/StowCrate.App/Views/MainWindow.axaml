@@ -4,17 +4,19 @@
         xmlns:services="using:StowCrate.App.Services"
         x:Class="StowCrate.App.Views.MainWindow"
         x:DataType="vm:MainViewModel"
-        Title="归匣 · 存储维护" Width="1020" Height="840" MinWidth="720" MinHeight="580">
+        Title="归匣 · 备份工作台" Width="1020" Height="840" MinWidth="720" MinHeight="580">
     <ScrollViewer>
         <StackPanel Margin="28" Spacing="18" MaxWidth="1100">
             <StackPanel Spacing="6">
                 <TextBlock Text="归匣  /  STOWCRATE" FontSize="13" Opacity="0.65" />
-                <TextBlock Text="存储维护" FontSize="30" FontWeight="SemiBold" />
-                <TextBlock Text="检查已有归档的迁移目标，保留当前文件与方案配置。" TextWrapping="Wrap" />
+                <TextBlock Text="备份工作台" FontSize="30" FontWeight="SemiBold" />
+                <TextBlock Text="使用个人配置开始，或通过高级入口打开已有配置库。" TextWrapping="Wrap" />
+                <Button Content="开始使用" Command="{Binding StartCommand}" />
+                <TextBlock Text="配置由软件保存在当前用户的应用数据目录；备份源和归档输出位置独立选择。" TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
             </StackPanel>
             <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" CornerRadius="12" Padding="22">
                 <StackPanel Spacing="12">
-                    <TextBlock Text="1  打开配置库" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="高级：打开已有配置库" FontSize="18" FontWeight="SemiBold" />
                     <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
                         <TextBox Text="{Binding DatabasePath}" PlaceholderText="已有 config.db 的完整路径" IsEnabled="{Binding CanEdit}" AutomationProperties.Name="配置库路径" />
                         <Button Grid.Column="1" Content="选择文件…" Click="ChooseDatabase" IsEnabled="{Binding CanEdit}" />

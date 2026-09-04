@@ -19,7 +19,7 @@ public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBa
     [ObservableProperty] public partial bool ConfirmResume { get; set; }
     [ObservableProperty] public partial string JournalDetails { get; set; } = "尚未读取迁移事务。";
     [ObservableProperty] public partial bool RootsMayBeStale { get; set; }
-    [ObservableProperty] public partial string Status { get; set; } = "选择已有配置库，查看方案并检查迁移目标。";
+    [ObservableProperty] public partial string Status { get; set; } = "点击“开始使用”打开个人配置，无需准备数据库。";
     [ObservableProperty] public partial string Details { get; set; } = "可检查新目标，或读取已有迁移事务后明确选择继续。";
     public bool CanEdit => !IsBusy;
     public bool CanPreview => !IsBusy && SelectedPlan is not null;
@@ -32,6 +32,7 @@ public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBa
     {
         OnPropertyChanged(nameof(CanEdit)); OnPropertyChanged(nameof(CanPreview));
         OpenCommand.NotifyCanExecuteChanged(); PreviewCommand.NotifyCanExecuteChanged(); CancelCommand.NotifyCanExecuteChanged();
+        StartCommand.NotifyCanExecuteChanged();
         ReadJournalCommand.NotifyCanExecuteChanged(); ResumeCommand.NotifyCanExecuteChanged();
     }
     partial void OnSelectedPlanChanged(RelocationPlanChoice? value)
@@ -53,6 +54,22 @@ public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBa
         Status = "尚未检查";
         Details = "选择要迁移的目标根；留空表示该根不迁移。目标目录必须已存在。";
     }
+    [RelayCommand(CanExecute = nameof(CanEdit))]
+    private async Task StartAsync()
+    {
+        Plans.Clear(); SelectedPlan = null;
+        await RunAsync(async token =>
+        {
+            var result = await Task.Run(() => workspace.OpenDefaultAsync(token), token);
+            token.ThrowIfCancellationRequested();
+            DatabasePath = result.DatabasePath;
+            foreach (var plan in result.Plans) Plans.Add(plan);
+            SelectedPlan = Plans.FirstOrDefault();
+            Status = Plans.Count == 0 ? "个人配置已就绪，尚无备份方案" : $"已打开个人配置 · {Plans.Count} 个方案";
+            Details = "配置保存在当前用户的应用数据目录。此步骤不会创建备份或恢复迁移；创建方案界面正在接入。";
+        });
+    }
+
     [RelayCommand(CanExecute = nameof(CanEdit))]
     private async Task OpenAsync()
     {

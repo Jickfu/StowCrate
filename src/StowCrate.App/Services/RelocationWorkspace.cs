@@ -9,8 +9,10 @@ using StowCrate.Infrastructure.Persistence.ConfigDb;
 namespace StowCrate.App.Services;
 
 public sealed record RelocationPlanChoice(PlanId Id, string Name, string CurrentRoot, string HistoryRoot);
+public sealed record DefaultWorkspaceResult(string DatabasePath, ImmutableArray<RelocationPlanChoice> Plans);
 public interface IRelocationWorkspace
 {
+    Task<DefaultWorkspaceResult> OpenDefaultAsync(CancellationToken cancellationToken);
     Task<ImmutableArray<RelocationPlanChoice>> OpenAsync(string databasePath, CancellationToken cancellationToken);
     Task<StorageRelocationTargetInspection> InspectAsync(PlanId planId, string? currentRoot, string? historyRoot, CancellationToken cancellationToken);
     Task<StorageRelocationJournal?> LoadJournalAsync(PlanId planId, CancellationToken cancellationToken);
@@ -18,11 +20,27 @@ public interface IRelocationWorkspace
 }
 
 /// <summary>桌面组合适配器只装配已有用例，不在界面重写迁移安全规则。</summary>
-public sealed class RelocationWorkspace : IRelocationWorkspace
+public sealed class RelocationWorkspace(string? applicationDataDirectory = null) : IRelocationWorkspace
 {
     private StorageRelocationInspectionWorkflow? inspection;
     private IStorageRelocationJournalStore? journals;
     private readonly LocalPhysicalPathResolver paths = new();
+    public async Task<DefaultWorkspaceResult> OpenDefaultAsync(CancellationToken cancellationToken)
+    {
+        inspection = null; journals = null;
+        cancellationToken.ThrowIfCancellationRequested();
+        var root = applicationDataDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        // 无法取得用户数据目录时不能退回工作目录或安装目录，避免建立错误的配置事实源。
+        if (string.IsNullOrWhiteSpace(root) || !Path.IsPathFullyQualified(root))
+            throw new IOException("无法确定当前用户的应用数据目录，请使用高级入口选择配置库。");
+        var directory = Path.Combine(root, "StowCrate");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "config.db");
+        // 复用正常 opener：首次初始化，已有库验证/升级；损坏库不删除、不重建。
+        var repository = await ConfigDbOpenCoordinator.OpenAsync(path, Guid.NewGuid(),
+            new StowCrate.Application.BackupPlans.Resolution.DeviceId(Guid.NewGuid()), cancellationToken).ConfigureAwait(false);
+        return new(path, await OpenRepositoryAsync(repository, cancellationToken).ConfigureAwait(false));
+    }
     public async Task<ImmutableArray<RelocationPlanChoice>> OpenAsync(string databasePath, CancellationToken cancellationToken)
     {
         inspection = null;
@@ -30,6 +48,10 @@ public sealed class RelocationWorkspace : IRelocationWorkspace
         // 本入口只打开已有配置库，拼错路径不能意外创建一个空库。
         if (!File.Exists(databasePath)) throw new FileNotFoundException("配置库不存在，请选择已有的 config.db。");
         var repository = await ConfigDbOpenCoordinator.OpenAsync(databasePath, null, null, cancellationToken).ConfigureAwait(false);
+        return await OpenRepositoryAsync(repository, cancellationToken).ConfigureAwait(false);
+    }
+    private async Task<ImmutableArray<RelocationPlanChoice>> OpenRepositoryAsync(ConfigDbRepository repository, CancellationToken cancellationToken)
+    {
         var configuration = new StorageRelocationConfigurationReader(new AuthoritativePlanWorkflow(repository, new BackupPlanDocumentSource()));
         var choices = ImmutableArray.CreateBuilder<RelocationPlanChoice>();
         foreach (var registration in await repository.ListRegisteredAsync(true, cancellationToken).ConfigureAwait(false))

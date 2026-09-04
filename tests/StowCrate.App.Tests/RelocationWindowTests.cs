@@ -23,6 +23,64 @@ public static class TestApplication
 public sealed class RelocationWindowTests
 {
     [AvaloniaFact]
+    public async Task StartUsesPersonalConfigurationWithoutManualPath()
+    {
+        var workspace = new Workspace();
+        var model = new MainViewModel(workspace);
+        await model.StartCommand.ExecuteAsync(null);
+        Assert.Equal("/user/StowCrate/config.db", model.DatabasePath);
+        Assert.Single(model.Plans);
+        Assert.NotNull(model.SelectedPlan);
+        Assert.Equal(0, workspace.ResumeCalls);
+        Assert.False(model.IsBusy);
+    }
+
+    [Fact]
+    public async Task DefaultConfigurationCreatesAndReopensSameDatabase()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "StowCrate-default-" + Guid.NewGuid());
+        try
+        {
+            var token = TestContext.Current.CancellationToken;
+            var workspace = new RelocationWorkspace(root);
+            var first = await workspace.OpenDefaultAsync(token);
+            Assert.Equal(Path.Combine(root, "StowCrate", "config.db"), first.DatabasePath);
+            Assert.Empty(first.Plans);
+            var repository = await StowCrate.Infrastructure.Persistence.ConfigDb.ConfigDbOpenCoordinator.OpenAsync(first.DatabasePath, null, null, token);
+            var identity = await repository.LoadAsync(token);
+            Assert.NotNull(identity);
+            var second = await workspace.OpenDefaultAsync(token);
+            Assert.Equal(first.DatabasePath, second.DatabasePath);
+            Assert.Equal(identity, await repository.LoadAsync(token));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task CorruptPersonalConfigurationIsNotReplaced()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "StowCrate-default-" + Guid.NewGuid());
+        try
+        {
+            var directory = Directory.CreateDirectory(Path.Combine(root, "StowCrate"));
+            var path = Path.Combine(directory.FullName, "config.db");
+            var bytes = System.Text.Encoding.UTF8.GetBytes("invalid database must survive");
+            await File.WriteAllBytesAsync(path, bytes, TestContext.Current.CancellationToken);
+            await Assert.ThrowsAnyAsync<Exception>(() => new RelocationWorkspace(root).OpenDefaultAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("relative")]
+    public async Task UnavailableApplicationDataDoesNotFallBack(string root)
+    {
+        await Assert.ThrowsAsync<IOException>(() => new RelocationWorkspace(root).OpenDefaultAsync(TestContext.Current.CancellationToken));
+    }
+
+    [AvaloniaFact]
     public void WindowStartsWithPreviewDisabledAndRenders()
     {
         var model = new MainViewModel(new Workspace());
@@ -199,6 +257,8 @@ public sealed class RelocationWindowTests
 
     private sealed class Workspace : IRelocationWorkspace
     {
+        public async Task<DefaultWorkspaceResult> OpenDefaultAsync(CancellationToken token)
+            => new("/user/StowCrate/config.db", await OpenAsync("/user/StowCrate/config.db", token));
         public StorageRelocationJournal? ExistingJournal { get; init; }
         public StorageRelocationRecoveryStatus ResumeOutcome { get; init; }
         public Exception? ResumeFailure { get; init; }
