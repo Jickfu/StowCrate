@@ -31,6 +31,10 @@ public sealed partial class StorageRelocationPhysicalStore(IArchivePublishMetada
         var (entry, root, progress) = ValidateJournal(journal, versionId);
         if (progress.Stage is not StorageTransferArtifactStage.Pending) throw new InvalidOperationException("Artifact is not pending staging.");
         await capacity.CheckPendingAsync(journal, cancellationToken).ConfigureAwait(false);
+        // 先检查全部尚未复制条目的 target/temp，避免已知的后续冲突留下本条目的无用副本。
+        var pending = journal.Progress.Artifacts.Where(x => x.Stage == StorageTransferArtifactStage.Pending)
+            .Select(x => x.Artifact.VersionId).ToHashSet();
+        VerifyUnoccupiedTargets(journal.Manifest.Roots, journal.Manifest.Entries.Where(x => pending.Contains(x.Artifact.VersionId)), cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         var source = Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
         RequireIdentity(source, false, entry.OldIdentity);

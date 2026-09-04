@@ -40,7 +40,9 @@ Journal 必须保存 transaction UUID、PlanId、DeviceId、kind、协议版本�
 
 ## 3. 顺序与持久点
 
-只读检查增量：`StorageRelocationInspectionWorkflow.InspectAsync` 先读取 authoritative configuration 与一致 metadata inventory，调用 `IStorageRelocationInventoryProbe` 验证旧归档 opaque bytes、旧/新根 identity、根内 ancestors、目标占用与容量，最后重新读取配置和 metadata 集合。配置相关漂移、placement/root 集合变化或新增维护互锁均拒绝返回成功；无关名称变化仍允许。物理检查末尾重验整个集合的 namespace/identity，包含零条目的根。预检不创建目录、不签发 durable proof、不构造 journal；结果不代表完整 Preview 可执行。仍需补齐目标真实 case/encoding collision、transaction-specific temp namespace 和写入/barrier capability 门槛后才可接入 Begin。容量为根所在卷的瞬时下界观察，不能替代完整目标布局的 filesystem 检查；也不承诺跨文件原子快照或防御主动 hostile race。
+`InspectTargetsAsync` 接受拟用的非空 transaction ID，并在物理 inventory 后检查全部 final 与该事务的 temp 路径；之后仍重读配置和 metadata。目标检查独立返回 transaction-bound observation，不构造含占位摘要的 manifest。检查包括 final/temp 字面重名或父子冲突、现存文件/目录占位、no-follow 父目录与冻结新根 identity；缺失父目录不创建。同内容文件也不能采用或删除。真实目标文件系统的 case/encoding 等价性仍是独立门槛，不能用该字面检查替代。实际 Stage 在容量检查后、创建任何目录/temp 前，重查全部 Pending 条目的 final/temp；Staged/TargetDurable 条目不按空路径处理，其 ownership 仍由既有恢复协议独立验证。
+
+只读检查增量：`StorageRelocationInspectionWorkflow.InspectAsync` 先读取 authoritative configuration 与一致 metadata inventory，调用 `IStorageRelocationInventoryProbe` 验证旧归档 opaque bytes、旧/新根 identity、根内 ancestors、目标占用与容量，最后重新读取配置和 metadata 集合。配置相关漂移、placement/root 集合变化或新增维护互锁均拒绝返回成功；无关名称变化仍允许。物理检查末尾重验整个集合的 namespace/identity，包含零条目的根。预检不创建目录、不签发 durable proof、不构造 journal；结果不代表完整 Preview 可执行。仍需补齐目标真实 case/encoding collision 和写入/barrier capability 门槛后才可接入 Begin。容量为根所在卷的瞬时下界观察，不能替代完整目标布局的 filesystem 检查；也不承诺跨文件原子快照或防御主动 hostile race。
 
 1. Preview 无写入：inventory、容量、no-follow root/ancestor、collision 与 overlap 校验；未知内容只诊断，不加入 manifest。
 2. SQLite 原子 Begin：保存完整 manifest、root reservation 和 `PREPARED`。此时旧 metadata 与旧文件保持不变。

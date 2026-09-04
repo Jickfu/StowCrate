@@ -721,6 +721,37 @@ public sealed class StorageRelocationJournalTests
         Assert.Empty(await db.StorageRelocationRootReservations.ToListAsync());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TargetInspectionCarriesTransactionAndRevalidatesAfterNamespaceProbe(bool drift)
+    {
+        await using var fixture = await Fixture.Create();
+        await fixture.Configuration();
+        var transaction = Guid.NewGuid();
+        var targets = new TargetProbe(transaction, async () => { if (drift) await fixture.Configuration(output: "changed"); });
+        var workflow = new StorageRelocationInspectionWorkflow(new(new(fixture.Repository, new BackupPlanDocumentSource())),
+            fixture.Repository, new InventoryProbe(() => Task.CompletedTask), targets);
+        if (drift) await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => workflow.InspectTargetsAsync(new(Plan, new("/new", "/new"), null), transaction, default));
+        else Assert.Equal(transaction, (await workflow.InspectTargetsAsync(new(Plan, new("/new", "/new"), null), transaction, default)).TransactionId);
+        Assert.Equal(1, targets.Calls);
+        Assert.Empty(await fixture.Repository.ListRelocationsAsync(default));
+        Assert.Equal("/old", (await fixture.Repository.LoadAsync(Plan, default))!.CurrentRoot!.CanonicalPath);
+    }
+
+    private sealed class TargetProbe(Guid expectedTransaction, Func<Task> action) : IStorageRelocationTargetNamespaceProbe
+    {
+        public int Calls { get; private set; }
+        public Task VerifyUnoccupiedTargetsAsync(StorageRelocationManifest manifest, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public async Task VerifyUnoccupiedTargetsAsync(StorageRelocationPhysicalInventory observation, Guid transactionId, CancellationToken cancellationToken)
+        {
+            Assert.Equal(expectedTransaction, transactionId);
+            Assert.Equal(Plan, observation.Inventory.PlanId);
+            Calls++;
+            await action();
+        }
+    }
+
     // 仅注入物理 I/O 期间的并发变更；真实 no-follow/hash/容量观察由 filesystem fixtures 验证。
     private sealed class InventoryProbe(Func<Task> duringObservation) : IStorageRelocationInventoryProbe
     {

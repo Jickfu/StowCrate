@@ -10,6 +10,127 @@ namespace StowCrate.Infrastructure.Tests.Filesystem;
 public sealed class StorageRelocationPhysicalTests
 {
     [Theory]
+    [InlineData("none")]
+    [InlineData("occupied-temp")]
+    [InlineData("planned-collision")]
+    [InlineData("missing-entry")]
+    public async Task ObservedTargetCheckUsesExactTransactionTemporaryPath(string scenario)
+    {
+        using var fixture = new Fixture();
+        var physical = new StorageRelocationPhysicalStore();
+        var observed = await physical.ObserveInventoryAsync(Inventory(fixture), default);
+        var transaction = fixture.Journal.Manifest.TransactionId;
+        if (scenario == "occupied-temp")
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(fixture.Temp)!);
+            await File.WriteAllBytesAsync(fixture.Temp, fixture.Bytes);
+        }
+        if (scenario == "planned-collision")
+        {
+            var placement = observed.Inventory.Entries[0] with
+            {
+                Artifact = observed.Inventory.Entries[0].Artifact with { VersionId = new(Guid.NewGuid()) },
+                RelativePath = fixture.Journal.Manifest.Entries[0].TempRelativePath
+            };
+            observed = observed with
+            {
+                Inventory = observed.Inventory with { Entries = observed.Inventory.Entries.Add(placement) },
+                Entries = observed.Entries.Add(new(placement, observed.Entries[0].Identity))
+            };
+        }
+        if (scenario == "missing-entry") observed = observed with { Entries = [] };
+        var before = Directory.GetFileSystemEntries(fixture.NewRoot, "*", SearchOption.AllDirectories);
+        if (scenario == "none") await physical.VerifyUnoccupiedTargetsAsync(observed, transaction, default);
+        else await Assert.ThrowsAnyAsync<Exception>(() => physical.VerifyUnoccupiedTargetsAsync(observed, transaction, default));
+        Assert.Equal(before, Directory.GetFileSystemEntries(fixture.NewRoot, "*", SearchOption.AllDirectories));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LaterPendingTargetOrTempBlocksFirstCopyBeforeAnyWrites(bool temporary)
+    {
+        using var fixture = new Fixture();
+        var original = fixture.Journal.Manifest;
+        var version = new ArchiveVersionId(Guid.NewGuid());
+        var relative = new RelativeStoragePath("second.7z");
+        var temp = StorageRelocationTempLayout.Create(original.TransactionId, version, relative);
+        var source = Path.Combine(original.Roots[0].OldRoot.CanonicalPath, relative.Value);
+        await File.WriteAllBytesAsync(source, fixture.Bytes);
+        var second = new StorageRelocationEntry(new(Guid.NewGuid()), StorageRootKind.Current,
+            new(version, Sha256Digest.Hash(fixture.Bytes), fixture.Bytes.Length), relative, temp,
+            StorageRelocationPhysicalStore.InspectIdentity(source, false));
+        var manifest = new StorageRelocationManifest(original.TransactionId, original.PlanId, original.DeviceId,
+            original.ExecutionSemanticDigest, original.Roots, [original.Entries[0], second]);
+        var journal = new StorageRelocationJournal(manifest,
+            StorageTransferProgress.Prepare(manifest.TransactionId, manifest.PlanId, manifest.Entries.Select(x => x.Artifact)), 1);
+        var occupied = Path.Combine(fixture.NewRoot, temporary ? temp.Value : relative.Value);
+        await File.WriteAllBytesAsync(occupied, fixture.Bytes);
+        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier()).StageAsync(journal, fixture.Version, default));
+        Assert.Equal(new[] { occupied }, Directory.GetFileSystemEntries(fixture.NewRoot));
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(occupied));
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
+        Assert.False(File.Exists(fixture.Temp));
+    }
+
+    [Theory]
+    [InlineData("none")]
+    [InlineData("temp-file")]
+    [InlineData("temp-directory")]
+    [InlineData("target")]
+    [InlineData("root-drift")]
+    [InlineData("cancel")]
+    public async Task TargetNamespaceProbeIsReadOnlyAndNeverAdoptsExistingEntries(string scenario)
+    {
+        using var fixture = new Fixture();
+        if (scenario is "temp-file" or "temp-directory" or "target")
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(fixture.Target)!);
+            if (scenario == "temp-directory") Directory.CreateDirectory(fixture.Temp);
+            else await File.WriteAllBytesAsync(scenario == "target" ? fixture.Target : fixture.Temp, fixture.Bytes);
+        }
+        if (scenario == "root-drift")
+        {
+            Directory.Move(fixture.NewRoot, fixture.NewRoot + ".held");
+            Directory.CreateDirectory(fixture.NewRoot);
+        }
+        var before = Directory.GetFileSystemEntries(fixture.NewRoot, "*", SearchOption.AllDirectories);
+        using var cancellation = new CancellationTokenSource();
+        if (scenario == "cancel") cancellation.Cancel();
+        var probe = new StorageRelocationPhysicalStore(new Barrier(false));
+        if (scenario == "none") await probe.VerifyUnoccupiedTargetsAsync(fixture.Journal.Manifest, default);
+        else await Assert.ThrowsAnyAsync<Exception>(() => probe.VerifyUnoccupiedTargetsAsync(fixture.Journal.Manifest, cancellation.Token));
+        Assert.Equal(before, Directory.GetFileSystemEntries(fixture.NewRoot, "*", SearchOption.AllDirectories));
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
+    }
+
+    [Fact]
+    public async Task PendingNamespaceCheckDoesNotRejectAlreadyStagedOwnedTemporaryFile()
+    {
+        using var fixture = new Fixture();
+        var physical = new StorageRelocationPhysicalStore(new Barrier());
+        var staged = await physical.StageAsync(fixture.Journal, fixture.Version, default);
+        var original = fixture.Journal.Manifest;
+        var version = new ArchiveVersionId(Guid.NewGuid());
+        var relative = new RelativeStoragePath("second.7z");
+        var source = Path.Combine(original.Roots[0].OldRoot.CanonicalPath, relative.Value);
+        await File.WriteAllBytesAsync(source, fixture.Bytes);
+        var second = new StorageRelocationEntry(new(Guid.NewGuid()), StorageRootKind.Current,
+            new(version, Sha256Digest.Hash(fixture.Bytes), fixture.Bytes.Length), relative,
+            StorageRelocationTempLayout.Create(original.TransactionId, version, relative), StorageRelocationPhysicalStore.InspectIdentity(source, false));
+        var manifest = new StorageRelocationManifest(original.TransactionId, original.PlanId, original.DeviceId,
+            original.ExecutionSemanticDigest, original.Roots, [original.Entries[0], second]);
+        var progress = StorageTransferProgress.Prepare(manifest.TransactionId, manifest.PlanId, manifest.Entries.Select(x => x.Artifact)).RecordStaged(staged);
+        var next = await physical.StageAsync(new(manifest, progress, 2), version, default);
+        Assert.Equal(version, next.VersionId);
+        Assert.Equal(staged.ObjectIdentity, StorageRelocationPhysicalStore.InspectIdentity(fixture.Temp, false));
+        // 已有 staged ownership 继续交给 PublishTarget；全量初次 probe 则仍拒绝已有 temp。
+        await Assert.ThrowsAsync<IOException>(() => physical.VerifyUnoccupiedTargetsAsync(fixture.Journal.Manifest, default));
+        await physical.PublishTargetAsync(fixture.Staged(staged), fixture.Version, default);
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Target));
+    }
+
+    [Theory]
     [InlineData(StorageRootKind.Current, false)]
     [InlineData(StorageRootKind.History, false)]
     [InlineData(StorageRootKind.Current, true)]

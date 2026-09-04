@@ -380,6 +380,8 @@ ArchiveVersion 的 durable identity 与 placement 分离：只记录 VersionId�
 
 # M5.2 retention durability boundary
 
+只读迁移检查可通过 `InspectTargetsAsync` 绑定拟用 transaction ID，调用独立 `IStorageRelocationTargetNamespaceProbe` 检查 final/事务 temp 的字面冲突与物理占用，再重验配置和 metadata。Stage 在写入前检查全部 Pending 目标和 temp，避免已知后续冲突造成前项复制；不会清除未知文件，也不会把 Staged 所有权误判为空路径。该检查不替代真实 case/encoding capability 或授权 Begin。
+
 迁移初次检查要求新目标根已存在，不自动创建；明确缺失时以 `StorageRelocationTargetRootMissingException` 和 `RELOCATION_TARGET_ROOT_MISSING` 提示用户创建，异常不携带设备路径。文件占位、链接或访问失败不能归类为缺失。已冻结 identity 的根在恢复中丢失仍是 drift，不重建；根内父目录沿用 Stage 的创建与 durability 规则。
 
 M5.3 配置 stale check 使用独立的 `StorageRelocationConfigurationFingerprint` identity/layout 投影，不复用 backup execution fingerprint。名称、定时、过滤规则、压缩级别变化不使迁移失效；authority、registration、identity/layout drift 则拒绝继续，root/binding safety 与 journal CAS 仍在事务边界独立重验。schema v5 已持久化独立 configuration checkpoint，并在原子根切换事务内重验配置、物理目标和 expected metadata；不重解释旧 manifest。
@@ -390,7 +392,7 @@ M5.3 Plan-scoped Output Reorganization / Storage Relocation 协议见 [`plan/STO
 
 只读 inventory 在一致数据库事务中提取全部选定根的 retained Current/History 与 immutable integrity/length，不依赖当前 active/declared unit 集合，不读取原始 Source/External，也不创建 journal 或物理 proof。它与 Begin/恢复/commit/compaction 复用 namespace 占用检查，包含 External local binding；External 绑定保存和 Plan 激活/发布也必须尊重现有 relocation reservation。inventory 不等于 readiness，完整物理 preview 仍待接入。
 
-`StorageRelocationInspectionWorkflow` 已把配置读取、metadata inventory、物理观察和配置/metadata 重验串为只读检查。物理端口捕获旧/新根和旧归档 native identity，逐项验证 SHA-256/length、根内 no-follow ancestors、目标不存在与根容量，并在返回前重验全体 namespace/identity。缺少目标父目录只记录为尚不存在，不创建目录；已有目标即使 bytes 相同也拒绝。结果是 `StorageRelocationPhysicalInventory` 瞬时观察，不是 durable proof 或 Begin authority；目标 filesystem case/encoding collision、事务 temp namespace、写入/barrier capability 与完整启动门槛仍需独立完成。
+`StorageRelocationInspectionWorkflow` 已把配置读取、metadata inventory、物理观察和配置/metadata 重验串为只读检查。物理端口捕获旧/新根和旧归档 native identity，逐项验证 SHA-256/length、根内 no-follow ancestors、目标不存在与根容量，并在返回前重验全体 namespace/identity。缺少目标父目录只记录为尚不存在，不创建目录；已有目标即使 bytes 相同也拒绝。结果是 `StorageRelocationPhysicalInventory` 瞬时观察，不是 durable proof 或 Begin authority；目标 filesystem case/encoding collision、写入/barrier capability 与完整启动门槛仍需独立完成。
 
 Application 的 StorageRelocationCapacityGuard 通过独立 probe 观察目标根所在卷的当前调用用户可用 bytes，同卷需求合并、观察值取最小值，未知/失败/不足一律阻止且没有 override。Infrastructure 使用 native volume/device identity 与实际目录容量查询，前后重验根 identity；Stage 在创建任何目标目录/temp 前检查全部 Pending 复制需求。已 staged 的 rename 和旧副本 cleanup 不重复要求剩余容量。只读 inventory 可单独调用同一 guard；容量是瞬时下界检查，不是空间预留或完整 Preview。
 
