@@ -27,3 +27,5 @@ Thumbs.db
 *.partial
 staging/
 secrets.dat
+
+.agents/
