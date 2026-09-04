@@ -21,7 +21,7 @@
                     <TextBlock Text="新建备份方案" FontSize="18" FontWeight="SemiBold" />
                     <TextBox Text="{Binding PlanName}" PlaceholderText="方案名称，例如：工作资料" AutomationProperties.Name="新方案名称" />
                     <TextBox Text="{Binding SourceName}" PlaceholderText="第一个备份源的名称，例如：项目" AutomationProperties.Name="备份源名称" />
-                    <TextBox Text="{Binding SourceOutputPath}" PlaceholderText="输出相对目录，例如：projects；留空使用输出根" AutomationProperties.Name="源输出相对目录" />
+                    <TextBox Text="{Binding SourceOutputPath}" PlaceholderText="输出相对目录（必填），例如：projects" AutomationProperties.Name="源输出相对目录" />
                     <TextBlock Text="初始设置：7z · 标准压缩 · 不加密 · 历史关闭 · 手动执行 · 保留链接对象 · Standard 变更检测。没有预设排除规则。" TextWrapping="Wrap" FontSize="12" />
                     <TextBlock Text="此步骤保存方案声明；物理目录和归档箱尚未配置，不能执行备份。相对目录不填写盘符或绝对路径。" TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
                     <Button Content="保存新方案" Command="{Binding CreatePlanCommand}" />

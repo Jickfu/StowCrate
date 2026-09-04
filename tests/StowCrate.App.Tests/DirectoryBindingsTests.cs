@@ -15,6 +15,19 @@ namespace StowCrate.App.Tests;
 
 public sealed class DirectoryBindingsTests
 {
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData(".")]
+    [InlineData("./")]
+    public async Task EmptyOutputDirectoryIsRejectedBeforePersistingPlan(string output)
+    {
+        using var fixture = new Fixture();
+        await fixture.Workspace.OpenDefaultAsync(TestContext.Current.CancellationToken);
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => fixture.Workspace.CreatePlanAsync(new("资料", "项目", output), TestContext.Current.CancellationToken));
+        Assert.Empty((await fixture.Workspace.OpenDefaultAsync(TestContext.Current.CancellationToken)).Plans);
+    }
+
     [AvaloniaFact]
     public async Task NewPlanCanBindAndReopenRealDirectories()
     {
@@ -22,7 +35,7 @@ public sealed class DirectoryBindingsTests
         var model = new MainViewModel(fixture.Workspace);
         Assert.False(model.Bindings.SaveCommand.CanExecute(null));
         await model.StartCommand.ExecuteAsync(null);
-        model.PlanName = "资料"; model.SourceName = "项目";
+        model.PlanName = "资料"; model.SourceName = "项目"; model.SourceOutputPath = "projects";
         await model.CreatePlanCommand.ExecuteAsync(null);
         Assert.True(model.SelectedPlan is not null, model.Status + " " + model.Details);
         var id = model.SelectedPlan!.Id;

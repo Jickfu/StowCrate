@@ -28,6 +28,10 @@ public sealed class RelocationWindowTests
         var model = new MainViewModel(new Workspace()) { PlanName = "资料", SourceName = "源" };
         Assert.False(model.CreatePlanCommand.CanExecute(null));
         await model.StartCommand.ExecuteAsync(null);
+        Assert.False(model.CreatePlanCommand.CanExecute(null));
+        model.SourceOutputPath = " ";
+        Assert.False(model.CreatePlanCommand.CanExecute(null));
+        model.SourceOutputPath = "projects";
         Assert.True(model.CreatePlanCommand.CanExecute(null));
         await model.CreatePlanCommand.ExecuteAsync(null);
         Assert.Equal("资料", model.SelectedPlan!.Name);

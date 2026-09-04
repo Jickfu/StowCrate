@@ -28,10 +28,12 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty] public partial string PlanName { get; set; } = "";
     [ObservableProperty] public partial string SourceName { get; set; } = "";
     [ObservableProperty] public partial string SourceOutputPath { get; set; } = "";
-    public bool CanCreatePlan => WorkspaceReady && CanEdit && !string.IsNullOrWhiteSpace(PlanName) && !string.IsNullOrWhiteSpace(SourceName);
+    public bool CanCreatePlan => WorkspaceReady && CanEdit && !string.IsNullOrWhiteSpace(PlanName)
+        && !string.IsNullOrWhiteSpace(SourceName) && !string.IsNullOrWhiteSpace(SourceOutputPath);
     partial void OnWorkspaceReadyChanged(bool value) => CreatePlanCommand.NotifyCanExecuteChanged();
     partial void OnPlanNameChanged(string value) => CreatePlanCommand.NotifyCanExecuteChanged();
     partial void OnSourceNameChanged(string value) => CreatePlanCommand.NotifyCanExecuteChanged();
+    partial void OnSourceOutputPathChanged(string value) => CreatePlanCommand.NotifyCanExecuteChanged();
     [ObservableProperty] public partial string DatabasePath { get; set; } = "";
     [ObservableProperty] public partial RelocationPlanChoice? SelectedPlan { get; set; }
     [ObservableProperty] public partial string NewCurrentRoot { get; set; } = "";
