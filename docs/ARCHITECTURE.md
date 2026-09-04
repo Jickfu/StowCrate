@@ -1,5 +1,7 @@
 # StowCrate 技术架构
 
+产品交付核对：底层阶段完成不代表 GUI/CLI 备份流程已完成。App 的默认产品入口应装配方案管理、源目录树配置、智能建议、预览与备份运行；当前存储维护窗口仅为阶段性工作台。业务逻辑继续留在 Application/Core，UI 与 CLI 应复用相同备份用例，不通过直接更新 SQLite 或绕过 readiness/publish 协议补齐界面。需求验收以 PRODUCT.md §5 为准，现状证据见 [原始需求核对](reviews/2026-09-04-ORIGINAL-REQUIREMENTS-AUDIT.md)。
+
 ## 1. 架构目标
 
 StowCrate 采用 C#、.NET 10、Avalonia 和 MVVM，核心为平台无关的模块化架构。首版同时交付 Windows、macOS 和 Linux，不得把任一平台的路径、API 或调度模型写入领域层。

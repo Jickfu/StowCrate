@@ -5,7 +5,7 @@
 
 StowCrate 将目录整理成一组可理解、可独立恢复的标准归档文件，而不是只有原软件才能读取的专有备份仓库。
 
-项目已进入 **Milestone 3 — Backup Plan Document Runtime**，采用 [Apache License 2.0](LICENSE)。
+项目正在 **Milestone 5 — 发布、历史与存储维护** 阶段，采用 [Apache License 2.0](LICENSE)。当前开发版尚未完成普通用户从配置到首次备份的完整流程。
 
 ## 设计原则
 
@@ -19,6 +19,7 @@ StowCrate 将目录整理成一组可理解、可独立恢复的标准归档文�
 
 - [产品设计](docs/PRODUCT.md)
 - [技术架构](docs/ARCHITECTURE.md)
+- [原始需求与实现核对（2026-09-04）](docs/reviews/2026-09-04-ORIGINAL-REQUIREMENTS-AUDIT.md)
 - [`.backupignore` v1 规范](docs/BACKUPIGNORE.md)
 - [Milestone 1 — Planning Kernel](docs/milestones/MILESTONE-1-PLANNING-KERNEL.md)
 - [Filesystem Semantics v1](docs/FILESYSTEM.md)
@@ -26,10 +27,13 @@ StowCrate 将目录整理成一组可理解、可独立恢复的标准归档文�
 - [Backup Plan Document v1](docs/BACKUPPLAN.md)
 - [Milestone 2 — Source Scanner & Filesystem Semantics](docs/milestones/MILESTONE-2-SOURCE-SCANNER.md)
 - [Milestone 3 — Backup Plan Document Runtime](docs/milestones/MILESTONE-3-BACKUP-PLAN-DOCUMENT.md)
+- [Milestone 5 — 发布、历史与存储维护](docs/milestones/MILESTONE-5-PUBLISH-HISTORY.md)
 - [仓库开发约束](AGENTS.md)
 
 ## 当前状态
 
 规划内核与 no-follow 真实文件系统 Scanner 已具备跨平台逻辑路径、规则合成、Archive Unit 边界、不可变 `ArchivePlan`、确定性 fingerprint 和可见扫描问题。
 
-Backup Plan v1 已完成 document/domain、device observation/resolution、Candidate/Readiness、strong fingerprints/change decision，以及 ExecutionSemanticSnapshot + ArchiveVersion/Baseline/PublishIntent durable contract。下一项是 M3.9 Local Durable State / config.db Schema Design & Repository Contracts；暂不实现 Avalonia UI、SQLite repository 或归档执行器。尚未决策事项统一记录在产品设计文档中。
+Backup Plan v1、SQLite 持久化、归档构建、Current/History 发布及多项恢复用例已有实现。桌面目前提供存储维护预览与已有迁移事务恢复；默认方案管理、目录树配置、智能向导、完整手动备份及 CLI/原生调度入口仍待接入。
+
+产品能力与当前适配器支持分开：例如当前 bundled 7-Zip 适配器拒绝尚未验证的 Privacy/Secure，迁移比较能力也只覆盖部分 Linux ext 场景。三平台 CI 通过不等于全部产品功能已在三平台交付。用户主流程验收见产品设计 §5；本次需求核对未改变 frozen 文档契约或恢复安全边界。

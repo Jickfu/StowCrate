@@ -1,5 +1,13 @@
 # Milestone 5 — Physical Current / History Publish & Durable Execution
 
+## 当前交付定位（2026-09-04 核对）
+
+M5.3 仍为 IMPLEMENTING。Begin/preflight 与独立 compaction 应用用例已实现；桌面已接入预览和已有事务恢复，新事务启动 UI、compaction UI、Output Reorganization 及其他平台比较能力仍待完成。下文按增量保留的“最新/下一项/尚未接入”记录应按其阶段理解，不能覆盖这里的当前状态。
+
+对照原始需求，当前维护工作台不构成默认备份 GUI 的交付。接下来应以 PRODUCT.md §5 的“新建方案 → 源目录树/归档箱 → 规则与智能建议 → 预览 → 手动备份/结果 → 定时运行与配置恢复”补齐产品主线，保留既有安全协议，不再用维护界面的完善替代主流程验收。详见 [需求核对与缺口](../reviews/2026-09-04-ORIGINAL-REQUIREMENTS-AUDIT.md)。这不将 M5.3 标记完成，也不删减其未完事项。
+
+## 既有实现增量记录
+
 实际复制加固：容量已按每条归档最近现存目标父目录所在卷计算，并在查询后重验目录布局；Stage 在创建 archive temp 前探测实际父目录 barrier，再重验 namespace/旧归档并响应取消。两项都不替代完整 Begin preflight，也不放宽复制后的持久化与 ownership 协议。
 
 M5.3 最新增量：只读检查已串联 authoritative configuration、一致 metadata inventory、旧归档完整性/identity、目标占用/目标目录容量与末尾配置/metadata 重验。容量未知或不足按已确认规则阻止；不创建目录或 journal。目标真实 case/encoding collision、写入/barrier capability 和 Begin 用户入口仍待接入，检查结果不声明可执行。
