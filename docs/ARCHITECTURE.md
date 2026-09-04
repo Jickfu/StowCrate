@@ -427,3 +427,5 @@ Manifest 编码 v2 契约：StorageRelocationIntent.ProtocolVersion 仍为 trans
 Application 新增目标目录持久化预检端口，Infrastructure 的 StorageRelocationPhysicalStore 实现现存目标根/父链 barrier 与前后 identity、namespace 重验，不创建文件或目录。屏障不可用明确拒绝；预检不是未来写入成功或 durable publication 的证明，不替代执行阶段的屏障。完整 Begin 编排仍待装配。
 
 Application 已提供 StorageRelocationBeginWorkflow：内部完成启动预检及最终配置/metadata 重验，以 manifest v2 + checkpoint 调用一次原子 Begin，只返回 PREPARED。预检结果不公开为可缓存的启动凭证。调用后失败报告携带 transaction ID 的 OutcomeUnknown，不自动重试或复制；成功返回后的取消不覆盖成功。App/CLI 组合根仍待装配。
+
+桌面存储维护预览已接入：App 组合根通过 Microsoft.Extensions.DependencyInjection 装配 MainViewModel 与 RelocationWorkspace。组合适配器调用既有配置库 opener、authoritative reader、path resolver 和 InspectTargets；ViewModel 只管理显示、选择、异步命令与取消，不构造基础设施或裁定迁移规则。检查在后台执行，结果回到界面线程更新。当前 UI 不调用 Begin/Resume/Compact，也不在打开库时自动执行归档恢复。

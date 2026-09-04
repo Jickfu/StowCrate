@@ -278,3 +278,9 @@ Scheduler installation 是 `PlanId + DeviceId` 下的本机状态，与 Plan 配
 本项目采用 Apache License 2.0，详见仓库根目录 `LICENSE`。
 
 迁移目标比较能力：无法可靠识别目标文件系统的大小写或 Unicode 比较规则时，必须阻止迁移并返回 RELOCATION_TARGET_COMPARISON_UNAVAILABLE；不提供强制继续，不创建探测文件。检查必须覆盖全部 final/temp 及父目录的实际规则和待创建目录的继承语义，不以操作系统默认值或规范化 comparison key 代替。Preview 保持只读。
+
+### 存储维护界面首个增量
+
+桌面主窗口提供已有配置库的打开入口、启用方案选择、当前 Current/History 根展示，以及新目标根的只读检查。配置库不存在时不新建；打开已有库沿用现有 schema 升级规则，并在入口提示。选择项展示方案名称与稳定 ID，以区分同名方案。
+
+检查调用真实 InspectTargets 用例，可取消；运行期间锁定配置库、方案和目标输入。改变方案、配置库或目标会清除旧检查结果。目标根缺失提示先创建，容量和比较能力不足明确阻止。此增量只提供预览，不提供执行、恢复或 compaction 按钮，不把检查通过显示为已迁移。
