@@ -13,7 +13,20 @@
                 <TextBlock Text="使用个人配置开始，或通过高级入口打开已有配置库。" TextWrapping="Wrap" />
                 <Button Content="开始使用" Command="{Binding StartCommand}" />
                 <TextBlock Text="配置由软件保存在当前用户的应用数据目录；备份源和归档输出位置独立选择。" TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
+                <TextBlock Text="{Binding Status}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <SelectableTextBlock Text="{Binding Details}" TextWrapping="Wrap" />
             </StackPanel>
+            <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" CornerRadius="12" Padding="22">
+                <StackPanel Spacing="12" IsEnabled="{Binding CanEdit}">
+                    <TextBlock Text="新建备份方案" FontSize="18" FontWeight="SemiBold" />
+                    <TextBox Text="{Binding PlanName}" PlaceholderText="方案名称，例如：工作资料" AutomationProperties.Name="新方案名称" />
+                    <TextBox Text="{Binding SourceName}" PlaceholderText="第一个备份源的名称，例如：项目" AutomationProperties.Name="备份源名称" />
+                    <TextBox Text="{Binding SourceOutputPath}" PlaceholderText="输出相对目录，例如：projects；留空使用输出根" AutomationProperties.Name="源输出相对目录" />
+                    <TextBlock Text="初始设置：7z · 标准压缩 · 不加密 · 历史关闭 · 手动执行 · 保留链接对象 · Standard 变更检测。没有预设排除规则。" TextWrapping="Wrap" FontSize="12" />
+                    <TextBlock Text="此步骤保存方案声明；物理目录和归档箱尚未配置，不能执行备份。相对目录不填写盘符或绝对路径。" TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
+                    <Button Content="保存新方案" Command="{Binding CreatePlanCommand}" />
+                </StackPanel>
+            </Border>
             <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" CornerRadius="12" Padding="22">
                 <StackPanel Spacing="12">
                     <TextBlock Text="高级：打开已有配置库" FontSize="18" FontWeight="SemiBold" />
@@ -50,8 +63,6 @@
                     <Button Content="取消操作" Command="{Binding CancelCommand}" IsVisible="{Binding IsBusy}" />
                 </StackPanel>
                 <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBusy}" Height="4" />
-                <TextBlock Text="{Binding Status}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" />
-                <SelectableTextBlock Text="{Binding Details}" TextWrapping="Wrap" />
                 <TextBlock Text="新迁移的启动入口尚未开放；已有事务可在下方显式恢复。" FontSize="12" Opacity="0.6" TextWrapping="Wrap" />
             </StackPanel>
             <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" CornerRadius="12" Padding="22">

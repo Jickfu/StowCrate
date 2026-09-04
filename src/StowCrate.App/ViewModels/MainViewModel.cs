@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using System.Collections.ObjectModel;
 using StowCrate.App.Services;
 using StowCrate.Application.StorageMaintenance;
+using StowCrate.Application.BackupPlans.Documents;
 
 namespace StowCrate.App.ViewModels;
 
@@ -10,6 +11,14 @@ public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBa
 {
     private CancellationTokenSource? operation;
     public ObservableCollection<RelocationPlanChoice> Plans { get; } = [];
+    [ObservableProperty] public partial bool WorkspaceReady { get; set; }
+    [ObservableProperty] public partial string PlanName { get; set; } = "";
+    [ObservableProperty] public partial string SourceName { get; set; } = "";
+    [ObservableProperty] public partial string SourceOutputPath { get; set; } = "";
+    public bool CanCreatePlan => WorkspaceReady && !IsBusy && !string.IsNullOrWhiteSpace(PlanName) && !string.IsNullOrWhiteSpace(SourceName);
+    partial void OnWorkspaceReadyChanged(bool value) => CreatePlanCommand.NotifyCanExecuteChanged();
+    partial void OnPlanNameChanged(string value) => CreatePlanCommand.NotifyCanExecuteChanged();
+    partial void OnSourceNameChanged(string value) => CreatePlanCommand.NotifyCanExecuteChanged();
     [ObservableProperty] public partial string DatabasePath { get; set; } = "";
     [ObservableProperty] public partial RelocationPlanChoice? SelectedPlan { get; set; }
     [ObservableProperty] public partial string NewCurrentRoot { get; set; } = "";
@@ -20,7 +29,7 @@ public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBa
     [ObservableProperty] public partial string JournalDetails { get; set; } = "尚未读取迁移事务。";
     [ObservableProperty] public partial bool RootsMayBeStale { get; set; }
     [ObservableProperty] public partial string Status { get; set; } = "点击“开始使用”打开个人配置，无需准备数据库。";
-    [ObservableProperty] public partial string Details { get; set; } = "可检查新目标，或读取已有迁移事务后明确选择继续。";
+    [ObservableProperty] public partial string Details { get; set; } = "打开配置后可新建方案；已有备份的迁移工具位于下方。";
     public bool CanEdit => !IsBusy;
     public bool CanPreview => !IsBusy && SelectedPlan is not null;
     public bool CanResume => !IsBusy && ConfirmResume && Journal is { Progress.Stage: not StorageTransferStage.Completed }
@@ -33,6 +42,7 @@ public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBa
         OnPropertyChanged(nameof(CanEdit)); OnPropertyChanged(nameof(CanPreview));
         OpenCommand.NotifyCanExecuteChanged(); PreviewCommand.NotifyCanExecuteChanged(); CancelCommand.NotifyCanExecuteChanged();
         StartCommand.NotifyCanExecuteChanged();
+        CreatePlanCommand.NotifyCanExecuteChanged();
         ReadJournalCommand.NotifyCanExecuteChanged(); ResumeCommand.NotifyCanExecuteChanged();
     }
     partial void OnSelectedPlanChanged(RelocationPlanChoice? value)
@@ -48,7 +58,7 @@ public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBa
     partial void OnJournalChanged(StorageRelocationJournal? value) { ConfirmResume = false; ResumeCommand.NotifyCanExecuteChanged(); }
     partial void OnNewCurrentRootChanged(string value) => InvalidatePreview();
     partial void OnNewHistoryRootChanged(string value) => InvalidatePreview();
-    partial void OnDatabasePathChanged(string value) { Plans.Clear(); SelectedPlan = null; InvalidatePreview(); }
+    partial void OnDatabasePathChanged(string value) { WorkspaceReady = false; Plans.Clear(); SelectedPlan = null; InvalidatePreview(); }
     private void InvalidatePreview()
     {
         Status = "尚未检查";
@@ -57,32 +67,51 @@ public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBa
     [RelayCommand(CanExecute = nameof(CanEdit))]
     private async Task StartAsync()
     {
+        WorkspaceReady = false;
         Plans.Clear(); SelectedPlan = null;
         await RunAsync(async token =>
         {
             var result = await Task.Run(() => workspace.OpenDefaultAsync(token), token);
             token.ThrowIfCancellationRequested();
             DatabasePath = result.DatabasePath;
+            WorkspaceReady = true;
             foreach (var plan in result.Plans) Plans.Add(plan);
             SelectedPlan = Plans.FirstOrDefault();
             Status = Plans.Count == 0 ? "个人配置已就绪，尚无备份方案" : $"已打开个人配置 · {Plans.Count} 个方案";
-            Details = "配置保存在当前用户的应用数据目录。此步骤不会创建备份或恢复迁移；创建方案界面正在接入。";
+            Details = "现在可以填写方案名称和备份源名称。保存方案后还需绑定目录并配置归档箱。";
         });
     }
 
     [RelayCommand(CanExecute = nameof(CanEdit))]
     private async Task OpenAsync()
     {
+        WorkspaceReady = false;
         var path = DatabasePath; Plans.Clear(); SelectedPlan = null;
         await RunAsync(async token =>
         {
             var plans = await Task.Run(() => workspace.OpenAsync(path, token), token);
             token.ThrowIfCancellationRequested();
+            WorkspaceReady = true;
             foreach (var plan in plans) Plans.Add(plan);
             SelectedPlan = Plans.FirstOrDefault();
             Status = plans.Length == 0 ? "配置库中没有启用的方案" : $"已加载 {plans.Length} 个方案";
             Details = "填写迁移目标后检查。此页面不会自动复制、恢复或清理归档。";
         });
+    }
+    [RelayCommand(CanExecute = nameof(CanCreatePlan))]
+    private async Task CreatePlanAsync()
+    {
+        if (!CanCreatePlan) return;
+        var request = new NewManagedPlanRequest(PlanName, SourceName, SourceOutputPath);
+        await RunAsync(async token =>
+        {
+            var plan = await Task.Run(() => workspace.CreatePlanAsync(request, token), token);
+            // 保存成功后即使收到迟到的取消，也必须展示已持久化的方案。
+            Plans.Add(plan); SelectedPlan = plan;
+            PlanName = ""; SourceName = ""; SourceOutputPath = "";
+            Status = "方案已保存 · 尚未完成备份配置";
+            Details = "方案保存在当前配置库中。尚未绑定源和输出目录、尚无归档箱；目录树配置入口正在接入。未执行备份。";
+        }, writingConfiguration: true);
     }
     [RelayCommand(CanExecute = nameof(CanPreview))]
     private async Task PreviewAsync()
@@ -149,16 +178,22 @@ public partial class MainViewModel(IRelocationWorkspace workspace) : ViewModelBa
         }, mayWrite: true);
     }
 
-    private async Task RunAsync(Func<CancellationToken, Task> action, bool mayWrite = false)
+    private async Task RunAsync(Func<CancellationToken, Task> action, bool mayWrite = false, bool writingConfiguration = false)
     {
         if (IsBusy) return;
         IsBusy = true; Status = "正在检查，请稍候…"; Details = "可取消当前操作。";
         using var cancellation = new CancellationTokenSource(); operation = cancellation;
         try { await action(cancellation.Token); }
-        catch (OperationCanceledException) { Status = "已取消"; Details = mayWrite ? "操作已停止，请重新读取原事务；取消不会回滚已提交的迁移。" : "未启动迁移。"; }
+        catch (OperationCanceledException)
+        {
+            Status = "已取消";
+            if (writingConfiguration) { WorkspaceReady = false; Details = "请重新打开配置库核对方案是否已保存，再决定是否重试。"; }
+            else Details = mayWrite ? "操作已停止，请重新读取原事务；取消不会回滚已提交的迁移。" : "未启动迁移。";
+        }
         catch (Exception exception)
         {
-            Status = mayWrite ? "操作未完成，请重新读取原事务" : "检查未通过";
+            if (writingConfiguration) WorkspaceReady = false;
+            Status = writingConfiguration ? "保存未确认，请重新打开配置库核对" : mayWrite ? "操作未完成，请重新读取原事务" : "检查未通过";
             Details = exception switch
             {
                 StorageRelocationTargetRootMissingException => "迁移目标根目录不存在，请先创建目录后重试。",

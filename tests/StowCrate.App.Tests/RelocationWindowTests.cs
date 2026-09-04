@@ -23,6 +23,21 @@ public static class TestApplication
 public sealed class RelocationWindowTests
 {
     [AvaloniaFact]
+    public async Task NewPlanRequiresOpenedDatabaseAndClearsFormAfterSaving()
+    {
+        var model = new MainViewModel(new Workspace()) { PlanName = "资料", SourceName = "源" };
+        Assert.False(model.CreatePlanCommand.CanExecute(null));
+        await model.StartCommand.ExecuteAsync(null);
+        Assert.True(model.CreatePlanCommand.CanExecute(null));
+        await model.CreatePlanCommand.ExecuteAsync(null);
+        Assert.Equal("资料", model.SelectedPlan!.Name);
+        Assert.Empty(model.PlanName);
+        Assert.False(model.CreatePlanCommand.CanExecute(null));
+        Assert.Contains("尚未完成", model.Status, StringComparison.Ordinal);
+        model.DatabasePath = "different.db";
+        Assert.False(model.WorkspaceReady);
+    }
+    [AvaloniaFact]
     public async Task StartUsesPersonalConfigurationWithoutManualPath()
     {
         var workspace = new Workspace();
@@ -33,6 +48,38 @@ public sealed class RelocationWindowTests
         Assert.NotNull(model.SelectedPlan);
         Assert.Equal(0, workspace.ResumeCalls);
         Assert.False(model.IsBusy);
+    }
+
+    [Fact]
+    public async Task CreatedManagedPlanSurvivesReopenWithoutInventingBindingsOrCrates()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "StowCrate-create-" + Guid.NewGuid());
+        try
+        {
+            var token = TestContext.Current.CancellationToken;
+            var workspace = new RelocationWorkspace(root);
+            var opened = await workspace.OpenDefaultAsync(token);
+            await Assert.ThrowsAnyAsync<ArgumentException>(() => workspace.CreatePlanAsync(new("资料", "项目", "../escape"), token));
+            Assert.Empty((await workspace.OpenDefaultAsync(token)).Plans);
+            var created = await workspace.CreatePlanAsync(new(" 资料 ", "项目", "projects"), token);
+            var reopened = await new RelocationWorkspace(root).OpenDefaultAsync(token);
+            Assert.Equal(created, Assert.Single(reopened.Plans));
+            var repository = await StowCrate.Infrastructure.Persistence.ConfigDb.ConfigDbOpenCoordinator.OpenAsync(opened.DatabasePath, null, null, token);
+            var saved = await new StowCrate.Application.BackupPlans.Documents.AuthoritativePlanWorkflow(repository,
+                new StowCrate.Infrastructure.Configuration.BackupPlans.BackupPlanDocumentSource()).LoadAsync(created.Id, token);
+            Assert.Equal(StowCrate.Application.LocalState.PlanAuthority.Managed, saved.Authority);
+            Assert.Equal("资料", saved.Plan.Name);
+            Assert.Equal("projects", Assert.Single(saved.Plan.Sources).SourceOutputPath.Value);
+            Assert.Empty(saved.Plan.ArchiveUnits);
+            Assert.Empty(saved.Plan.PlanRules);
+            Assert.IsType<NoProtection>(saved.Plan.ArchiveSpecDefault.Protection);
+            Assert.IsType<HistoryDisabled>(saved.Plan.HistoryDefault);
+            Assert.IsType<ManualOnlySchedule>(saved.Plan.Schedule);
+            Assert.Equal(PortableLinkPolicy.Preserve, saved.Plan.LinkPolicy);
+            var binding = await repository.LoadAsync(created.Id, token);
+            Assert.True(binding is null || (binding.Sources.IsEmpty && binding.CurrentRoot is null));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
     [Fact]
@@ -257,6 +304,8 @@ public sealed class RelocationWindowTests
 
     private sealed class Workspace : IRelocationWorkspace
     {
+        public Task<RelocationPlanChoice> CreatePlanAsync(StowCrate.Application.BackupPlans.Documents.NewManagedPlanRequest request, CancellationToken cancellationToken)
+            => Task.FromResult(new RelocationPlanChoice(new(Guid.NewGuid()), request.Name, "未绑定", "未绑定"));
         public async Task<DefaultWorkspaceResult> OpenDefaultAsync(CancellationToken token)
             => new("/user/StowCrate/config.db", await OpenAsync("/user/StowCrate/config.db", token));
         public StorageRelocationJournal? ExistingJournal { get; init; }
