@@ -107,6 +107,8 @@ Application 负责不可变 progress kernel、事务编排、recovery classifica
 
 ### 6.2 pre-commit 验证细节
 
+Stage 在创建 archive temp 前先探测其实际父目录 barrier，包含归档直接位于 root 的情况；不可用时不复制、不创建 archive temp。探测返回后重验旧归档 identity、新根/祖先、final/temp absence 并响应取消，再打开文件。该探测不证明后续写入必定成功，不替代复制/rename 后的真实 barrier，也不自动清除创建中途留下的目录；post-copy barrier 失败仍保留无 ownership temp 并按 ambiguous 处理。
+
 Stage 使用 destination-local CreateNew、流式 SHA-256/length、WriteThrough/flush-to-disk、创建时的 native temp identity，以及源/目标根与祖先 no-follow 重验。PublishTarget 只接受已记录的 staged identity，no-overwrite rename 后重做目录 barrier 和最终 integrity/identity 验证；如果 rename 已发生而 journal 落后，只有 target 是同一对象且 temp 已不存在才可补发证明。不同对象的相同 bytes 不构成 adoption authority。
 
 任何成功 proof 都要求 file data 与 namespace durability。平台 barrier 返回不可用时安全失败，尤其不能沿用旧 publisher 的 namespace-only 降级来声明 relocation durable。测试中的注入成功 barrier 仅验证控制流，不扩大平台能力；native barrier fixture 要么证明可用路径，要么验证拒绝。仍不宣称抵抗所有主动 hostile filesystem races，亦不将单机临时目录复制测试称为真实跨卷或突然断电验收。

@@ -48,6 +48,15 @@ public sealed partial class StorageRelocationPhysicalStore(IArchivePublishMetada
         var temp = Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.TempRelativePath);
         if (Exists(target) || Exists(temp)) throw new IOException("Relocation target or unowned temporary entry already exists.");
 
+        // 先排除目标父目录已知不支持持久化的情况，避免复制完成后才留下无 ownership 的 temp。
+        // 该探测不替代复制/rename 后的真实 barrier，也不声明目录写入权限已经被预留。
+        await BarrierAsync(Path.GetDirectoryName(temp)!, cancellationToken).ConfigureAwait(false);
+        Namespace(root.OldRoot.CanonicalPath, root.OldIdentity, entry.RelativePath);
+        RequireIdentity(source, false, entry.OldIdentity);
+        Namespace(root.NewRoot.CanonicalPath, root.NewIdentity, entry.RelativePath);
+        if (Exists(target) || Exists(temp)) throw new IOException("Relocation destination changed during durability check.");
+        cancellationToken.ThrowIfCancellationRequested();
+
         StorageObjectIdentity staged;
         await using (var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, 131072, FileOptions.Asynchronous | FileOptions.SequentialScan))
         await using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 131072, FileOptions.Asynchronous | FileOptions.WriteThrough))

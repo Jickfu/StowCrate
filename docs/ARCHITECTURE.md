@@ -380,6 +380,8 @@ ArchiveVersion 的 durable identity 与 placement 分离：只记录 VersionId�
 
 # M5.2 retention durability boundary
 
+迁移 Stage 在创建 archive temp 前检查实际目标父目录的 durability barrier，再重验 namespace/旧对象并响应取消；已知能力不足时不先复制。该检查不代替写入和 rename 后的持久化，不签发可缓存能力或 ownership proof。
+
 只读迁移检查可通过 `InspectTargetsAsync` 绑定拟用 transaction ID，调用独立 `IStorageRelocationTargetNamespaceProbe` 检查 final/事务 temp 的字面冲突与物理占用，再重验配置和 metadata。Stage 在写入前检查全部 Pending 目标和 temp，避免已知后续冲突造成前项复制；不会清除未知文件，也不会把 Staged 所有权误判为空路径。该检查不替代真实 case/encoding capability 或授权 Begin。
 
 迁移初次检查要求新目标根已存在，不自动创建；明确缺失时以 `StorageRelocationTargetRootMissingException` 和 `RELOCATION_TARGET_ROOT_MISSING` 提示用户创建，异常不携带设备路径。文件占位、链接或访问失败不能归类为缺失。已冻结 identity 的根在恢复中丢失仍是 drift，不重建；根内父目录沿用 Stage 的创建与 durability 规则。

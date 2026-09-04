@@ -1,5 +1,7 @@
 # Milestone 5 — Physical Current / History Publish & Durable Execution
 
+实际复制加固：容量已按每条归档最近现存目标父目录所在卷计算，并在查询后重验目录布局；Stage 在创建 archive temp 前探测实际父目录 barrier，再重验 namespace/旧归档并响应取消。两项都不替代完整 Begin preflight，也不放宽复制后的持久化与 ownership 协议。
+
 M5.3 最新增量：只读检查已串联 authoritative configuration、一致 metadata inventory、旧归档完整性/identity、目标占用/目标目录容量与末尾配置/metadata 重验。容量未知或不足按已确认规则阻止；不创建目录或 journal。目标真实 case/encoding collision、写入/barrier capability 和 Begin 用户入口仍待接入，检查结果不声明可执行。
 
 M5.3 pre-commit 增量：单条目显式恢复事务已接入 Stage/PublishTarget，使用数据库写锁和 revision CAS 防止并发物理动作。真实文件/SQLite 验证 copy 后写库失败不接纳残留 temp，rename 后写库失败按已记录 identity 恢复；该接口不自动 seal/commit/cleanup，整条恢复用例已由 ResumeAsync 接通。

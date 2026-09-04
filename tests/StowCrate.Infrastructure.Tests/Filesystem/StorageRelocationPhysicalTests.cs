@@ -438,7 +438,7 @@ public sealed partial class StorageRelocationPhysicalTests
     {
         using var fixture = new Fixture();
         Directory.CreateDirectory(Path.GetDirectoryName(fixture.Target)!);
-        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new FailSecondBarrier()).StageAsync(fixture.Journal, fixture.Version, default));
+        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new FailNthBarrier(3)).StageAsync(fixture.Journal, fixture.Version, default));
         Assert.True(File.Exists(fixture.Temp));
         await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new Barrier()).StageAsync(fixture.Journal, fixture.Version, default));
         Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
@@ -659,7 +659,7 @@ public sealed partial class StorageRelocationPhysicalTests
     {
         using var fixture = new Fixture();
         var journal = await CommittedPhysicalFixtureAsync(fixture);
-        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new FailSecondBarrier()).RemoveOldCopyAsync(journal, fixture.Version, default));
+        await Assert.ThrowsAsync<IOException>(() => new StorageRelocationPhysicalStore(new FailNthBarrier(2)).RemoveOldCopyAsync(journal, fixture.Version, default));
         Assert.False(File.Exists(fixture.Source));
         var proof = await new StorageRelocationPhysicalStore(new Barrier()).RemoveOldCopyAsync(journal, fixture.Version, default);
         Assert.Equal(fixture.Version, proof.Artifact.VersionId);
@@ -748,11 +748,11 @@ public sealed partial class StorageRelocationPhysicalTests
         if (drift == "temp") Assert.True(File.Exists(fixture.Temp));
     }
 
-    private sealed class FailSecondBarrier : IArchivePublishMetadataDurabilityBarrier
+    private sealed class FailNthBarrier(int failureCall) : IArchivePublishMetadataDurabilityBarrier
     {
         private int calls;
         public Task<PublishMetadataDurabilityProof> FlushDirectoryMetadataAsync(string destinationDirectory, CancellationToken cancellationToken)
-            => Task.FromResult(new PublishMetadataDurabilityProof(++calls != 2, "injected-test-barrier"));
+            => Task.FromResult(new PublishMetadataDurabilityProof(++calls != failureCall, "injected-test-barrier"));
     }
 
     private sealed class Barrier(bool completed = true) : IArchivePublishMetadataDurabilityBarrier
