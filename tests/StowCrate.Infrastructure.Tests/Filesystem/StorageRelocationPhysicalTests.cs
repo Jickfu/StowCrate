@@ -7,7 +7,7 @@ using StowCrate.Infrastructure.Filesystem;
 
 namespace StowCrate.Infrastructure.Tests.Filesystem;
 
-public sealed class StorageRelocationPhysicalTests
+public sealed partial class StorageRelocationPhysicalTests
 {
     [Theory]
     [InlineData("none")]
@@ -259,7 +259,9 @@ public sealed class StorageRelocationPhysicalTests
                 Directory.CreateDirectory(path);
             }
         }));
-        await Assert.ThrowsAsync<IOException>(() => physical.ObserveInventoryAsync(inventory, default));
+        if (drift == "target")
+            await Assert.ThrowsAsync<StorageRelocationCapacityException>(() => physical.ObserveInventoryAsync(inventory, default));
+        else await Assert.ThrowsAsync<IOException>(() => physical.ObserveInventoryAsync(inventory, default));
         Assert.False(File.Exists(fixture.Temp));
     }
 

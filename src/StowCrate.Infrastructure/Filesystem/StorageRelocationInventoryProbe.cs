@@ -28,10 +28,7 @@ public sealed partial class StorageRelocationPhysicalStore : IStorageRelocationI
             await VerifyAsync(source, identity, entry.Artifact, cancellationToken).ConfigureAwait(false);
             entries.Add(new(entry, identity));
         }
-        // 容量观察必须绑定本次捕获的目标根，不能把替换后的目录空间用于原观察。
-        var summaries = await capacity.CheckAsync(roots.Select(root => new StorageCapacityNeed(root.NewRoot,
-            inventory.Entries.Where(x => x.RootKind == root.Kind).Aggregate(0L, (sum, x) => checked(sum + x.Artifact.Length)),
-            root.NewIdentity)), cancellationToken).ConfigureAwait(false);
+        var summaries = await CheckDestinationCapacityAsync(roots, inventory.Entries, cancellationToken).ConfigureAwait(false);
 
         // 后续文件哈希或容量 I/O 期间，较早条目可能被替换；返回前重验整个 namespace。
         foreach (var root in roots)

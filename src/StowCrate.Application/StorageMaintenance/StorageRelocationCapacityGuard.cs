@@ -23,6 +23,7 @@ public interface IStorageRelocationCapacityProbe
 /// <summary>容量只是一时观察和 bytes 下界，不是空间预留；未知一律失败，没有强制继续参数。</summary>
 public sealed class StorageRelocationCapacityGuard(IStorageRelocationCapacityProbe probe)
 {
+    /// <summary>仅按 metadata 根分组的估算；物理检查须解析实际目标父目录并调用 CheckAsync，不能据此授权复制。</summary>
     public Task<ImmutableArray<StorageCapacitySummary>> CheckInventoryAsync(StorageRelocationInventory inventory, CancellationToken token)
     {
         ArgumentNullException.ThrowIfNull(inventory);
@@ -33,6 +34,7 @@ public sealed class StorageRelocationCapacityGuard(IStorageRelocationCapacityPro
             inventory.Entries.Where(x => x.RootKind == root.Kind).Aggregate(0L, (sum, x) => checked(sum + x.Artifact.Length)))), token);
     }
 
+    /// <summary>仅按 journal 根分组的估算；不处理根下独立挂载卷，实际 Stage 使用物理目录解析后的需求。</summary>
     public Task<ImmutableArray<StorageCapacitySummary>> CheckPendingAsync(StorageRelocationJournal journal, CancellationToken token)
     {
         var pending = journal.Progress.Artifacts.Where(x => x.Stage == StorageTransferArtifactStage.Pending).Select(x => x.Artifact.VersionId).ToHashSet();

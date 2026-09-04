@@ -42,7 +42,7 @@ Journal 必须保存 transaction UUID、PlanId、DeviceId、kind、协议版本�
 
 `InspectTargetsAsync` 接受拟用的非空 transaction ID，并在物理 inventory 后检查全部 final 与该事务的 temp 路径；之后仍重读配置和 metadata。目标检查独立返回 transaction-bound observation，不构造含占位摘要的 manifest。检查包括 final/temp 字面重名或父子冲突、现存文件/目录占位、no-follow 父目录与冻结新根 identity；缺失父目录不创建。同内容文件也不能采用或删除。真实目标文件系统的 case/encoding 等价性仍是独立门槛，不能用该字面检查替代。实际 Stage 在容量检查后、创建任何目录/temp 前，重查全部 Pending 条目的 final/temp；Staged/TargetDurable 条目不按空路径处理，其 ownership 仍由既有恢复协议独立验证。
 
-只读检查增量：`StorageRelocationInspectionWorkflow.InspectAsync` 先读取 authoritative configuration 与一致 metadata inventory，调用 `IStorageRelocationInventoryProbe` 验证旧归档 opaque bytes、旧/新根 identity、根内 ancestors、目标占用与容量，最后重新读取配置和 metadata 集合。配置相关漂移、placement/root 集合变化或新增维护互锁均拒绝返回成功；无关名称变化仍允许。物理检查末尾重验整个集合的 namespace/identity，包含零条目的根。预检不创建目录、不签发 durable proof、不构造 journal；结果不代表完整 Preview 可执行。仍需补齐目标真实 case/encoding collision 和写入/barrier capability 门槛后才可接入 Begin。容量为根所在卷的瞬时下界观察，不能替代完整目标布局的 filesystem 检查；也不承诺跨文件原子快照或防御主动 hostile race。
+只读检查增量：`StorageRelocationInspectionWorkflow.InspectAsync` 先读取 authoritative configuration 与一致 metadata inventory，调用 `IStorageRelocationInventoryProbe` 验证旧归档 opaque bytes、旧/新根 identity、根内 ancestors、目标占用与容量，最后重新读取配置和 metadata 集合。配置相关漂移、placement/root 集合变化或新增维护互锁均拒绝返回成功；无关名称变化仍允许。物理检查末尾重验整个集合的 namespace/identity，包含零条目的根。预检不创建目录、不签发 durable proof、不构造 journal；结果不代表完整 Preview 可执行。仍需补齐目标真实 case/encoding collision 和写入/barrier capability 门槛后才可接入 Begin。容量为最近现存目标父目录所在卷的瞬时下界观察，不能替代完整目标布局的 filesystem 检查；也不承诺跨文件原子快照或防御主动 hostile race。
 
 1. Preview 无写入：inventory、容量、no-follow root/ancestor、collision 与 overlap 校验；未知内容只诊断，不加入 manifest。
 2. SQLite 原子 Begin：保存完整 manifest、root reservation 和 `PREPARED`。此时旧 metadata 与旧文件保持不变。
@@ -72,6 +72,8 @@ Journal 必须保存 transaction UUID、PlanId、DeviceId、kind、协议版本�
 取消在条目稳定边界生效：pre-commit 保留旧 authority 与 journal，可恢复继续；不是自动丢弃事务，也不自动清理无 proof 的副本。namespace mutation 开始后忽略取消直到写入可恢复状态。metadata commit 后取消不能把成功报告为失败，未完成清理持久保留。新操作不得绕过挂起事务。
 
 ## 5. 模块与验收
+
+物理 inventory 与 Stage 逐条定位 final/temp 最近的现存父目录，逐级 no-follow 并捕获其 native identity；容量查询使用该目录所在卷，不用选定输出根所在卷替代。新建的根内父目录继承最近现存父目录的位置；查询前后完整重做目录定位，最近父目录路径或 identity 改变即拒绝旧容量结果。按 probe 返回的 volume identity 合并各目录需求，根内多个卷分别计费，同卷仍合并；零条目的 inventory 根保留零需求查询，Stage 只处理 Pending。此观察仍不是预留空间或抵抗所有并发挂载替换的瞬时快照，Windows reparse/mount alias 继续按现有 no-follow 规则拒绝。Application 按根分组的 convenience 方法仅为 metadata 估算，不进入实际复制许可链。
 
 容量策略已由维护者确认：查询失败、未知或不可信即阻止，不提供 override。容量 guard 以当前调用用户可用 bytes 为准，按 native volume/device identity 合并同卷目标需求，并取同卷各观察值的最小值；不把旧副本空间提前抵扣。需求是待复制归档 Length 之和的下界，checked 溢出或非法事实不放行；不宣称预留空间或覆盖 filesystem allocation/metadata 开销。inventory 容量检查为只读；实际 Stage 在任何目标目录/temp 创建之前重新检查全部 Pending 条目的剩余需求，已 staged/target durable 不重复计费。容量不足/无法查询不会创建本次条目的输出；已提交阶段的 rename/cleanup 不以新一次容量查询为前提。平台 probe 重验目标目录 no-follow identity，路径替换不沿用旧查询结果。
 

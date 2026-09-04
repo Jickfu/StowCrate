@@ -392,9 +392,9 @@ M5.3 Plan-scoped Output Reorganization / Storage Relocation 协议见 [`plan/STO
 
 只读 inventory 在一致数据库事务中提取全部选定根的 retained Current/History 与 immutable integrity/length，不依赖当前 active/declared unit 集合，不读取原始 Source/External，也不创建 journal 或物理 proof。它与 Begin/恢复/commit/compaction 复用 namespace 占用检查，包含 External local binding；External 绑定保存和 Plan 激活/发布也必须尊重现有 relocation reservation。inventory 不等于 readiness，完整物理 preview 仍待接入。
 
-`StorageRelocationInspectionWorkflow` 已把配置读取、metadata inventory、物理观察和配置/metadata 重验串为只读检查。物理端口捕获旧/新根和旧归档 native identity，逐项验证 SHA-256/length、根内 no-follow ancestors、目标不存在与根容量，并在返回前重验全体 namespace/identity。缺少目标父目录只记录为尚不存在，不创建目录；已有目标即使 bytes 相同也拒绝。结果是 `StorageRelocationPhysicalInventory` 瞬时观察，不是 durable proof 或 Begin authority；目标 filesystem case/encoding collision、写入/barrier capability 与完整启动门槛仍需独立完成。
+`StorageRelocationInspectionWorkflow` 已把配置读取、metadata inventory、物理观察和配置/metadata 重验串为只读检查。物理端口捕获旧/新根和旧归档 native identity，逐项验证 SHA-256/length、根内 no-follow ancestors、目标不存在与目标目录容量，并在返回前重验全体 namespace/identity。缺少目标父目录只记录为尚不存在，不创建目录；已有目标即使 bytes 相同也拒绝。结果是 `StorageRelocationPhysicalInventory` 瞬时观察，不是 durable proof 或 Begin authority；目标 filesystem case/encoding collision、写入/barrier capability 与完整启动门槛仍需独立完成。
 
-Application 的 StorageRelocationCapacityGuard 通过独立 probe 观察目标根所在卷的当前调用用户可用 bytes，同卷需求合并、观察值取最小值，未知/失败/不足一律阻止且没有 override。Infrastructure 使用 native volume/device identity 与实际目录容量查询，前后重验根 identity；Stage 在创建任何目标目录/temp 前检查全部 Pending 复制需求。已 staged 的 rename 和旧副本 cleanup 不重复要求剩余容量。只读 inventory 可单独调用同一 guard；容量是瞬时下界检查，不是空间预留或完整 Preview。
+Application 的 StorageRelocationCapacityGuard 通过独立 probe 观察指定现存目录所在卷的当前调用用户可用 bytes，同卷需求合并、观察值取最小值，未知/失败/不足一律阻止且没有 override。Infrastructure 使用 native volume/device identity 与实际目录容量查询，前后重验根 identity；Stage 在创建任何目标目录/temp 前检查全部 Pending 复制需求。已 staged 的 rename 和旧副本 cleanup 不重复要求剩余容量。只读 inventory 可单独调用同一 guard；容量是瞬时下界检查，不是空间预留或完整 Preview。
 
 Application 启动协调器枚举并完整校验所有 relocation 日志（含 inactive Plan），未提交状态只报告待显式恢复，已提交状态可通过注入物理清理端口逐项恢复；完成后仍保留 reservation。缺少适配器或可恢复错误报告 CleanupPending，损坏继续向上传播。存在 reservation 的 Plan 跳过旧 publish/retention recovery 与 History inventory，避免恢复入口绕过互锁。尚未装配 App/CLI 用户入口，也不自动释放路径。
 
