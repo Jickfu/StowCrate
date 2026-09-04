@@ -1,5 +1,9 @@
 using System.Collections.Immutable;
 using Avalonia.Headless.XUnit;
+using Avalonia.Controls;
+using Avalonia.Headless;
+using Avalonia.VisualTree;
+using StowCrate.App.Views;
 using StowCrate.App.Services;
 using StowCrate.App.ViewModels;
 using StowCrate.Application.BackupPlans.Documents;
@@ -15,6 +19,127 @@ namespace StowCrate.App.Tests;
 
 public sealed class DirectoryBindingsTests
 {
+    [AvaloniaFact]
+    public async Task SourceTreeUsesSavedBindingAndKeepsNestedDirectoriesAndRawControlFile()
+    {
+        using var fixture = new Fixture();
+        var model = new MainViewModel(fixture.Workspace);
+        await model.StartCommand.ExecuteAsync(null);
+        model.PlanName = "资料"; model.SourceName = "项目 / 文件"; model.SourceOutputPath = "projects";
+        await model.CreatePlanCommand.ExecuteAsync(null);
+        Assert.False(model.SourceTree.ReadCommand.CanExecute(null));
+        var source = fixture.Directory("source");
+        System.IO.Directory.CreateDirectory(Path.Combine(source, "B", "D"));
+        await File.WriteAllTextAsync(Path.Combine(source, "B", "D", "中文.txt"), "payload", TestContext.Current.CancellationToken);
+        var control = Path.Combine(source, "B", ".backupignore");
+        await File.WriteAllBytesAsync(control, [0xff, 0xfe], TestContext.Current.CancellationToken);
+        model.Bindings.Sources[0].Path = source;
+        model.Bindings.CurrentRoot = fixture.Directory("current");
+        await model.Bindings.SaveCommand.ExecuteAsync(null);
+        Assert.True(model.SourceTree.ReadCommand.CanExecute(null));
+        // 草稿路径与持久绑定分离；浏览不得读到未保存目录。
+        model.Bindings.Sources[0].Path = fixture.Directory("unsaved");
+        await model.SourceTree.ReadCommand.ExecuteAsync(null);
+        Assert.Equal(source, model.SourceTree.RootPath);
+        var root = Assert.Single(model.SourceTree.Roots);
+        Assert.Equal("项目 / 文件", root.Name);
+        var b = Assert.Single(root.Children);
+        Assert.Contains(b.Children, x => x.Name == ".backupignore" && x.Kind == "文件");
+        Assert.Equal("中文.txt", Assert.Single(b.Children.Single(x => x.Name == "D").Children).Name);
+        Assert.Empty(model.SourceTree.Issues);
+        Assert.Equal(new byte[] { 0xff, 0xfe }, await File.ReadAllBytesAsync(control, TestContext.Current.CancellationToken));
+        Assert.Empty(System.IO.Directory.EnumerateFileSystemEntries(model.Bindings.CurrentRoot));
+        var window = new MainWindow { DataContext = model };
+        window.Show();
+        try
+        {
+            var tree = window.GetVisualDescendants().OfType<TreeView>().Single();
+            Assert.Single(tree.Items);
+            if (tree.ContainerFromIndex(0) is TreeViewItem container) tree.ExpandSubTree(container);
+            tree.BringIntoView();
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            using var frame = window.CaptureRenderedFrame();
+            Assert.NotNull(frame);
+            if (Environment.GetEnvironmentVariable("STOWCRATE_UI_SCREENSHOT") is { Length: > 0 } output)
+                frame.Save(Path.ChangeExtension(output, "source-tree.png"), new Avalonia.Media.Imaging.PngBitmapEncoderOptions());
+        }
+        finally { window.Close(); }
+        model.DatabasePath = "other.db";
+        Assert.Empty(model.SourceTree.Roots); Assert.Empty(model.SourceTree.Sources);
+    }
+
+    [AvaloniaFact]
+    public async Task MissingSourceIsVisibleAndClearsPreviousTree()
+    {
+        using var fixture = new Fixture();
+        var initial = await fixture.Create();
+        var source = fixture.Directory("source");
+        var saved = await fixture.Workspace.SaveBindingsAsync(new(initial,
+            [new(initial.Configuration.Plan.Sources[0].Id, source)], fixture.Directory("current"), null), TestContext.Current.CancellationToken);
+        var model = new SourceTreeViewModel(fixture.Workspace);
+        model.SetSnapshot(saved);
+        await model.ReadCommand.ExecuteAsync(null);
+        Assert.Single(model.Roots);
+        System.IO.Directory.Delete(source);
+        await model.ReadCommand.ExecuteAsync(null);
+        Assert.Empty(model.Roots);
+        Assert.Contains("读取失败", model.Status, StringComparison.Ordinal);
+        Assert.Contains("SCFS0001", model.Issues, StringComparison.Ordinal);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancelledOrReplacedSelectionDiscardsLateTree(bool replaceSelection)
+    {
+        using var fixture = new Fixture();
+        var initial = await fixture.Create();
+        var saved = await fixture.Workspace.SaveBindingsAsync(new(initial,
+            [new(initial.Configuration.Plan.Sources[0].Id, fixture.Directory("source"))], fixture.Directory("current"), null), TestContext.Current.CancellationToken);
+        var result = await fixture.Workspace.ReadSourceTreeAsync(saved.Configuration.Plan.Id, saved.Configuration.Plan.Sources[0].Id, TestContext.Current.CancellationToken);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<SourceTreeObservation>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var workspace = new UncertainWorkspace(fixture.Workspace) { TreeRead = (_, _, _) => { entered.SetResult(); return release.Task; } };
+        var model = new SourceTreeViewModel(workspace);
+        model.SetSnapshot(saved);
+        var read = model.ReadCommand.ExecuteAsync(null);
+        await entered.Task;
+        Assert.False(model.CanSelect); Assert.False(model.ReadCommand.CanExecute(null));
+        if (replaceSelection) model.SetSnapshot(null); else model.CancelCommand.Execute(null);
+        release.SetResult(result);
+        await read;
+        Assert.Empty(model.Roots); Assert.Empty(model.RootPath); Assert.False(model.IsBusy);
+        if (!replaceSelection) Assert.Contains("已取消", model.Status, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ChangedSavedBindingDiscardsObservation()
+    {
+        using var fixture = new Fixture();
+        var initial = await fixture.Create();
+        var id = initial.Configuration.Plan.Sources[0].Id;
+        var saved = await fixture.Workspace.SaveBindingsAsync(new(initial,
+            [new(id, fixture.Directory("source"))], fixture.Directory("current"), null), TestContext.Current.CancellationToken);
+        var repository = await fixture.Repository();
+        var identity = await repository.LoadAsync(TestContext.Current.CancellationToken);
+        var authority = new AuthoritativePlanWorkflow(repository, new BackupPlanDocumentSource());
+        var editor = new DirectoryBindingEditorWorkflow(authority, repository,
+            new(identity!, repository, new StowCrate.Infrastructure.Filesystem.LocalPhysicalPathResolver()),
+            new StowCrate.Infrastructure.Filesystem.ExistingBindingDirectoryProbe());
+        var workflow = new SourceTreeWorkflow(editor, new CallbackTreeReader(async token =>
+        {
+            var result = await fixture.Workspace.ReadSourceTreeAsync(initial.Configuration.Plan.Id, id, token);
+            await fixture.Workspace.SaveBindingsAsync(new(saved, [new(id, fixture.Directory("replacement"))], fixture.Directory("current"), null), token);
+            return result.Scan;
+        }));
+        await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => workflow.ReadAsync(initial.Configuration.Plan.Id, id, TestContext.Current.CancellationToken));
+    }
+
+    private sealed class CallbackTreeReader(Func<CancellationToken, Task<StowCrate.Core.Filesystem.SourceScanResult>> read) : ISourceTreeReader
+    {
+        public Task<StowCrate.Core.Filesystem.SourceScanResult> ReadAsync(SourceId sourceId, string savedRoot, CancellationToken token) => read(token);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData(" ")]
@@ -146,6 +271,9 @@ public sealed class DirectoryBindingsTests
 
     private sealed class UncertainWorkspace(IRelocationWorkspace inner) : IRelocationWorkspace
     {
+        public Func<PlanId, SourceId, CancellationToken, Task<SourceTreeObservation>>? TreeRead { get; init; }
+        public Task<SourceTreeObservation> ReadSourceTreeAsync(PlanId planId, SourceId sourceId, CancellationToken token)
+            => TreeRead is null ? inner.ReadSourceTreeAsync(planId, sourceId, token) : TreeRead(planId, sourceId, token);
         public int Writes { get; private set; }
         public bool FailReadAfterWrite { get; init; }
         public Task<DirectoryBindingSnapshot> LoadBindingsAsync(PlanId id, CancellationToken token)

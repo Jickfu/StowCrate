@@ -11,18 +11,32 @@ public partial class MainViewModel : ViewModelBase
 {
     private readonly IRelocationWorkspace workspace;
     public DirectoryBindingsViewModel Bindings { get; }
+    public SourceTreeViewModel SourceTree { get; }
     public MainViewModel(IRelocationWorkspace workspace)
     {
         this.workspace = workspace;
         Bindings = new(workspace);
+        SourceTree = new(workspace);
+        SourceTree.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(SourceTreeViewModel.IsBusy)) OnIsBusyChanged(IsBusy);
+        };
         Bindings.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(DirectoryBindingsViewModel.IsBusy)) OnIsBusyChanged(IsBusy);
             if (args.PropertyName == nameof(DirectoryBindingsViewModel.Loaded))
-            { OnPropertyChanged(nameof(CurrentRootDisplay)); OnPropertyChanged(nameof(HistoryRootDisplay)); }
+            {
+                OnPropertyChanged(nameof(CurrentRootDisplay)); OnPropertyChanged(nameof(HistoryRootDisplay));
+                if (!ReferenceEquals(sourceTreeSnapshot, Bindings.Loaded))
+                {
+                    sourceTreeSnapshot = Bindings.Loaded;
+                    SourceTree.SetSnapshot(sourceTreeSnapshot);
+                }
+            }
         };
     }
     private CancellationTokenSource? operation;
+    private StowCrate.Application.LocalState.DirectoryBindingSnapshot? sourceTreeSnapshot;
     public ObservableCollection<RelocationPlanChoice> Plans { get; } = [];
     [ObservableProperty] public partial bool WorkspaceReady { get; set; }
     [ObservableProperty] public partial string PlanName { get; set; } = "";
@@ -45,7 +59,7 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty] public partial bool RootsMayBeStale { get; set; }
     [ObservableProperty] public partial string Status { get; set; } = "点击“开始使用”打开个人配置，无需准备数据库。";
     [ObservableProperty] public partial string Details { get; set; } = "打开配置后可新建方案；已有备份的迁移工具位于下方。";
-    public bool CanEdit => !IsBusy && !Bindings.IsBusy;
+    public bool CanEdit => !IsBusy && !Bindings.IsBusy && !SourceTree.IsBusy;
     public bool CanPreview => CanEdit && SelectedPlan is not null;
     public bool CanResume => CanEdit && ConfirmResume && Journal is { Progress.Stage: not StorageTransferStage.Completed }
         && SelectedPlan?.Id == Journal.Manifest.PlanId;
@@ -54,7 +68,8 @@ public partial class MainViewModel : ViewModelBase
     partial void OnRootsMayBeStaleChanged(bool value) { OnPropertyChanged(nameof(CurrentRootDisplay)); OnPropertyChanged(nameof(HistoryRootDisplay)); }
     partial void OnIsBusyChanged(bool value)
     {
-        Bindings.HostBusy = value;
+        Bindings.HostBusy = value || SourceTree.IsBusy;
+        SourceTree.HostBusy = value || Bindings.IsBusy;
         OnPropertyChanged(nameof(CanEdit)); OnPropertyChanged(nameof(CanPreview));
         OpenCommand.NotifyCanExecuteChanged(); PreviewCommand.NotifyCanExecuteChanged(); CancelCommand.NotifyCanExecuteChanged();
         StartCommand.NotifyCanExecuteChanged();

@@ -8,6 +8,8 @@ M5.3 仍为 IMPLEMENTING。Begin/preflight 与独立 compaction 应用用例已�
 
 ## 既有实现增量记录
 
+默认备份主线新增源目录树只读浏览：个人配置、新建 Managed 方案和目录绑定后，可以选择已保存的源并查看嵌套目录、文件、链接及扫描问题，支持取消并清除过期观察。未应用过滤或解析 `.backupignore`，未创建归档箱、候选计划或归档。下一步接入显式归档箱配置及保存，再补规则编辑与备份预览；完整主流程与 M5.3 均未完成。
+
 实际复制加固：容量已按每条归档最近现存目标父目录所在卷计算，并在查询后重验目录布局；Stage 在创建 archive temp 前探测实际父目录 barrier，再重验 namespace/旧归档并响应取消。两项都不替代完整 Begin preflight，也不放宽复制后的持久化与 ownership 协议。
 
 M5.3 最新增量：只读检查已串联 authoritative configuration、一致 metadata inventory、旧归档完整性/identity、目标占用/目标目录容量与末尾配置/metadata 重验。容量未知或不足按已确认规则阻止；不创建目录或 journal。目标真实 case/encoding collision、写入/barrier capability 和 Begin 用户入口仍待接入，检查结果不声明可执行。

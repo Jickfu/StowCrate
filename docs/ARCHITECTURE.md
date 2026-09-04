@@ -4,6 +4,8 @@
 
 ## 1. 架构目标
 
+源目录树只读增量由 Application 的 `SourceTreeWorkflow` 读取 authoritative configuration 和持久化 Source binding，通过 `ISourceTreeReader` 获取观察，末尾重验配置语义及所选源绑定。Infrastructure 的 `SourceTreeReader` 复用 `SourceScanner` 的 no-follow、特殊对象、文件系统边界和取消规则，关闭规则文本读取与内容 hash；扫描前后重解析已保存路径，拒绝路径别名漂移。它不是原子文件系统快照，也不产生 Candidate、readiness 或发布凭证。App 组合适配器装配用例；ViewModel 在后台扫描并组装展示树，清除过期选择和迟到结果，保留全部扫描问题。当前按源全量读取后展示，尚未实现按目录懒加载或大树增量呈现；不把只读浏览当成归档箱发现/配置或备份预览。
+
 本机绑定解析必须同时保留本次输入的 lexical comparison key 与解析父目录 Link/Junction 后的 physical comparison key，用于提交前 overlap 校验；持久化仍只保存实际采用的 canonical path/key。解析失败、悬空链接或循环不能退回字符串路径。当前通用解析器拒绝绑定对象自身为链接/重解析点，避免消除 Source/External 的 no-follow 身份；父目录链接按分量解析。该校验不替代运行前的真实目录、文件系统比较能力与 TOCTOU 检查。
 
 StowCrate 采用 C#、.NET 10、Avalonia 和 MVVM，核心为平台无关的模块化架构。首版同时交付 Windows、macOS 和 Linux，不得把任一平台的路径、API 或调度模型写入领域层。

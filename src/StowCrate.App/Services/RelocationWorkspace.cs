@@ -13,6 +13,7 @@ public sealed record RelocationPlanChoice(PlanId Id, string Name, string Current
 public sealed record DefaultWorkspaceResult(string DatabasePath, ImmutableArray<RelocationPlanChoice> Plans);
 public interface IRelocationWorkspace
 {
+    Task<SourceTreeObservation> ReadSourceTreeAsync(PlanId planId, SourceId sourceId, CancellationToken cancellationToken);
     Task<DirectoryBindingSnapshot> LoadBindingsAsync(PlanId id, CancellationToken cancellationToken);
     Task<DirectoryBindingSnapshot> SaveBindingsAsync(DirectoryBindingEdit edit, CancellationToken cancellationToken);
     Task<RelocationPlanChoice> CreatePlanAsync(NewManagedPlanRequest request, CancellationToken cancellationToken);
@@ -31,6 +32,9 @@ public sealed class RelocationWorkspace(string? applicationDataDirectory = null)
     private readonly LocalPhysicalPathResolver paths = new();
     private AuthoritativePlanWorkflow? authority;
     private DirectoryBindingEditorWorkflow? bindingEditor;
+    public Task<SourceTreeObservation> ReadSourceTreeAsync(PlanId planId, SourceId sourceId, CancellationToken cancellationToken)
+        => new SourceTreeWorkflow(bindingEditor ?? throw new InvalidOperationException("请先打开配置库。"), new SourceTreeReader())
+            .ReadAsync(planId, sourceId, cancellationToken);
     public Task<DirectoryBindingSnapshot> LoadBindingsAsync(PlanId id, CancellationToken cancellationToken)
         => (bindingEditor ?? throw new InvalidOperationException("请先打开配置库。")).LoadAsync(id, cancellationToken);
     public Task<DirectoryBindingSnapshot> SaveBindingsAsync(DirectoryBindingEdit edit, CancellationToken cancellationToken)

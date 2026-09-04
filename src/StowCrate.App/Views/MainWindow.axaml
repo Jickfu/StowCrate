@@ -86,6 +86,29 @@
                 </StackPanel>
             </Border>
             <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" CornerRadius="12" Padding="22">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="源目录树" FontSize="18" FontWeight="SemiBold" />
+                    <StackPanel DataContext="{Binding SourceTree}" x:DataType="vm:SourceTreeViewModel" Spacing="10">
+                        <ComboBox ItemsSource="{Binding Sources}" SelectedItem="{Binding SelectedSource}" IsEnabled="{Binding CanSelect}" HorizontalAlignment="Stretch" PlaceholderText="请先保存源目录绑定" AutomationProperties.Name="浏览备份源">
+                            <ComboBox.ItemTemplate><DataTemplate x:DataType="vm:SourceTreeChoice"><TextBlock Text="{Binding Name}" /></DataTemplate></ComboBox.ItemTemplate>
+                        </ComboBox>
+                        <Button Content="读取源目录树" Command="{Binding ReadCommand}" />
+                        <Button Content="取消读取" Command="{Binding CancelCommand}" IsVisible="{Binding IsBusy}" />
+                        <SelectableTextBlock Text="{Binding RootPath}" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding Status}" TextWrapping="Wrap" />
+                        <TreeView ItemsSource="{Binding Roots}" MaxHeight="360" AutomationProperties.Name="源目录树">
+                            <TreeView.ItemTemplate>
+                                <TreeDataTemplate x:DataType="vm:SourceTreeNode" ItemsSource="{Binding Children}">
+                                    <StackPanel Orientation="Horizontal" Spacing="12"><TextBlock Text="{Binding Name}" /><TextBlock Text="{Binding Kind}" Opacity="0.65" /></StackPanel>
+                                </TreeDataTemplate>
+                            </TreeView.ItemTemplate>
+                        </TreeView>
+                        <SelectableTextBlock Text="{Binding Issues}" TextWrapping="Wrap" />
+                        <TextBlock Text="只浏览已保存的源目录，未应用过滤规则。归档箱配置与备份预览尚未接入；显示的文件不表示会被备份。" TextWrapping="Wrap" FontSize="12" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" CornerRadius="12" Padding="22">
                 <StackPanel Spacing="12" IsEnabled="{Binding CanEdit}">
                     <TextBlock Text="存储迁移维护" FontSize="18" FontWeight="SemiBold" />
                     <TextBlock Text="当前 Current 根" FontWeight="SemiBold" />

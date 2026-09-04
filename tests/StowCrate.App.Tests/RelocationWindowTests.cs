@@ -308,6 +308,8 @@ public sealed class RelocationWindowTests
 
     private sealed class Workspace : IRelocationWorkspace
     {
+        public Task<StowCrate.Application.LocalState.SourceTreeObservation> ReadSourceTreeAsync(PlanId planId, SourceId sourceId, CancellationToken token)
+            => throw new NotSupportedException();
         public Task<StowCrate.Application.LocalState.DirectoryBindingSnapshot> LoadBindingsAsync(PlanId id, CancellationToken cancellationToken)
             => Task.FromException<StowCrate.Application.LocalState.DirectoryBindingSnapshot>(new InvalidOperationException("此测试不提供目录绑定。"));
         public Task<StowCrate.Application.LocalState.DirectoryBindingSnapshot> SaveBindingsAsync(StowCrate.Application.LocalState.DirectoryBindingEdit edit, CancellationToken cancellationToken)
