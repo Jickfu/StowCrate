@@ -380,6 +380,8 @@ ArchiveVersion 的 durable identity 与 placement 分离：只记录 VersionId�
 
 # M5.2 retention durability boundary
 
+迁移初次检查要求新目标根已存在，不自动创建；明确缺失时以 `StorageRelocationTargetRootMissingException` 和 `RELOCATION_TARGET_ROOT_MISSING` 提示用户创建，异常不携带设备路径。文件占位、链接或访问失败不能归类为缺失。已冻结 identity 的根在恢复中丢失仍是 drift，不重建；根内父目录沿用 Stage 的创建与 durability 规则。
+
 M5.3 配置 stale check 使用独立的 `StorageRelocationConfigurationFingerprint` identity/layout 投影，不复用 backup execution fingerprint。名称、定时、过滤规则、压缩级别变化不使迁移失效；authority、registration、identity/layout drift 则拒绝继续，root/binding safety 与 journal CAS 仍在事务边界独立重验。schema v5 已持久化独立 configuration checkpoint，并在原子根切换事务内重验配置、物理目标和 expected metadata；不重解释旧 manifest。
 
 M5.3 Plan-scoped Output Reorganization / Storage Relocation 协议见 [`plan/STORAGE-MAINTENANCE-v1.md`](plan/STORAGE-MAINTENANCE-v1.md)。全量目标 durable 后才可原子切换 metadata，旧副本清理在 commit 后；当前按协议分层实现，不能把 progress kernel 或 metadata-only port 当作已交付物理迁移。

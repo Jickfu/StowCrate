@@ -60,6 +60,8 @@ Plan、Source、Archive Unit、External Source 与 Secret Slot 都具有与名�
 
 已有 Current/History 后改变 CurrentRoot 或 HistoryRoot 必须走受控 relocation：复制或 staging 到新 root、验证 SHA-256、发布完整目标后才提交 binding；失败继续以旧 root 为事实源。relocation 不重压缩、不创建新 ArchiveVersion、不推进 baseline。同一设备跨 Plan 还必须禁止任何 writable Current/History root 与其他 Plan 的 Source/Current/History root 重叠。
 
+迁移目标根目录必须由用户事先创建。目标根不存在时阻止迁移并提示“迁移目标根目录不存在，请先创建目录后重试”，程序不自动创建目标根。该限制不禁止迁移开始后按已验证清单创建根内所需的归档父目录；已开始迁移的根丢失或被替换仍按恢复异常处理，不自动重建。
+
 迁移已有归档不要求原始 Backup Source 或 External Source 在线，也不要求取得归档解密密钥。它只搬迁已经生成的归档字节，不重新扫描原始文件、不重新归档或解密；这不代表可以在源离线时生成新备份。迁移仍须读取有效的 authoritative Plan 配置，验证持久化记录、旧/新归档完整性及路径安全；配置不可读或无法证明路径安全时仍阻止。旧归档所在磁盘与新目标必须可访问，不能把旧归档离线误当成原始源离线。
 
 普通路径设置不能通过省略、停用或改写输出根绕过上述迁移流程；已有备份位置或尚未收敛的恢复/清理工作依赖该根时，保存必须整体拒绝并报告需要受控迁移，保留原绑定。初次绑定及无此类持久状态的输出根仍可正常编辑。

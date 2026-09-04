@@ -12,7 +12,7 @@ public sealed partial class StorageRelocationPhysicalStore : IStorageRelocationI
         cancellationToken.ThrowIfCancellationRequested();
         ValidateInventory(inventory);
         var roots = inventory.Roots.Select(x => new StorageRelocationRoot(x.Kind, x.OldRoot, x.NewRoot,
-            InspectIdentity(x.OldRoot.CanonicalPath, true), InspectIdentity(x.NewRoot.CanonicalPath, true))).ToImmutableArray();
+            InspectIdentity(x.OldRoot.CanonicalPath, true), InspectTargetRoot(x))).ToImmutableArray();
         var identities = roots.SelectMany(x => new[] { x.OldIdentity, x.NewIdentity }).ToArray();
         if (identities.Distinct().Count() != identities.Length)
             throw new IOException("Relocation inventory roots alias the same object.");
@@ -49,6 +49,27 @@ public sealed partial class StorageRelocationPhysicalStore : IStorageRelocationI
         }
         cancellationToken.ThrowIfCancellationRequested();
         return new(inventory, roots, entries.ToImmutable(), summaries);
+    }
+
+    private static StorageObjectIdentity InspectTargetRoot(StorageRelocationRootPaths root)
+    {
+        try { return InspectIdentity(root.NewRoot.CanonicalPath, true); }
+        // 只把明确的不存在映射为创建提示；访问失败、链接、文件占位不得伪装成缺失。
+        catch (FileNotFoundException) { ThrowMissingTargetRoot(root); throw; }
+        catch (DirectoryNotFoundException) { ThrowMissingTargetRoot(root); throw; }
+    }
+
+    private static void ThrowMissingTargetRoot(StorageRelocationRootPaths root)
+    {
+        var parent = Path.GetDirectoryName(Path.GetFullPath(root.NewRoot.CanonicalPath));
+        while (parent is not null)
+        {
+            try { _ = InspectIdentity(parent, true); break; }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
+            parent = Path.GetDirectoryName(parent);
+        }
+        throw new StorageRelocationTargetRootMissingException(root.Kind);
     }
 
     private static void RequireInventoryTargetAbsent(StorageRelocationRoot root, RelativeStoragePath relative)

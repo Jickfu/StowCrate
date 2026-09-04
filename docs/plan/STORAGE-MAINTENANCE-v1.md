@@ -14,6 +14,8 @@ Output Reorganization 与 Storage Relocation 使用同一 Plan-scoped transfer p
 
 ## 2. 冻结事实和互斥
 
+目标根创建规则已由维护者确认：选定的新 CurrentRoot/HistoryRoot 必须预先存在，程序不自动创建。初次物理检查明确发现目标根不存在时返回 `RELOCATION_TARGET_ROOT_MISSING`，提示用户先创建目录；访问拒绝、链接或文件占位不映射为缺失。根内归档父目录仍可在已启动迁移的 Stage 中按原协议创建。durable journal 已捕获 identity 后根丢失/替换仍拒绝恢复，不通过重建根重新授权。
+
 ### 2.1 原始输入离线边界
 
 维护者已确认：原始 Backup Source/External input 离线时允许迁移已有归档，不要求解密密钥。协议中的 copy source/旧源指旧 Current/History 归档，不是原始输入树；旧归档和目标根不可访问仍必须失败。迁移按 immutable ArchiveVersion 的 SHA-256/length 验证 opaque bytes，不调用扫描、FILE_MANAGED discovery、备份 Candidate/readiness、Archiver 或 Secret material 服务。

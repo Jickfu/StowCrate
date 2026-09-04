@@ -9,6 +9,50 @@ namespace StowCrate.Infrastructure.Tests.Filesystem;
 
 public sealed class StorageRelocationPhysicalTests
 {
+    [Theory]
+    [InlineData(StorageRootKind.Current, false)]
+    [InlineData(StorageRootKind.History, false)]
+    [InlineData(StorageRootKind.Current, true)]
+    public async Task MissingTargetRootRequestsUserCreationWithoutWriting(StorageRootKind kind, bool missingParent)
+    {
+        using var fixture = new Fixture();
+        Directory.Move(fixture.NewRoot, fixture.NewRoot + ".held");
+        var inventory = Inventory(fixture);
+        var target = missingParent ? Path.Combine(fixture.NewRoot, "child") : fixture.NewRoot;
+        inventory = inventory with
+        {
+            Roots = [inventory.Roots[0] with { Kind = kind, NewRoot = new(target, target.Replace('\\', '/')) }],
+            Entries = [inventory.Entries[0] with { RootKind = kind }]
+        };
+        var error = await Assert.ThrowsAsync<StorageRelocationTargetRootMissingException>(() =>
+            new StorageRelocationPhysicalStore().ObserveInventoryAsync(inventory, default));
+        Assert.Equal(kind, error.RootKind);
+        Assert.Equal("RELOCATION_TARGET_ROOT_MISSING", error.DiagnosticCode);
+        Assert.Contains("请先创建目录", error.Message);
+        Assert.DoesNotContain(target, error.Message);
+        Assert.False(Directory.Exists(fixture.NewRoot));
+        Assert.Equal(fixture.Bytes, await File.ReadAllBytesAsync(fixture.Source));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FileOccupyingTargetRootOrParentIsNotReportedAsMissing(bool parentFile)
+    {
+        using var fixture = new Fixture();
+        Directory.Move(fixture.NewRoot, fixture.NewRoot + ".held");
+        await File.WriteAllTextAsync(fixture.NewRoot, "keep");
+        var inventory = Inventory(fixture);
+        if (parentFile)
+        {
+            var path = Path.Combine(fixture.NewRoot, "child");
+            inventory = inventory with { Roots = [inventory.Roots[0] with { NewRoot = new(path, path.Replace('\\', '/')) }] };
+        }
+        var error = await Assert.ThrowsAnyAsync<IOException>(() => new StorageRelocationPhysicalStore().ObserveInventoryAsync(inventory, default));
+        Assert.IsNotType<StorageRelocationTargetRootMissingException>(error);
+        Assert.Equal("keep", await File.ReadAllTextAsync(fixture.NewRoot));
+    }
+
     private static StorageRelocationInventory Inventory(Fixture fixture)
     {
         var manifest = fixture.Journal.Manifest;
