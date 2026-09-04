@@ -45,13 +45,25 @@
             <StackPanel Spacing="12">
                 <StackPanel Orientation="Horizontal" Spacing="10">
                     <Button Content="检查迁移目标" Command="{Binding PreviewCommand}" />
-                    <Button Content="取消检查" Command="{Binding CancelCommand}" IsVisible="{Binding IsBusy}" />
+                    <Button Content="取消操作" Command="{Binding CancelCommand}" IsVisible="{Binding IsBusy}" />
                 </StackPanel>
                 <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBusy}" Height="4" />
                 <TextBlock Text="{Binding Status}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" />
                 <SelectableTextBlock Text="{Binding Details}" TextWrapping="Wrap" />
-                <TextBlock Text="当前版本提供迁移预览；执行与恢复入口尚未开放。" FontSize="12" Opacity="0.6" TextWrapping="Wrap" />
+                <TextBlock Text="新迁移的启动入口尚未开放；已有事务可在下方显式恢复。" FontSize="12" Opacity="0.6" TextWrapping="Wrap" />
             </StackPanel>
+            <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}" BorderThickness="1" CornerRadius="12" Padding="22">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="3  已有迁移事务" FontSize="18" FontWeight="SemiBold" />
+                    <Button Content="读取迁移事务" Command="{Binding ReadJournalCommand}" />
+                    <SelectableTextBlock Text="{Binding JournalDetails}" TextWrapping="Wrap" />
+                    <CheckBox IsChecked="{Binding ConfirmResume}" IsEnabled="{Binding CanEdit}">
+                        <TextBlock Text="我确认继续上述事务：复制并提交后会清理清单中的旧副本。取消不会回滚已提交的迁移。" TextWrapping="Wrap" />
+                    </CheckBox>
+                    <Button Content="继续所选迁移事务" Command="{Binding ResumeCommand}" />
+                    <TextBlock Text="仅使用原事务的冻结路径；上方填写的新目标不参与恢复。完成后根目录保护仍保留。" FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
         </StackPanel>
     </ScrollViewer>
 </Window>

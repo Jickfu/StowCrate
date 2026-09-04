@@ -95,3 +95,5 @@ Manifest v2 已移除旧 execution 摘要字段，新建日志强制原子冻结
 显式 Begin Application 用例已接入现有 inventory、容量、比较、namespace 与目录屏障预检，并在最终配置/metadata 重验后原子创建 v2 日志。真实 SQLite 组合验证预检拒绝、回滚、提交后响应丢失与取消，成功路径继续完成迁移和清理。M5.3 仍为 IMPLEMENTING；App/CLI 用户入口、其他平台比较能力和 Output Reorganization 继续待办。
 
 桌面主窗口已从模板替换为存储维护预览：打开已有 config.db、选择启用方案、显示现有根并检查目标，支持取消和输入锁定，显示真实能力不足诊断。仅预览入口已开放；执行/恢复/compaction 用户入口、其他平台比较能力与 Output Reorganization 仍待完成，M5.3 保持 IMPLEMENTING。
+
+已有迁移事务的桌面读取与显式恢复已接入，展示冻结路径和阶段并要求针对所选事务确认；已提交清理待继续与操作结果未确认分别呈现。操作后须重新读取，不自动释放 reservation。新迁移启动 UI、compaction UI、其他平台比较能力及 Output Reorganization 仍待完成。

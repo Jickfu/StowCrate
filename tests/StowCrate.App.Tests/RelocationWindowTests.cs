@@ -103,14 +103,120 @@ public sealed class RelocationWindowTests
         Assert.False(File.Exists(path));
     }
 
+    [AvaloniaTheory]
+    [InlineData(StorageRelocationRecoveryStatus.ResumeRequired, "仍需恢复")]
+    [InlineData(StorageRelocationRecoveryStatus.CleanupPending, "清理待继续")]
+    [InlineData(StorageRelocationRecoveryStatus.CompletedReservationsRetained, "保护仍保留")]
+    [InlineData(StorageRelocationRecoveryStatus.OutcomeUnknown, "未确认")]
+    public async Task ExplicitResumeUsesFrozenTransactionAndPreservesOutcome(StorageRelocationRecoveryStatus outcome, string expected)
+    {
+        var workspace = new Workspace { ExistingJournal = Journal(), ResumeOutcome = outcome };
+        var model = new MainViewModel(workspace);
+        await model.OpenCommand.ExecuteAsync(null);
+        await model.ReadJournalCommand.ExecuteAsync(null);
+        Assert.Equal(0, workspace.ResumeCalls);
+        Assert.False(model.ResumeCommand.CanExecute(null));
+        model.NewCurrentRoot = "/ignored-new-input";
+        model.ConfirmResume = true;
+        Assert.True(model.ResumeCommand.CanExecute(null));
+        await model.ResumeCommand.ExecuteAsync(null);
+        Assert.Equal(1, workspace.ResumeCalls);
+        Assert.Equal(workspace.ExistingJournal.Manifest.TransactionId, workspace.ResumedTransaction);
+        Assert.Contains(expected, model.Status, StringComparison.Ordinal);
+        Assert.Null(model.Journal); Assert.False(model.ConfirmResume);
+        Assert.False(model.ResumeCommand.CanExecute(null));
+        Assert.Contains("可能已更新", model.CurrentRootDisplay, StringComparison.Ordinal);
+    }
+
+    [AvaloniaFact]
+    public async Task ChangingDatabaseDropsPreviouslyConfirmedRecovery()
+    {
+        var workspace = new Workspace { ExistingJournal = Journal() };
+        var model = new MainViewModel(workspace);
+        await model.OpenCommand.ExecuteAsync(null);
+        await model.ReadJournalCommand.ExecuteAsync(null);
+        model.ConfirmResume = true;
+        model.DatabasePath = "other.db";
+        Assert.Null(model.Journal); Assert.False(model.ResumeCommand.CanExecute(null));
+        Assert.False(model.ConfirmResume); Assert.Equal(0, workspace.ResumeCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task CompletedJournalCannotBeResumedFromUi()
+    {
+        var journal = Journal();
+        var completed = journal.Progress.SealTargets().MarkMetadataCommitted().Complete();
+        var model = new MainViewModel(new Workspace { ExistingJournal = journal with { Progress = completed } });
+        await model.OpenCommand.ExecuteAsync(null);
+        await model.ReadJournalCommand.ExecuteAsync(null);
+        model.ConfirmResume = true;
+        Assert.False(model.ResumeCommand.CanExecute(null));
+    }
+
+    private static StorageRelocationJournal Journal()
+    {
+        var transaction = Guid.NewGuid(); var plan = new PlanId(Guid.NewGuid());
+        var manifest = new StorageRelocationManifest(transaction, plan, new(Guid.NewGuid()),
+            [new(StorageRootKind.Current, new("/old", "/old"), new("/new", "/new"), new("test", 1, "old"), new("test", 1, "new"))], []);
+        return new(manifest, StorageTransferProgress.Prepare(transaction, plan, []), 1);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InterruptedResumeRequiresFreshReadWithoutReplay(bool cancelled)
+    {
+        var workspace = new Workspace { ExistingJournal = Journal(), ResumeFailure = cancelled ? new OperationCanceledException() : new IOException("response unavailable") };
+        var model = new MainViewModel(workspace);
+        await model.OpenCommand.ExecuteAsync(null); await model.ReadJournalCommand.ExecuteAsync(null);
+        model.ConfirmResume = true;
+        await model.ResumeCommand.ExecuteAsync(null);
+        Assert.Equal(1, workspace.ResumeCalls); Assert.Null(model.Journal);
+        Assert.False(model.ResumeCommand.CanExecute(null));
+        if (cancelled) Assert.Contains("不会回滚", model.Details, StringComparison.Ordinal);
+        else Assert.Contains("重新读取", model.Status, StringComparison.Ordinal);
+    }
+
+    [AvaloniaFact]
+    public async Task RecoveryPanelRendersFrozenPathsBeforeConfirmation()
+    {
+        var model = new MainViewModel(new Workspace { ExistingJournal = Journal() });
+        var window = new MainWindow { DataContext = model };
+        window.Show();
+        try
+        {
+            await model.OpenCommand.ExecuteAsync(null); await model.ReadJournalCommand.ExecuteAsync(null);
+            Assert.Contains("/old → /new", model.JournalDetails, StringComparison.Ordinal);
+            Assert.False(model.ResumeCommand.CanExecute(null));
+            window.GetVisualDescendants().OfType<ScrollViewer>().First().Offset = new Vector(0, 2000);
+            using var frame = window.CaptureRenderedFrame();
+            Assert.NotNull(frame);
+            if (Environment.GetEnvironmentVariable("STOWCRATE_UI_SCREENSHOT") is { Length: > 0 } output)
+                frame.Save(Path.ChangeExtension(output, "recovery.png"), new Avalonia.Media.Imaging.PngBitmapEncoderOptions());
+        }
+        finally { window.Close(); }
+    }
+
     private sealed class Workspace : IRelocationWorkspace
     {
+        public StorageRelocationJournal? ExistingJournal { get; init; }
+        public StorageRelocationRecoveryStatus ResumeOutcome { get; init; }
+        public Exception? ResumeFailure { get; init; }
+        public int ResumeCalls { get; private set; }
+        public Guid ResumedTransaction { get; private set; }
+        public Task<StorageRelocationJournal?> LoadJournalAsync(PlanId planId, CancellationToken token) => Task.FromResult(ExistingJournal);
+        public Task<StorageRelocationRecoveryResult> ResumeAsync(PlanId planId, Guid transactionId, CancellationToken token)
+        {
+            ResumeCalls++; ResumedTransaction = transactionId;
+            if (ResumeFailure is not null) throw ResumeFailure;
+            return Task.FromResult(new StorageRelocationRecoveryResult(planId, transactionId, ResumeOutcome, null));
+        }
         public Exception? Failure { get; init; }
         public bool WaitForCancellation { get; init; }
         public bool Succeed { get; init; }
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<ImmutableArray<RelocationPlanChoice>> OpenAsync(string path, CancellationToken token)
-            => Task.FromResult<ImmutableArray<RelocationPlanChoice>>([new(new(Guid.NewGuid()), "测试方案", "/current", "/history")]);
+            => Task.FromResult<ImmutableArray<RelocationPlanChoice>>([new(ExistingJournal?.Manifest.PlanId ?? new(Guid.NewGuid()), "测试方案", "/current", "/history")]);
         public async Task<StorageRelocationTargetInspection> InspectAsync(PlanId planId, string? currentRoot, string? historyRoot, CancellationToken token)
         {
             Entered.SetResult();

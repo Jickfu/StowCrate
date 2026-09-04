@@ -429,3 +429,5 @@ Application 新增目标目录持久化预检端口，Infrastructure 的 Storage
 Application 已提供 StorageRelocationBeginWorkflow：内部完成启动预检及最终配置/metadata 重验，以 manifest v2 + checkpoint 调用一次原子 Begin，只返回 PREPARED。预检结果不公开为可缓存的启动凭证。调用后失败报告携带 transaction ID 的 OutcomeUnknown，不自动重试或复制；成功返回后的取消不覆盖成功。App/CLI 组合根仍待装配。
 
 桌面存储维护预览已接入：App 组合根通过 Microsoft.Extensions.DependencyInjection 装配 MainViewModel 与 RelocationWorkspace。组合适配器调用既有配置库 opener、authoritative reader、path resolver 和 InspectTargets；ViewModel 只管理显示、选择、异步命令与取消，不构造基础设施或裁定迁移规则。检查在后台执行，结果回到界面线程更新。当前 UI 不调用 Begin/Resume/Compact，也不在打开库时自动执行归档恢复。
+
+桌面恢复增量通过 RelocationWorkspace 装配已有 StorageRelocationRecoveryWorkflow.ResumeAsync，ViewModel 只处理事务选择、明确确认、状态显示与取消。只读 LoadJournal 与有副作用 Resume 分离；调用后清除可重用 UI 选择，不自动重放。应用用例继续拥有冻结日志校验、revision CAS、物理验证、提交及清理规则。打开配置库包含 inactive retained journal 的方案；不自动调用 startup recovery 或 compaction。
