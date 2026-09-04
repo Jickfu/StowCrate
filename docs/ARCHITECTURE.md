@@ -388,6 +388,8 @@ Application 启动协调器枚举并完整校验所有 relocation 日志（含 i
 
 独立 `CompactRelocationAsync` 仅接受 Completed + revision CAS，事务内重验新 binding/placement/reservation/互锁及只读物理 completion probe 后，原子移除本事务日志与 reservation。物理核验要求所有根、目标 identity/integrity、旧路径与 temp absence、目录 barrier；任何漂移或失败保留保护。该接口不删除文件、不回滚新 binding，不在启动恢复自动调用。
 
+`ResumeRelocationEntryAsync` 为 pre-commit 单条目恢复提供事务形状入口：数据库写锁覆盖当前日志/配置/根/placement/reservation 校验、Stage 或 PublishTarget 与 proof 持久化。复制/发布前 CAS 拒绝竞争调用；成功 proof 后不可取消地落日志。复制后写库失败仍留下无 ownership 的 ambiguous temp，rename 后失败可根据已持久化 staged identity 补记 target。该安全边界会在单个大归档 I/O 期间占用 SQLite 写锁，是当前保守实现的吞吐限制；整条 Application 显式恢复编排和用户入口尚未接入。
+
 Root relocation 的前置检查必须与 backup execution readiness 分离：通过 authoritative document/registration 与 durable storage facts 验证迁移，不以 `ExecutionReadyArchive`、源扫描、FILE_MANAGED discovery、Secret Store 或归档解密能力为前提。原始 Source/External 离线不阻止已有归档搬迁；持久 local root safety facts 仍需重验，未知/冲突安全事实不得放行。旧/新 archive roots 与字节完整性必须现场验证。该许可不放宽正常备份的 source/secret readiness，也不允许 File-backed 文档缺失时回退缓存。
 
 config.db v4 持久化 root relocation 的 immutable canonical manifest、版本化 progress 与 old/new root reservations；v5 在 Begin、staged proof、target proof 和 seal 之外增加带 durable configuration checkpoint 的原子 root commit，没有任意 progress overwrite 或提前 metadata switch。v6 增加逐项 OldCopyAbsent 与 COMPLETED 持久化，repository 在事务内重验新 binding/placement/reservation、调用物理清理并验证关联 proof；删除后写库失败可通过重新证明 absence 恢复。COMPLETED 仍保留全部 reservation 和互锁，独立 compaction 尚未开放。Begin 与所有冲突 mutation 在 SQLite 事务内检查互斥；inactive Plan 尚存 publish/retention/cleanup 恢复工作时，其根也不能被新迁移占用。journal/root projection 损坏必须阻止访问与冲突保存，不得解释成没有 reservation。

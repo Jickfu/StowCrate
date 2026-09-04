@@ -1,5 +1,7 @@
 # Milestone 5 — Physical Current / History Publish & Durable Execution
 
+M5.3 pre-commit 增量：单条目显式恢复事务已接入 Stage/PublishTarget，使用数据库写锁和 revision CAS 防止并发物理动作。真实文件/SQLite 验证 copy 后写库失败不接纳残留 temp，rename 后写库失败按已记录 identity 恢复；该接口不自动 seal/commit/cleanup，整条恢复用例仍待实现。
+
 M5.3 最新增量：独立 completion probe 与原子 compaction 已实现并测试，完成日志不再是无法释放的永久互锁。只有现场重验和 repository CAS 同时成功才移除迁移日志/reservation，不删除文件；仍未接入用户入口或启动自动释放。pre-commit 恢复、全量 preflight、Output Reorganization 及完整用户流程继续待办，M5.3 不标记完成。
 
 ## M5.1 — Physical Publish Contract + PublishIntent Execution（COMPLETE）

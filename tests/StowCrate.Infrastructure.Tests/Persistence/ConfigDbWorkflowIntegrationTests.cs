@@ -17,6 +17,8 @@ public sealed class ConfigDbWorkflowIntegrationTests
 {
     [Theory]
     [InlineData("normal")]
+    [InlineData("resume-stage-fault")]
+    [InlineData("resume-publish-fault")]
     [InlineData("database-fault")]
     [InlineData("cancel-after-delete")]
     [InlineData("old-reappeared")]
@@ -74,8 +76,20 @@ public sealed class ConfigDbWorkflowIntegrationTests
             Assert.Equal(journal.Revision, (await database.Repository.LoadRelocationAsync(plan.Id, default))!.Revision);
             return;
         }
-        var staged = await physical.StageAsync(journal, version, default);
-        journal = await database.Repository.RecordRelocationStagedAsync(transaction, journal.Revision, staged, default);
+        if (scenario == "resume-stage-fault")
+        {
+            var faulty = new ConfigDbRepository(new(database.Path), new CleanupJournalFault());
+            await Assert.ThrowsAsync<IOException>(() => faulty.ResumeRelocationEntryAsync(transaction, journal.Revision, version, physical, default));
+            var temp = Path.Combine(newRoot, manifest.Entries[0].TempRelativePath.Value);
+            Assert.True(File.Exists(temp));
+            Assert.Equal(journal.Revision, (await database.Repository.LoadRelocationAsync(plan.Id, default))!.Revision);
+            // 未持久化 staged identity 的文件不因 bytes/name 相同而获接纳。
+            await Assert.ThrowsAsync<IOException>(() => database.Repository.ResumeRelocationEntryAsync(transaction, journal.Revision, version, physical, default));
+            Assert.True(File.Exists(temp));
+            Assert.True(File.Exists(Path.Combine(oldRoot, path.Value)));
+            return;
+        }
+        journal = await database.Repository.ResumeRelocationEntryAsync(transaction, journal.Revision, version, physical, default);
         if (scenario == "startup-staged")
         {
             Assert.Equal(StorageRelocationRecoveryStatus.ResumeRequired, (await Startup()).Status);
@@ -83,8 +97,14 @@ public sealed class ConfigDbWorkflowIntegrationTests
             Assert.Equal(journal.Revision, (await database.Repository.LoadRelocationAsync(plan.Id, default))!.Revision);
             return;
         }
-        var target = await physical.PublishTargetAsync(journal, version, default);
-        journal = await database.Repository.RecordRelocationTargetAsync(transaction, journal.Revision, target, default);
+        if (scenario == "resume-publish-fault")
+        {
+            var faulty = new ConfigDbRepository(new(database.Path), new CleanupJournalFault());
+            await Assert.ThrowsAsync<IOException>(() => faulty.ResumeRelocationEntryAsync(transaction, journal.Revision, version, physical, default));
+            Assert.True(File.Exists(Path.Combine(newRoot, path.Value)));
+            Assert.Equal(journal.Revision, (await database.Repository.LoadRelocationAsync(plan.Id, default))!.Revision);
+        }
+        journal = await database.Repository.ResumeRelocationEntryAsync(transaction, journal.Revision, version, physical, default);
         journal = await database.Repository.SealRelocationTargetsAsync(transaction, journal.Revision, default);
         if (scenario == "startup-sealed")
         {

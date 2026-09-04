@@ -549,6 +549,76 @@ public sealed class StorageRelocationJournalTests
         Assert.Equivalent(before, await reopened.LoadAsync(Plan, Unit, default));
     }
 
+    [Theory]
+    [InlineData("normal")]
+    [InlineData("revision")]
+    [InlineData("legacy")]
+    [InlineData("configuration")]
+    [InlineData("cancel-after-proof")]
+    public async Task ResumeUsesDurableAuthorityAndStableProofBoundary(string scenario)
+    {
+        await using var fixture = await Fixture.Create();
+        var configuration = await fixture.Configuration();
+        var journal = scenario == "legacy" ? await fixture.Repository.BeginRelocationAsync(fixture.Manifest(), default)
+            : await fixture.Repository.BeginRelocationAsync(fixture.Manifest(), configuration, default);
+        if (scenario == "configuration") await fixture.Configuration(output: "changed");
+        using var cancellation = new CancellationTokenSource();
+        var probe = new ResumeProbe(() => { if (scenario == "cancel-after-proof") cancellation.Cancel(); });
+        Task<StorageRelocationJournal> Resume() => fixture.Repository.ResumeRelocationEntryAsync(journal.Manifest.TransactionId,
+            journal.Revision + (scenario == "revision" ? 1 : 0), fixture.Version, probe, cancellation.Token);
+        if (scenario is "revision" or "legacy" or "configuration")
+        {
+            await Assert.ThrowsAsync<LocalStateConcurrencyException>(Resume);
+            Assert.Equal(0, probe.Calls);
+        }
+        else
+        {
+            var next = await Resume();
+            Assert.Equal(StorageTransferArtifactStage.Staged, next.Progress.Artifacts[0].Stage);
+            Assert.Equal(journal.Revision + 1, next.Revision);
+            await Assert.ThrowsAsync<LocalStateConcurrencyException>(() => fixture.Repository.ResumeRelocationEntryAsync(
+                journal.Manifest.TransactionId, journal.Revision, fixture.Version, probe, default));
+            Assert.Equal(1, probe.Calls);
+        }
+        Assert.Equal("/old", (await fixture.Repository.LoadAsync(Plan, default))!.CurrentRoot!.CanonicalPath);
+    }
+
+    [Fact]
+    public async Task ConcurrentResumeWithSameRevisionExecutesPhysicalStageOnlyOnce()
+    {
+        await using var fixture = await Fixture.Create();
+        var journal = await fixture.Repository.BeginRelocationAsync(fixture.Manifest(), await fixture.Configuration(), default);
+        var probe = new ResumeProbe(() => { });
+        async Task<bool> Attempt()
+        {
+            try
+            {
+                await fixture.Repository.ResumeRelocationEntryAsync(journal.Manifest.TransactionId, journal.Revision, fixture.Version, probe, default);
+                return true;
+            }
+            catch (LocalStateConcurrencyException) { return false; }
+        }
+        var results = await Task.WhenAll(Task.Run(Attempt), Task.Run(Attempt));
+        Assert.Single(results, x => x);
+        Assert.Equal(1, probe.Calls);
+        Assert.Equal(journal.Revision + 1, (await fixture.Repository.LoadRelocationAsync(Plan, default))!.Revision);
+    }
+
+    private sealed class ResumeProbe(Action afterProof) : IStorageRelocationPhysicalStore
+    {
+        public int Calls { get; private set; }
+        public Task<StorageTransferProof> StageAsync(StorageRelocationJournal journal, ArchiveVersionId version, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested(); Calls++;
+            var artifact = journal.Manifest.Entries.Single(x => x.Artifact.VersionId == version).Artifact;
+            afterProof();
+            return Task.FromResult(new StorageTransferProof(journal.Manifest.TransactionId, journal.Manifest.PlanId, version,
+                artifact.Integrity, artifact.Length, Identity("staged"), true, true));
+        }
+        public Task<StorageTransferProof> PublishTargetAsync(StorageRelocationJournal journal, ArchiveVersionId version, CancellationToken token) => throw new NotSupportedException();
+        public Task VerifyForCommitAsync(StorageRelocationJournal journal, CancellationToken token) => throw new NotSupportedException();
+    }
+
     private sealed class CompletionProbe(Action action) : IStorageRelocationCompletionProbe
     {
         public bool Called { get; private set; }
